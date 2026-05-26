@@ -170,10 +170,10 @@ def _mini_offset(
 # ---------------------------------------------------------------------------
 
 
-def _alloc_sector(raw: bytearray, fat: list[int]) -> int:
+def _alloc_sector(raw: bytearray, fat: list[int], sector_size: int = 512) -> int:
     """파일 끝에 새 섹터를 추가하고 인덱스 반환. 반드시 이 함수로만 섹터 확보 (함정 8)."""
-    new_sid = (len(raw) - 512) // 512
-    raw += b"\x00" * 512
+    new_sid = (len(raw) - 512) // sector_size
+    raw += b"\x00" * sector_size
     fat.append(_FREESECT)
     return new_sid
 
@@ -205,22 +205,67 @@ def _write_minifat(
 
 
 def _write_fat(raw: bytearray, fat: list[int], sector_size: int) -> None:
-    """Write the FAT back to all FAT sectors in the raw file."""
-    fat_sids = [
-        struct.unpack_from("<I", raw, 76 + i * 4)[0]
-        for i in range(109)
-        if struct.unpack_from("<I", raw, 76 + i * 4)[0] < _DIFSECT
-    ]
+    """Write the FAT back to all FAT sectors in the raw file.
+
+    Reads existing FAT sector IDs from both the header DIFAT (109 slots)
+    and any DIFAT extension sectors, so large files (>~7MB) are handled.
+    """
+    n_fat_existing = struct.unpack_from("<I", raw, 44)[0]
+    difat_start = struct.unpack_from("<I", raw, 68)[0]
+
+    fat_sids: list[int] = []
+    for i in range(min(109, n_fat_existing)):
+        sid = struct.unpack_from("<I", raw, 76 + i * 4)[0]
+        if sid >= _DIFSECT:
+            break
+        fat_sids.append(sid)
+
+    difat_chain: list[int] = []
+    curr = difat_start
+    while curr < _DIFSECT and len(fat_sids) < n_fat_existing:
+        difat_chain.append(curr)
+        off = 512 + curr * sector_size
+        for j in range((sector_size // 4) - 1):
+            sid = struct.unpack_from("<I", raw, off + j * 4)[0]
+            if sid >= _DIFSECT:
+                break
+            fat_sids.append(sid)
+        curr = struct.unpack_from("<I", raw, off + sector_size - 4)[0]
+
     count = sector_size // 4
     needed = max(1, -(-len(fat) // count))
     while len(fat_sids) < needed:
+        needed = max(1, -(-len(fat) // count))
         new_sid = (len(raw) - 512) // sector_size
         raw += b"\x00" * sector_size
         fat.append(_FATSECT)
         fat_sids.append(new_sid)
-        n_fat = struct.unpack_from("<I", raw, 44)[0]
-        struct.pack_into("<I", raw, 76 + n_fat * 4, new_sid)
-        struct.pack_into("<I", raw, 44, n_fat + 1)
+        n_fat = len(fat_sids)
+        struct.pack_into("<I", raw, 44, n_fat)
+        if n_fat <= 109:
+            struct.pack_into("<I", raw, 76 + (n_fat - 1) * 4, new_sid)
+        else:
+            difat_slot = n_fat - 110
+            slots_per_difat = (sector_size // 4) - 1
+            difat_idx = difat_slot // slots_per_difat
+            slot_in_page = difat_slot % slots_per_difat
+            while len(difat_chain) <= difat_idx:
+                ds = (len(raw) - 512) // sector_size
+                raw += b"\xff" * sector_size
+                fat.append(_DIFSECT)
+                if difat_chain:
+                    prev_off = 512 + difat_chain[-1] * sector_size
+                    struct.pack_into("<I", raw, prev_off + sector_size - 4, ds)
+                else:
+                    struct.pack_into("<I", raw, 68, ds)
+                difat_chain.append(ds)
+                ds_off = 512 + ds * sector_size
+                struct.pack_into("<I", raw, ds_off + sector_size - 4, _ENDOFCHAIN)
+                n_difat = struct.unpack_from("<I", raw, 72)[0]
+                struct.pack_into("<I", raw, 72, n_difat + 1)
+            ds_off = 512 + difat_chain[difat_idx] * sector_size
+            struct.pack_into("<I", raw, ds_off + slot_in_page * 4, new_sid)
+
     for chunk_i, sid in enumerate(fat_sids):
         off = 512 + sid * sector_size
         for j in range(count):
