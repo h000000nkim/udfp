@@ -102,7 +102,7 @@ def parse_document_body(
         tag = _local_tag(el)
 
         if tag == "p":
-            result, has_page_break = _parse_paragraph(el, style_info, verbatim_map)
+            result, has_page_break, img_blocks = _parse_paragraph(el, style_info, verbatim_map)
 
             num_id, ilvl = _get_num_props(el)
             if num_id is not None:
@@ -128,6 +128,15 @@ def parse_document_body(
                     verbatim_ref=result.verbatim_ref,
                 )
                 blocks.append(hb)
+            elif (
+                len(result.inlines) == 1
+                and isinstance(result.inlines[0], ImageInline)
+                and len(img_blocks) == 1
+            ):
+                ib = img_blocks[0]
+                ib.id = result.id
+                ib.verbatim_ref = result.verbatim_ref
+                blocks.append(ib)
             else:
                 blocks.append(result)
 
@@ -367,12 +376,12 @@ def _parse_paragraph(
     p_el: etree._Element,
     style_info: StyleInfo,
     verbatim_map: dict[str, VerbatimBlock],
-) -> tuple[ParagraphBlock, bool]:
-    """Returns (ParagraphBlock, has_page_break)."""
+) -> tuple[ParagraphBlock, bool, list[ImageBlock]]:
+    """Returns (ParagraphBlock, has_page_break, image_blocks)."""
     bid = _next_id()
     vref = _next_vref()
 
-    inlines = _collect_inlines(p_el, style_info)
+    inlines, image_blocks = _collect_inlines(p_el, style_info)
 
     has_page_break = any(
         isinstance(i, TextInline) and i.text == "\f" for i in inlines
@@ -393,14 +402,15 @@ def _parse_paragraph(
         format=fmt,
         verbatim_ref=vref,
     )
-    return pb, has_page_break
+    return pb, has_page_break, image_blocks
 
 
 def _collect_inlines(
     p_el: etree._Element,
     style_info: StyleInfo,
-) -> list[Inline]:
+) -> tuple[list[Inline], list[ImageBlock]]:
     inlines: list[Inline] = []
+    image_blocks: list[ImageBlock] = []
 
     # w:fldChar state machine: tracks complex field regions
     # 0 = normal, 1 = in field (begin→separate), 2 = in display (separate→end)
@@ -434,11 +444,12 @@ def _collect_inlines(
 
             if fld_state == 1:
                 return
-            run_inlines = _parse_run(child, style_info)
+            run_inlines, run_imgs = _parse_run(child, style_info)
             if fld_state == 2:
                 fld_display.extend(run_inlines)
             else:
                 inlines.extend(run_inlines)
+            image_blocks.extend(run_imgs)
 
         elif tag == "hyperlink":
             if fld_state == 0:
@@ -463,17 +474,18 @@ def _collect_inlines(
     if fld_display:
         inlines.extend(fld_display)
 
-    return inlines
+    return inlines, image_blocks
 
 
 def _parse_run(
     r_el: etree._Element,
     style_info: StyleInfo,
-) -> list[Inline]:
+) -> tuple[list[Inline], list[ImageBlock]]:
     rpr = r_el.find("w:rPr", NS)
     props = _parse_rpr(rpr) if rpr is not None else {}
 
     inlines: list[Inline] = []
+    image_blocks: list[ImageBlock] = []
 
     for child in r_el:
         tag = _local_tag(child)
@@ -501,6 +513,7 @@ def _parse_run(
                     underline_type=props.get("underline_type"),
                     underline_color=props.get("underline_color"),
                     strikeout_type=props.get("strikeout_type"),
+                    highlight_color=props.get("highlight_color"),
                 ))
 
         elif tag == "br":
@@ -516,11 +529,11 @@ def _parse_run(
         elif tag == "drawing":
             result = _parse_drawing(child, style_info)
             if isinstance(result, TextBoxBlock):
-                # TextBox from drawing — not a true inline, but include as placeholder text
                 for blk in result.content:
                     if isinstance(blk, ParagraphBlock):
                         inlines.extend(blk.inlines)
             elif result is not None:
+                image_blocks.append(result)
                 inlines.append(ImageInline(
                     src=result.src,
                     width=result.width,
@@ -545,7 +558,7 @@ def _parse_run(
                     number=int(en_id) if en_id.isdigit() else None,
                 ))
 
-    return inlines
+    return inlines, image_blocks
 
 
 def _parse_hyperlink(
@@ -590,7 +603,7 @@ def _parse_drawing(
         for child in txbx_content:
             tag = _local_tag(child)
             if tag == "p":
-                pb, _ = _parse_paragraph(child, style_info, {})
+                pb, _, _ = _parse_paragraph(child, style_info, {})
                 content.append(pb)
             elif tag == "tbl":
                 tbl = _parse_table(child, style_info, {})
@@ -917,7 +930,7 @@ def _parse_cell_content(
     for child in tc_el:
         tag = _local_tag(child)
         if tag == "p":
-            pb, has_page_break = _parse_paragraph(child, style_info, verbatim_map)
+            pb, has_page_break, _ = _parse_paragraph(child, style_info, verbatim_map)
             content.append(pb)
             if has_page_break:
                 content.append(PageBreakBlock(
@@ -1145,7 +1158,7 @@ def parse_footnotes_xml(
             continue
         content: list[Block] = []
         for p in fn.findall("w:p", NS):
-            pb, _ = _parse_paragraph(p, style_info, {})
+            pb, _, _ = _parse_paragraph(p, style_info, {})
             content.append(pb)
         blocks.append(FootnoteBlock(
             type="footnote",
@@ -1183,7 +1196,7 @@ def parse_endnotes_xml(
             continue
         content: list[Block] = []
         for p in en.findall("w:p", NS):
-            pb, _ = _parse_paragraph(p, style_info, {})
+            pb, _, _ = _parse_paragraph(p, style_info, {})
             content.append(pb)
         blocks.append(EndnoteBlock(
             type="endnote",
@@ -1224,7 +1237,7 @@ def parse_header_xml(
     _resolve_alternate_content(root)
     content: list[Block] = []
     for p in root.findall("w:p", NS):
-        pb, _ = _parse_paragraph(p, style_info, {})
+        pb, _, _ = _parse_paragraph(p, style_info, {})
         content.append(pb)
     for tbl in root.findall("w:tbl", NS):
         tb = _parse_table(tbl, style_info, {})
@@ -1263,7 +1276,7 @@ def parse_footer_xml(
     _resolve_alternate_content(root)
     content: list[Block] = []
     for p in root.findall("w:p", NS):
-        pb, _ = _parse_paragraph(p, style_info, {})
+        pb, _, _ = _parse_paragraph(p, style_info, {})
         content.append(pb)
     for tbl in root.findall("w:tbl", NS):
         tb = _parse_table(tbl, style_info, {})
@@ -1307,7 +1320,7 @@ def _parse_sdt_content(
     for child in sdt_content:
         tag = _local_tag(child)
         if tag == "p":
-            pb, has_page_break = _parse_paragraph(child, style_info, verbatim_map)
+            pb, has_page_break, _ = _parse_paragraph(child, style_info, verbatim_map)
             result.append(pb)
             if has_page_break:
                 result.append(PageBreakBlock(type="page_break", id=_next_id()))

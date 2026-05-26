@@ -25,10 +25,12 @@ NS = {
 
 _RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 
-_HEADING_PATTERN = {
-    "heading 1": 1, "heading 2": 2, "heading 3": 3,
-    "heading 4": 4, "heading 5": 5, "heading 6": 6,
-}
+_HEADING_PATTERN: dict[str, int] = {}
+for _i in range(1, 7):
+    _HEADING_PATTERN[f"heading {_i}"] = _i
+    _HEADING_PATTERN[f"heading{_i}"] = _i
+    _HEADING_PATTERN[f"제목 {_i}"] = _i
+    _HEADING_PATTERN[f"제목{_i}"] = _i
 
 _UNDERLINE_TYPE_MAP = {
     "single": "solid",
@@ -46,6 +48,25 @@ _UNDERLINE_TYPE_MAP = {
     "dashDotHeavy": "dash_dot",
     "dashDotDotHeavy": "dash_dot_dot",
     "wavyHeavy": "wave",
+}
+
+_HIGHLIGHT_COLOR_MAP = {
+    "yellow": "#ffff00",
+    "green": "#00ff00",
+    "cyan": "#00ffff",
+    "magenta": "#ff00ff",
+    "blue": "#0000ff",
+    "red": "#ff0000",
+    "darkblue": "#000080",
+    "darkcyan": "#008080",
+    "darkgreen": "#008000",
+    "darkmagenta": "#800080",
+    "darkred": "#800000",
+    "darkyellow": "#808000",
+    "darkgray": "#808080",
+    "lightgray": "#c0c0c0",
+    "black": "#000000",
+    "white": "#ffffff",
 }
 
 _NUM_FORMAT_MAP = {
@@ -160,8 +181,13 @@ def parse_styles_xml(styles_bytes: bytes) -> tuple[
             para_styles[style_id] = sdef
 
             name_lower = name.lower()
-            if name_lower in _HEADING_PATTERN:
-                heading_levels[style_id] = _HEADING_PATTERN[name_lower]
+            sid_lower = style_id.lower()
+            matched_level = (
+                _HEADING_PATTERN.get(name_lower)
+                or _HEADING_PATTERN.get(sid_lower)
+            )
+            if matched_level is not None:
+                heading_levels[style_id] = matched_level
             else:
                 outline_el = None
                 if ppr is not None:
@@ -457,6 +483,13 @@ def _parse_rpr(rpr: etree._Element) -> dict[str, Any]:
         fill = shd.get(f"{{{NS['w']}}}fill", "")
         if fill and fill.lower() not in ("auto", "ffffff"):
             props["background_color"] = f"#{fill}"
+
+    highlight = rpr.find("w:highlight", NS)
+    if highlight is not None:
+        hl_val = highlight.get(f"{{{NS['w']}}}val", "")
+        hl_color = _HIGHLIGHT_COLOR_MAP.get(hl_val.lower())
+        if hl_color:
+            props["highlight_color"] = hl_color
 
     vert = rpr.find("w:vertAlign", NS)
     if vert is not None:
