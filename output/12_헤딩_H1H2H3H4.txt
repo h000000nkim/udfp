@@ -1,9 +1,0 @@
-
-1장. UDFP 아키텍처
-이 문서는 UDFP의 계층 구조를 설명합니다.
-1.1 파서 레이어
-HWP 파서는 OLE2 컨테이너를 읽어 DocInfo와 BodyText를 파싱합니다.
-1.1.1 DocInfo 파싱
-CharShape, ParaShape, Style 테이블을 읽어 전역 리소스로 저장합니다.
-1.1.1.1 CharShape 디코딩
-74바이트 고정 구조로 볼드·이탤릭·밑줄 등의 글자 속성을 저장합니다.

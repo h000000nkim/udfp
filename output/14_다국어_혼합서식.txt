@@ -1,6 +1,0 @@
-
-Multi-language & Formatting
-한글: 가나다라마바사아자차카타파하
-English: The quick brown fox jumps over the lazy dog.
-숫자·기호: 0123456789 ₩$%&*()[]{}
-혼합: 안녕 Hello 1234 こんにちは — 다국어 혼재 검증용.

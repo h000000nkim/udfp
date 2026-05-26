@@ -1,5 +1,0 @@
-
-UDFP는 다양한 문서 포맷을 JSON Document AST로 변환합니다.
-HWP, HWPX, PDF, DOCX, XLSX 포맷을 지원 목표로 합니다.
-무손실 라운드트립이 절대 요건이며, LossReport가 동반됩니다.
-Seed Patch 모드와 From Scratch 모드 두 가지로 동작합니다.

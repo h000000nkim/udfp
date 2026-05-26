@@ -1,4 +1,0 @@
-한글 텍스트: 가나다라마바사 아자차카타파하 — 자음 모음 검증.
-English text: The quick brown fox jumps over the lazy dog.
-숫자 및 기호: 0123456789  ₩ $ % & * ( ) [ ] { }
-혼합 Mixed: 안녕 Hello 1234 こんにちは — 다국어 샘플.

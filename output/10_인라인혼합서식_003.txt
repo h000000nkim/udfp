@@ -1,1 +1,0 @@
-취소선(strikethrough) 및 일반 텍스트 조합.
