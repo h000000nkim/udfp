@@ -531,7 +531,7 @@ _DEFAULT_CELL_PADDING_H = 510   # 좌우 셀 패딩 (≈5.1pt = 1.8mm)
 _DEFAULT_CELL_PADDING_V = 141   # 상하 셀 패딩 (≈1.41pt = 0.5mm)
 _DEFAULT_CELL_BF_ID = 3
 _MIN_CELL_HEIGHT = 282
-_MIN_COL_WIDTH_HU = 4252   # 최소 열 폭 ≈15mm (42.52pt × 100)
+_MIN_COL_WIDTH_HU = 1417   # 최소 열 폭 ≈5mm (14.17pt × 100)
 
 
 def _auto_col_widths(
@@ -1007,6 +1007,59 @@ def _build_note_records(
 
     line_height = font_size_hu * line_spacing_pct // 100
     return out, line_height
+
+
+# ---------------------------------------------------------------------------
+# 머리글/바닥글 빌더
+# ---------------------------------------------------------------------------
+
+_CTRL_ID_HEAD = b"\x64\x61\x65\x68"  # 'head' LE (reversed)
+_CTRL_ID_FOOT = b"\x74\x6f\x6f\x66"  # 'foot' LE (reversed)
+
+_APPLY_TO_MAP = {"all": 0, "even": 1, "odd": 2, "first": 0}
+
+
+def build_header_footer(
+    spans: list[TextSpan],
+    is_footer: bool = False,
+    apply_to: str = "all",
+    level: int = 1,
+    font_size_hu: int = 1000,
+    line_spacing_pct: int = 160,
+    content_width: int = 42520,
+) -> bytes:
+    """Build header/footer CTRL_HEADER + LIST_HEADER + content paragraph.
+
+    Record tree:
+      CTRL_HEADER 'head'/'foot' (level)     — 8 bytes
+        LIST_HEADER (level+1)                — 16 bytes
+        PARA_HEADER (level+1)                — content paragraph
+          PARA_TEXT (level+2)
+          PARA_CHAR_SHAPE (level+2)
+          PARA_LINE_SEG (level+2)
+    """
+    ctrl_id = _CTRL_ID_FOOT if is_footer else _CTRL_ID_HEAD
+    attr = _APPLY_TO_MAP.get(apply_to, 0)
+    ctrl_payload = ctrl_id + struct.pack("<I", attr)
+    out = _pack_record(HWPTAG_CTRL_HEADER, level, ctrl_payload)
+
+    lh = struct.pack("<IIII", 1, 0, 0, 0)
+    out += _pack_record(HWPTAG_LIST_HEADER, level + 1, lh)
+
+    text = "".join(s.text for s in spans) if spans else ""
+    pt = text.encode("utf-16-le") + b"\x0d\x00"
+    char_cnt = len(pt) // 2
+    first_cs = spans[0].cs_id if spans else 0
+    pcs = struct.pack("<II", 0, first_cs)
+    pls = _build_pls(char_cnt, vpos=0, h=font_size_hu,
+                     line_spacing_pct=line_spacing_pct)
+    ph = _build_para_header(char_cnt, 1, 1, is_last=True)
+
+    out += _pack_record(HWPTAG_PARA_HEADER, level + 1, ph)
+    out += _pack_record(HWPTAG_PARA_TEXT, level + 2, pt)
+    out += _pack_record(HWPTAG_PARA_CHAR_SHAPE, level + 2, pcs)
+    out += _pack_record(HWPTAG_PARA_LINE_SEG, level + 2, pls)
+    return out
 
 
 # ---------------------------------------------------------------------------
