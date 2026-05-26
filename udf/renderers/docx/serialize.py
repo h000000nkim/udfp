@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 
 from lxml import etree
@@ -21,6 +22,7 @@ from udf.core.schema import (
     HeaderBlock,
     HeadingBlock,
     ImageBlock,
+    ImageInline,
     LinkInline,
     ListBlock,
     ListItem,
@@ -46,7 +48,20 @@ _PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture"
 _RELS = "http://schemas.openxmlformats.org/package/2006/relationships"
 _CT = "http://schemas.openxmlformats.org/package/2006/content-types"
 
-_NSMAP_DOC = {"w": _W, "r": _R}
+_NSMAP_DOC = {
+    "w": _W,
+    "r": _R,
+    "wp": _WP,
+    "a": _A,
+    "pic": _PIC,
+    "mc": "http://schemas.openxmlformats.org/markup-compatibility/2006",
+    "o": "urn:schemas-microsoft-com:office:office",
+    "v": "urn:schemas-microsoft-com:vml",
+    "m": "http://schemas.openxmlformats.org/officeDocument/2006/math",
+    "wps": "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+    "wp14": "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing",
+    "w14": "http://schemas.microsoft.com/office/word/2010/wordml",
+}
 
 _REL_TYPE_STYLES = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
@@ -65,14 +80,20 @@ _REL_TYPE_HYPERLINK = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
 )
 
+_M = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+_MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+_WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+
 _ALIGNMENT_MAP = {
     "left": "left",
     "center": "center",
     "right": "right",
     "justify": "both",
+    "distribute": "distribute",
 }
 
 _hyperlink_rels: dict[str, str] = {}
+_image_rels: dict[str, str] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -102,10 +123,13 @@ def blocks_to_document_xml(
 
     Returns
     -------
-    tuple[bytes, dict[str, str]]
-        XML bytes and a mapping of relationship IDs to hyperlink URLs.
+    tuple[bytes, dict[str, str], dict[str, str]]
+        XML bytes, hyperlink relationship IDs, and image relationship IDs.
     """
+    global _image_id_counter
     _hyperlink_rels.clear()
+    _image_rels.clear()
+    _image_id_counter = 0
     root = etree.Element(f"{{{_W}}}document", nsmap=_NSMAP_DOC)
     body = etree.SubElement(root, f"{{{_W}}}body")
 
@@ -138,7 +162,9 @@ def blocks_to_document_xml(
 
     rels = dict(_hyperlink_rels)
     _hyperlink_rels.clear()
-    return etree.tostring(root, xml_declaration=True, encoding="UTF-8"), rels
+    img_rels = dict(_image_rels)
+    _image_rels.clear()
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8"), rels, img_rels
 
 
 def build_styles_xml() -> bytes:
@@ -158,8 +184,17 @@ def build_styles_xml() -> bytes:
     normal.set(f"{{{_W}}}default", "1")
     name_el = etree.SubElement(normal, f"{{{_W}}}name")
     name_el.set(f"{{{_W}}}val", "Normal")
+    normal_rpr = etree.SubElement(normal, f"{{{_W}}}rPr")
+    normal_fonts = etree.SubElement(normal_rpr, f"{{{_W}}}rFonts")
+    normal_fonts.set(f"{{{_W}}}ascii", "맑은 고딕")
+    normal_fonts.set(f"{{{_W}}}hAnsi", "맑은 고딕")
+    normal_fonts.set(f"{{{_W}}}eastAsia", "맑은 고딕")
+    normal_sz = etree.SubElement(normal_rpr, f"{{{_W}}}sz")
+    normal_sz.set(f"{{{_W}}}val", "22")
+    normal_szCs = etree.SubElement(normal_rpr, f"{{{_W}}}szCs")
+    normal_szCs.set(f"{{{_W}}}val", "22")
 
-    _HEADING_SIZES = {1: 32, 2: 26, 3: 24, 4: 22, 5: 20, 6: 20}
+    _HEADING_SIZES = {1: 16, 2: 13, 3: 12, 4: 11, 5: 11, 6: 11}
 
     for lvl in range(1, 7):
         style = etree.SubElement(root, f"{{{_W}}}style")
@@ -190,6 +225,11 @@ def build_styles_xml() -> bytes:
 def build_content_types_xml(
     has_footnotes: bool = False,
     has_numbering: bool = False,
+    has_endnotes: bool = False,
+    has_font_table: bool = False,
+    has_theme: bool = False,
+    has_web_settings: bool = False,
+    has_app_props: bool = False,
     header_count: int = 0,
     footer_count: int = 0,
 ) -> bytes:
@@ -211,12 +251,23 @@ def build_content_types_xml(
     bytes
         UTF-8 encoded XML bytes.
     """
-    root = etree.Element(f"{{{_CT}}}Types")
+    root = etree.Element(f"{{{_CT}}}Types", nsmap={None: _CT})
 
     _add_default(root, "rels", "application/vnd.openxmlformats-package.relationships+xml")
     _add_default(root, "xml", "application/xml")
     _add_default(root, "png", "image/png")
+    _add_default(root, "PNG", "image/png")
     _add_default(root, "jpeg", "image/jpeg")
+    _add_default(root, "JPEG", "image/jpeg")
+    _add_default(root, "jpg", "image/jpeg")
+    _add_default(root, "JPG", "image/jpeg")
+    _add_default(root, "bmp", "image/bmp")
+    _add_default(root, "BMP", "image/bmp")
+    _add_default(root, "gif", "image/gif")
+    _add_default(root, "GIF", "image/gif")
+    _add_default(root, "tiff", "image/tiff")
+    _add_default(root, "emf", "image/x-emf")
+    _add_default(root, "wmf", "image/x-wmf")
 
     _add_override(
         root,
@@ -240,16 +291,46 @@ def build_content_types_xml(
             "/word/footnotes.xml",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
         )
+    if has_endnotes:
+        _add_override(
+            root,
+            "/word/endnotes.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml",
+        )
     _add_override(
         root,
         "/word/settings.xml",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml",
     )
+    if has_font_table:
+        _add_override(
+            root,
+            "/word/fontTable.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml",
+        )
+    if has_theme:
+        _add_override(
+            root,
+            "/word/theme/theme1.xml",
+            "application/vnd.openxmlformats-officedocument.theme+xml",
+        )
+    if has_web_settings:
+        _add_override(
+            root,
+            "/word/webSettings.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml",
+        )
     _add_override(
         root,
         "/docProps/core.xml",
         "application/vnd.openxmlformats-package.core-properties+xml",
     )
+    if has_app_props:
+        _add_override(
+            root,
+            "/docProps/app.xml",
+            "application/vnd.openxmlformats-officedocument.extended-properties+xml",
+        )
     for i in range(1, header_count + 1):
         _add_override(
             root,
@@ -266,7 +347,7 @@ def build_content_types_xml(
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8")
 
 
-def build_rels_xml() -> bytes:
+def build_rels_xml(has_app_props: bool = False) -> bytes:
     """Generate _rels/.rels (top-level package relationships).
 
     Returns
@@ -274,7 +355,7 @@ def build_rels_xml() -> bytes:
     bytes
         UTF-8 encoded XML bytes.
     """
-    root = etree.Element(f"{{{_RELS}}}Relationships")
+    root = etree.Element(f"{{{_RELS}}}Relationships", nsmap={None: _RELS})
     rel = etree.SubElement(root, f"{{{_RELS}}}Relationship")
     rel.set("Id", "rId1")
     rel.set("Type", _REL_TYPE_DOCUMENT)
@@ -283,12 +364,22 @@ def build_rels_xml() -> bytes:
     rel2.set("Id", "rId2")
     rel2.set("Type", "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties")
     rel2.set("Target", "docProps/core.xml")
+    if has_app_props:
+        rel3 = etree.SubElement(root, f"{{{_RELS}}}Relationship")
+        rel3.set("Id", "rId3")
+        rel3.set("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties")
+        rel3.set("Target", "docProps/app.xml")
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8")
 
 
 def build_document_rels_xml(
     has_styles: bool = True,
     has_numbering: bool = False,
+    has_footnotes: bool = False,
+    has_endnotes: bool = False,
+    has_font_table: bool = False,
+    has_theme: bool = False,
+    has_web_settings: bool = False,
     image_rels: dict[str, str] | None = None,
     hyperlink_rels: dict[str, str] | None = None,
     header_footer_rels: dict[str, tuple[str, str]] | None = None,
@@ -313,7 +404,7 @@ def build_document_rels_xml(
     bytes
         UTF-8 encoded XML bytes.
     """
-    root = etree.Element(f"{{{_RELS}}}Relationships")
+    root = etree.Element(f"{{{_RELS}}}Relationships", nsmap={None: _RELS})
     rid_counter = 1
 
     if has_styles:
@@ -335,6 +426,41 @@ def build_document_rels_xml(
     rel.set("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings")
     rel.set("Target", "settings.xml")
     rid_counter += 1
+
+    if has_footnotes:
+        rel = etree.SubElement(root, f"{{{_RELS}}}Relationship")
+        rel.set("Id", f"rId{rid_counter}")
+        rel.set("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes")
+        rel.set("Target", "footnotes.xml")
+        rid_counter += 1
+
+    if has_endnotes:
+        rel = etree.SubElement(root, f"{{{_RELS}}}Relationship")
+        rel.set("Id", f"rId{rid_counter}")
+        rel.set("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes")
+        rel.set("Target", "endnotes.xml")
+        rid_counter += 1
+
+    if has_font_table:
+        rel = etree.SubElement(root, f"{{{_RELS}}}Relationship")
+        rel.set("Id", f"rId{rid_counter}")
+        rel.set("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable")
+        rel.set("Target", "fontTable.xml")
+        rid_counter += 1
+
+    if has_theme:
+        rel = etree.SubElement(root, f"{{{_RELS}}}Relationship")
+        rel.set("Id", f"rId{rid_counter}")
+        rel.set("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme")
+        rel.set("Target", "theme/theme1.xml")
+        rid_counter += 1
+
+    if has_web_settings:
+        rel = etree.SubElement(root, f"{{{_RELS}}}Relationship")
+        rel.set("Id", f"rId{rid_counter}")
+        rel.set("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/webSettings")
+        rel.set("Target", "webSettings.xml")
+        rid_counter += 1
 
     for rid, target in (image_rels or {}).items():
         rel = etree.SubElement(root, f"{{{_RELS}}}Relationship")
@@ -608,29 +734,59 @@ def _serialize_table(block: TableBlock) -> etree._Element:
     tbl = etree.Element(f"{{{_W}}}tbl", nsmap=_NSMAP_DOC)
 
     tbl_pr = etree.SubElement(tbl, f"{{{_W}}}tblPr")
-    has_cell_borders = any(
-        cell.format and any(
-            getattr(cell.format, f"border_{s}", None)
-            for s in ("top", "bottom", "left", "right")
-        )
-        for row in block.rows for cell in row.cells
-    )
-    if not has_cell_borders:
-        tbl_borders = etree.SubElement(tbl_pr, f"{{{_W}}}tblBorders")
-        for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
-            border = etree.SubElement(tbl_borders, f"{{{_W}}}{side}")
-            border.set(f"{{{_W}}}val", "single")
-            border.set(f"{{{_W}}}sz", "4")
-            border.set(f"{{{_W}}}space", "0")
-            border.set(f"{{{_W}}}color", "000000")
+    tbl_w = etree.SubElement(tbl_pr, f"{{{_W}}}tblW")
+    tbl_w.set(f"{{{_W}}}w", "0")
+    tbl_w.set(f"{{{_W}}}type", "auto")
+    tbl_borders = etree.SubElement(tbl_pr, f"{{{_W}}}tblBorders")
+    for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        border = etree.SubElement(tbl_borders, f"{{{_W}}}{side}")
+        border.set(f"{{{_W}}}val", "single")
+        border.set(f"{{{_W}}}sz", "4")
+        border.set(f"{{{_W}}}space", "0")
+        border.set(f"{{{_W}}}color", "000000")
 
-    col_count = max((len(row.cells) for row in block.rows), default=1)
+    # --- grid layout: assign each cell a logical column position ----
+    n_rows = len(block.rows)
+    # merge_cont[(model_row, grid_col)] = col_span of the continuation
+    merge_cont: dict[tuple[int, int], int] = {}
+    # cell_col[ri] = list of (grid_col, cell) in column order
+    cell_col: list[list[tuple[int, "TableCell"]]] = []
+
+    grid_col_count = 0
+    for ri, row in enumerate(block.rows):
+        cursor = 0
+        positions: list[tuple[int, "TableCell"]] = []
+        for cell in row.cells:
+            while (ri, cursor) in merge_cont:
+                cursor += merge_cont[(ri, cursor)]
+            positions.append((cursor, cell))
+            if cell.row_span > 1:
+                for dr in range(1, cell.row_span):
+                    tr_idx = ri + dr
+                    if tr_idx < n_rows:
+                        merge_cont[(tr_idx, cursor)] = cell.col_span
+            cursor += cell.col_span
+        cell_col.append(positions)
+        if cursor > grid_col_count:
+            grid_col_count = cursor
+
+    col_count = max(grid_col_count, 1)
     first_row = block.rows[0] if block.rows else None
     has_model_widths = first_row and any(c.width for c in first_row.cells)
 
     tbl_grid = etree.SubElement(tbl, f"{{{_W}}}tblGrid")
     if has_model_widths and first_row:
-        col_widths_twips = [int((c.width or 0) * 20) for c in first_row.cells]
+        col_widths_twips = [0] * col_count
+        for gc_idx, cell in cell_col[0]:
+            w_twips = int((cell.width or 0) * 20)
+            span = cell.col_span
+            per_col = w_twips // span if span else w_twips
+            for c in range(span):
+                if gc_idx + c < col_count:
+                    col_widths_twips[gc_idx + c] = per_col
+            remainder = w_twips - per_col * span
+            if remainder and gc_idx + span - 1 < col_count:
+                col_widths_twips[gc_idx + span - 1] += remainder
         if all(w == 0 for w in col_widths_twips):
             col_widths_twips = [9360 // col_count] * col_count
         for w in col_widths_twips:
@@ -642,42 +798,60 @@ def _serialize_table(block: TableBlock) -> etree._Element:
             gc = etree.SubElement(tbl_grid, f"{{{_W}}}gridCol")
             gc.set(f"{{{_W}}}w", str(w))
 
-    for row in block.rows:
+    # --- serialize rows, inserting vMerge continuation cells ---------
+    for ri, row in enumerate(block.rows):
         tr = etree.SubElement(tbl, f"{{{_W}}}tr")
         if row.height:
             trpr = etree.SubElement(tr, f"{{{_W}}}trPr")
             trh = etree.SubElement(trpr, f"{{{_W}}}trHeight")
             trh.set(f"{{{_W}}}val", str(int(row.height * 20)))
             trh.set(f"{{{_W}}}hRule", "atLeast")
-        for ci, cell in enumerate(row.cells):
-            tc = etree.SubElement(tr, f"{{{_W}}}tc")
 
-            tcpr = etree.SubElement(tc, f"{{{_W}}}tcPr")
-            if cell.width:
-                cell_w = int(cell.width * 20)
-            elif ci < len(col_widths_twips):
-                cell_w = col_widths_twips[ci] * cell.col_span
-            else:
-                cell_w = col_widths_twips[0] * cell.col_span if col_widths_twips else 9360 // col_count
-            tcw = etree.SubElement(tcpr, f"{{{_W}}}tcW")
-            tcw.set(f"{{{_W}}}w", str(cell_w))
-            tcw.set(f"{{{_W}}}type", "dxa")
-            if cell.col_span > 1:
-                gs = etree.SubElement(tcpr, f"{{{_W}}}gridSpan")
-                gs.set(f"{{{_W}}}val", str(cell.col_span))
-            if cell.row_span > 1:
+        real_cells = {gc: c for gc, c in cell_col[ri]}
+        cursor = 0
+        while cursor < col_count:
+            if cursor in real_cells:
+                cell = real_cells[cursor]
+                tc = etree.SubElement(tr, f"{{{_W}}}tc")
+                tcpr = etree.SubElement(tc, f"{{{_W}}}tcPr")
+                if cell.width:
+                    cell_w = int(cell.width * 20)
+                else:
+                    cell_w = sum(col_widths_twips[cursor:cursor + cell.col_span])
+                tcw = etree.SubElement(tcpr, f"{{{_W}}}tcW")
+                tcw.set(f"{{{_W}}}w", str(cell_w))
+                tcw.set(f"{{{_W}}}type", "dxa")
+                if cell.col_span > 1:
+                    gs = etree.SubElement(tcpr, f"{{{_W}}}gridSpan")
+                    gs.set(f"{{{_W}}}val", str(cell.col_span))
+                if cell.row_span > 1:
+                    vm = etree.SubElement(tcpr, f"{{{_W}}}vMerge")
+                    vm.set(f"{{{_W}}}val", "restart")
+                if cell.format:
+                    _apply_cell_format(tcpr, cell.format)
+                if cell.content:
+                    for child_block in cell.content:
+                        for el in _serialize_block(child_block):
+                            tc.append(el)
+                else:
+                    tc.append(_make_empty_paragraph())
+                cursor += cell.col_span
+            elif (ri, cursor) in merge_cont:
+                cont_span = merge_cont[(ri, cursor)]
+                tc = etree.SubElement(tr, f"{{{_W}}}tc")
+                tcpr = etree.SubElement(tc, f"{{{_W}}}tcPr")
+                cell_w = sum(col_widths_twips[cursor:cursor + cont_span])
+                tcw = etree.SubElement(tcpr, f"{{{_W}}}tcW")
+                tcw.set(f"{{{_W}}}w", str(cell_w))
+                tcw.set(f"{{{_W}}}type", "dxa")
+                if cont_span > 1:
+                    gs = etree.SubElement(tcpr, f"{{{_W}}}gridSpan")
+                    gs.set(f"{{{_W}}}val", str(cont_span))
                 vm = etree.SubElement(tcpr, f"{{{_W}}}vMerge")
-                vm.set(f"{{{_W}}}val", "restart")
-            if cell.format:
-                _apply_cell_format(tcpr, cell.format)
-
-            # Cell content (must have at least one w:p)
-            if cell.content:
-                for child_block in cell.content:
-                    for el in _serialize_block(child_block):
-                        tc.append(el)
-            else:
                 tc.append(_make_empty_paragraph())
+                cursor += cont_span
+            else:
+                cursor += 1
 
     return tbl
 
@@ -720,14 +894,20 @@ def _serialize_page_break() -> etree._Element:
     return p
 
 
+_image_id_counter = 0
+
+
 def _serialize_image_block(block: ImageBlock) -> etree._Element:
     """Serialize an ImageBlock to a w:p containing w:drawing with wp:inline."""
+    global _image_id_counter
+    _image_id_counter += 1
+    img_id = _image_id_counter
+
     p = etree.Element(f"{{{_W}}}p", nsmap=_NSMAP_DOC)
     r = etree.SubElement(p, f"{{{_W}}}r")
     drawing = etree.SubElement(r, f"{{{_W}}}drawing")
 
-    nsmap_wp = {"wp": _WP, "a": _A, "pic": _PIC, "r": _R}
-    inline = etree.SubElement(drawing, f"{{{_WP}}}inline", nsmap=nsmap_wp)
+    inline = etree.SubElement(drawing, f"{{{_WP}}}inline")
 
     # extent
     cx = "914400"  # 1 inch default
@@ -740,19 +920,44 @@ def _serialize_image_block(block: ImageBlock) -> etree._Element:
     extent.set("cx", cx)
     extent.set("cy", cy)
 
-    # graphic > graphicData > pic:pic > pic:blipFill > a:blip
+    # docPr (required by OOXML spec)
+    doc_pr = etree.SubElement(inline, f"{{{_WP}}}docPr")
+    doc_pr.set("id", str(img_id))
+    doc_pr.set("name", f"Picture {img_id}")
+
+    # graphic > graphicData > pic:pic
     graphic = etree.SubElement(inline, f"{{{_A}}}graphic")
     gd = etree.SubElement(graphic, f"{{{_A}}}graphicData")
     gd.set("uri", _PIC)
     pic = etree.SubElement(gd, f"{{{_PIC}}}pic")
+
+    # pic:nvPicPr (required)
+    nv = etree.SubElement(pic, f"{{{_PIC}}}nvPicPr")
+    cnv_pr = etree.SubElement(nv, f"{{{_PIC}}}cNvPr")
+    cnv_pr.set("id", str(img_id))
+    cnv_pr.set("name", f"Picture {img_id}")
+    etree.SubElement(nv, f"{{{_PIC}}}cNvPicPr")
+
+    # pic:blipFill > a:blip
     bf = etree.SubElement(pic, f"{{{_PIC}}}blipFill")
     blip = etree.SubElement(bf, f"{{{_A}}}blip")
 
-    # Extract rId from src if it follows bindata: pattern
+    # pic:spPr (required)
+    sp_pr = etree.SubElement(pic, f"{{{_PIC}}}spPr")
+    xfrm = etree.SubElement(sp_pr, f"{{{_A}}}xfrm")
+    off = etree.SubElement(xfrm, f"{{{_A}}}off")
+    off.set("x", "0")
+    off.set("y", "0")
+    ext = etree.SubElement(xfrm, f"{{{_A}}}ext")
+    ext.set("cx", cx)
+    ext.set("cy", cy)
+
     src = block.src or ""
     if src.startswith("bindata:"):
         media_name = src[len("bindata:"):]
-        blip.set(f"{{{_R}}}embed", f"rImg_{media_name}")
+        rid = f"rImg_{media_name}"
+        blip.set(f"{{{_R}}}embed", rid)
+        _image_rels[rid] = f"media/{media_name}"
     else:
         blip.set(f"{{{_R}}}embed", "rId_unknown")
 
@@ -782,14 +987,26 @@ def _serialize_quote_block(block: QuoteBlock) -> list[etree._Element]:
 
 
 def _serialize_equation_block(block: EquationBlock) -> etree._Element:
-    """Serialize an EquationBlock to a w:p with equation text as placeholder."""
+    """Serialize an EquationBlock to a w:p containing OMML math."""
+    from udf.renderers.docx.latex_to_omml import latex_to_omml_para
+
     p = etree.Element(f"{{{_W}}}p", nsmap=_NSMAP_DOC)
-    text = block.latex or block.hwp_script or ""
-    if text:
-        r = etree.SubElement(p, f"{{{_W}}}r")
-        t = etree.SubElement(r, f"{{{_W}}}t")
-        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-        t.text = text
+    latex = block.latex or ""
+    if not latex and block.hwp_script:
+        try:
+            from udf.parsers.hwp.equation import hwp_script_to_latex
+            latex = hwp_script_to_latex(block.hwp_script)
+        except Exception:
+            latex = ""
+    if latex:
+        try:
+            omml_para = latex_to_omml_para(latex)
+            p.append(omml_para)
+        except Exception:
+            r = etree.SubElement(p, f"{{{_W}}}r")
+            t = etree.SubElement(r, f"{{{_W}}}t")
+            t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+            t.text = latex
     return p
 
 
@@ -801,18 +1018,146 @@ def _serialize_note_block(block: FootnoteBlock | EndnoteBlock) -> list[etree._El
     return elements if elements else [_make_empty_paragraph()]
 
 
+_TEXTBOX_COUNTER = [0]
+
+
 def _serialize_textbox_block(block: TextBoxBlock) -> list[etree._Element]:
-    """Serialize a TextBoxBlock by serializing its child blocks inline."""
-    elements: list[etree._Element] = []
+    """Serialize a TextBoxBlock as an OOXML Drawing text box."""
+    _TEXTBOX_COUNTER[0] += 1
+    tb_id = _TEXTBOX_COUNTER[0]
+
+    child_elements: list[etree._Element] = []
     for child in block.content:
-        elements.extend(_serialize_block(child))
-    return elements if elements else [_make_empty_paragraph()]
+        child_elements.extend(_serialize_block(child))
+    if not child_elements:
+        child_elements = [_make_empty_paragraph()]
+
+    pt_to_emu = 12700
+    w_emu = int((block.width or 200) * pt_to_emu)
+    h_emu = int((block.height or 100) * pt_to_emu)
+
+    p = etree.Element(f"{{{_W}}}p", nsmap=_NSMAP_DOC)
+    r = etree.SubElement(p, f"{{{_W}}}r")
+
+    nsmap_mc = {"mc": _MC, "wp": _WP, "a": _A, "wps": _WPS, "w": _W}
+    alt = etree.SubElement(r, f"{{{_MC}}}AlternateContent", nsmap=nsmap_mc)
+    choice = etree.SubElement(alt, f"{{{_MC}}}Choice")
+    choice.set("Requires", "wps")
+
+    drawing = etree.SubElement(choice, f"{{{_W}}}drawing")
+    inline = etree.SubElement(drawing, f"{{{_WP}}}inline")
+    inline.set("distT", "0")
+    inline.set("distB", "0")
+    inline.set("distL", "0")
+    inline.set("distR", "0")
+
+    extent = etree.SubElement(inline, f"{{{_WP}}}extent")
+    extent.set("cx", str(w_emu))
+    extent.set("cy", str(h_emu))
+
+    doc_pr = etree.SubElement(inline, f"{{{_WP}}}docPr")
+    doc_pr.set("id", str(tb_id))
+    doc_pr.set("name", f"TextBox {tb_id}")
+
+    graphic = etree.SubElement(inline, f"{{{_A}}}graphic")
+    gd = etree.SubElement(graphic, f"{{{_A}}}graphicData")
+    gd.set("uri", "http://schemas.microsoft.com/office/word/2010/wordprocessingShape")
+
+    wsp = etree.SubElement(gd, f"{{{_WPS}}}wsp")
+
+    cnv = etree.SubElement(wsp, f"{{{_WPS}}}cNvSpPr")
+    cnv.set("txBox", "1")
+
+    sp_pr = etree.SubElement(wsp, f"{{{_WPS}}}spPr")
+    xfrm = etree.SubElement(sp_pr, f"{{{_A}}}xfrm")
+    off = etree.SubElement(xfrm, f"{{{_A}}}off")
+    off.set("x", "0")
+    off.set("y", "0")
+    ext = etree.SubElement(xfrm, f"{{{_A}}}ext")
+    ext.set("cx", str(w_emu))
+    ext.set("cy", str(h_emu))
+    prstGeom = etree.SubElement(sp_pr, f"{{{_A}}}prstGeom")
+    prstGeom.set("prst", "rect")
+    etree.SubElement(prstGeom, f"{{{_A}}}avLst")
+
+    if block.background_color:
+        solid = etree.SubElement(sp_pr, f"{{{_A}}}solidFill")
+        sc = etree.SubElement(solid, f"{{{_A}}}srgbClr")
+        sc.set("val", _strip_hash(block.background_color))
+    else:
+        etree.SubElement(sp_pr, f"{{{_A}}}noFill")
+
+    ln = etree.SubElement(sp_pr, f"{{{_A}}}ln")
+    if block.line_color:
+        solid = etree.SubElement(ln, f"{{{_A}}}solidFill")
+        sc = etree.SubElement(solid, f"{{{_A}}}srgbClr")
+        sc.set("val", _strip_hash(block.line_color))
+        if block.line_width:
+            ln.set("w", str(int(block.line_width * pt_to_emu)))
+    else:
+        etree.SubElement(ln, f"{{{_A}}}noFill")
+
+    txbx = etree.SubElement(wsp, f"{{{_WPS}}}txbx")
+    txbx_content = etree.SubElement(txbx, f"{{{_W}}}txbxContent")
+    for el in child_elements:
+        txbx_content.append(el)
+
+    body_pr = etree.SubElement(wsp, f"{{{_WPS}}}bodyPr")
+    body_pr.set("rot", "0")
+    body_pr.set("vert", "horz")
+    body_pr.set("wrap", "square")
+    pad_emu = int((block.padding_left or 4.52) * pt_to_emu)
+    body_pr.set("lIns", str(pad_emu))
+    pad_emu = int((block.padding_top or 4.52) * pt_to_emu)
+    body_pr.set("tIns", str(pad_emu))
+    pad_emu = int((block.padding_right or 4.52) * pt_to_emu)
+    body_pr.set("rIns", str(pad_emu))
+    pad_emu = int((block.padding_bottom or 4.52) * pt_to_emu)
+    body_pr.set("bIns", str(pad_emu))
+
+    va_map = {"top": "t", "middle": "ctr", "bottom": "b"}
+    body_pr.set("anchor", va_map.get(block.vertical_align or "top", "t"))
+
+    fallback = etree.SubElement(alt, f"{{{_MC}}}Fallback")
+    for el in child_elements:
+        fallback.append(copy.deepcopy(el))
+
+    return [p]
+
+
+_FIELD_TYPE_TO_INSTR = {
+    "page_number": "PAGE",
+    "auto_number": "AUTONUM",
+    "hyperlink": "HYPERLINK",
+    "date": "DATE",
+    "time": "TIME",
+    "num_pages": "NUMPAGES",
+    "toc": "TOC",
+}
 
 
 def _serialize_field_block(block: FieldBlock) -> etree._Element:
-    """Serialize a FieldBlock to a w:p with field value or inlines."""
+    """Serialize a FieldBlock to a w:p with OOXML field codes."""
     p = etree.Element(f"{{{_W}}}p", nsmap=_NSMAP_DOC)
-    if block.inlines:
+
+    instr = _FIELD_TYPE_TO_INSTR.get(block.field_type)
+
+    if instr:
+        if block.field_type == "hyperlink" and block.value:
+            instr = f'HYPERLINK "{block.value}"'
+
+        fld = etree.SubElement(p, f"{{{_W}}}fldSimple", nsmap=_NSMAP_DOC)
+        fld.set(f"{{{_W}}}instr", instr)
+        r = etree.SubElement(fld, f"{{{_W}}}r")
+        t = etree.SubElement(r, f"{{{_W}}}t")
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        display = block.value or block.field_type
+        if block.inlines:
+            display = "".join(
+                getattr(il, "text", "") for il in block.inlines
+            ) or display
+        t.text = display
+    elif block.inlines:
         for inline in block.inlines:
             _append_inline(p, inline)
     elif block.value:
@@ -820,6 +1165,7 @@ def _serialize_field_block(block: FieldBlock) -> etree._Element:
         t = etree.SubElement(r, f"{{{_W}}}t")
         t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
         t.text = block.value
+
     return p
 
 
@@ -839,16 +1185,73 @@ def _append_inline(p: etree._Element, inline: object) -> None:
         t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
         t.text = inline.text
     elif isinstance(inline, EquationInline):
-        r = etree.SubElement(p, f"{{{_W}}}r")
-        t = etree.SubElement(r, f"{{{_W}}}t")
-        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-        t.text = inline.latex or inline.hwp_script or ""
+        from udf.renderers.docx.latex_to_omml import latex_to_omml
+        latex = inline.latex or ""
+        if not latex and inline.hwp_script:
+            try:
+                from udf.parsers.hwp.equation import hwp_script_to_latex
+                latex = hwp_script_to_latex(inline.hwp_script)
+            except Exception:
+                latex = ""
+        if latex:
+            try:
+                p.append(latex_to_omml(latex))
+            except Exception:
+                r = etree.SubElement(p, f"{{{_W}}}r")
+                t = etree.SubElement(r, f"{{{_W}}}t")
+                t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+                t.text = latex
+        else:
+            r = etree.SubElement(p, f"{{{_W}}}r")
+            t = etree.SubElement(r, f"{{{_W}}}t")
+            t.text = inline.hwp_script or ""
     elif isinstance(inline, FootnoteRefInline):
         r = etree.SubElement(p, f"{{{_W}}}r")
         rpr = etree.SubElement(r, f"{{{_W}}}rPr")
         etree.SubElement(rpr, f"{{{_W}}}vertAlign").set(f"{{{_W}}}val", "superscript")
         t = etree.SubElement(r, f"{{{_W}}}t")
         t.text = str(inline.number or inline.ref_id)
+    elif isinstance(inline, ImageInline):
+        global _image_id_counter
+        _image_id_counter += 1
+        img_id = _image_id_counter
+        r = etree.SubElement(p, f"{{{_W}}}r")
+        drawing = etree.SubElement(r, f"{{{_W}}}drawing")
+        nsmap_wp = {"wp": _WP, "a": _A, "pic": _PIC, "r": _R}
+        inl = etree.SubElement(drawing, f"{{{_WP}}}inline", nsmap=nsmap_wp)
+        cx = str(_pt_to_emu(inline.width)) if inline.width else "914400"
+        cy = str(_pt_to_emu(inline.height)) if inline.height else "914400"
+        extent = etree.SubElement(inl, f"{{{_WP}}}extent")
+        extent.set("cx", cx)
+        extent.set("cy", cy)
+        doc_pr = etree.SubElement(inl, f"{{{_WP}}}docPr")
+        doc_pr.set("id", str(img_id))
+        doc_pr.set("name", f"Picture {img_id}")
+        graphic = etree.SubElement(inl, f"{{{_A}}}graphic")
+        gd = etree.SubElement(graphic, f"{{{_A}}}graphicData")
+        gd.set("uri", _PIC)
+        pic = etree.SubElement(gd, f"{{{_PIC}}}pic")
+        nv = etree.SubElement(pic, f"{{{_PIC}}}nvPicPr")
+        cnv_pr = etree.SubElement(nv, f"{{{_PIC}}}cNvPr")
+        cnv_pr.set("id", str(img_id))
+        cnv_pr.set("name", f"Picture {img_id}")
+        etree.SubElement(nv, f"{{{_PIC}}}cNvPicPr")
+        bf = etree.SubElement(pic, f"{{{_PIC}}}blipFill")
+        blip = etree.SubElement(bf, f"{{{_A}}}blip")
+        src = inline.src or ""
+        if src.startswith("bindata:"):
+            media_name = src[len("bindata:"):]
+            rid = f"rImg_{media_name}"
+            blip.set(f"{{{_R}}}embed", rid)
+            _image_rels[rid] = f"media/{media_name}"
+        sp_pr = etree.SubElement(pic, f"{{{_PIC}}}spPr")
+        xfrm = etree.SubElement(sp_pr, f"{{{_A}}}xfrm")
+        off = etree.SubElement(xfrm, f"{{{_A}}}off")
+        off.set("x", "0")
+        off.set("y", "0")
+        ext = etree.SubElement(xfrm, f"{{{_A}}}ext")
+        ext.set("cx", cx)
+        ext.set("cy", cy)
     elif isinstance(inline, LinkInline):
         url = inline.url or ""
         if url:
@@ -894,15 +1297,19 @@ def _build_rpr(inline: TextInline) -> etree._Element | None:
         fonts = etree.Element(f"{{{_W}}}rFonts")
         fonts.set(f"{{{_W}}}ascii", inline.font_name)
         fonts.set(f"{{{_W}}}hAnsi", inline.font_name)
+        fonts.set(f"{{{_W}}}eastAsia", inline.font_name)
         parts.append(fonts)
 
     if inline.font_size:
-        sz = etree.Element(f"{{{_W}}}sz")
         pt_val = _parse_pt(inline.font_size)
         if pt_val is not None:
-            # OOXML font size = half-points
-            sz.set(f"{{{_W}}}val", str(int(pt_val * 2)))
+            half_pt = str(int(pt_val * 2))
+            sz = etree.Element(f"{{{_W}}}sz")
+            sz.set(f"{{{_W}}}val", half_pt)
             parts.append(sz)
+            szCs = etree.Element(f"{{{_W}}}szCs")
+            szCs.set(f"{{{_W}}}val", half_pt)
+            parts.append(szCs)
 
     if inline.color:
         color = etree.Element(f"{{{_W}}}color")
@@ -914,6 +1321,13 @@ def _build_rpr(inline: TextInline) -> etree._Element | None:
         shd.set(f"{{{_W}}}val", "clear")
         shd.set(f"{{{_W}}}fill", _strip_hash(inline.background_color))
         parts.append(shd)
+
+    if inline.highlight_color:
+        hl = etree.Element(f"{{{_W}}}highlight")
+        hl_name = _color_to_highlight_name(str(inline.highlight_color))
+        if hl_name:
+            hl.set(f"{{{_W}}}val", hl_name)
+            parts.append(hl)
 
     if inline.superscript:
         vert = etree.Element(f"{{{_W}}}vertAlign")
@@ -976,9 +1390,9 @@ def _apply_ppr_format(ppr: etree._Element, fmt: object) -> None:
                 spacing.set(f"{{{_W}}}after", str(int(pt * 20)))
         if fmt.line_spacing:
             ls = fmt.line_spacing
-            if hasattr(ls, "value"):
+            if hasattr(ls, "percent"):
                 # Ratio object: percentage (e.g. Ratio(160) = 160%)
-                spacing.set(f"{{{_W}}}line", str(int(ls.value / 100 * 240)))
+                spacing.set(f"{{{_W}}}line", str(int(ls.percent / 100 * 240)))
             elif isinstance(ls, (int, float)):
                 # numeric float: fixed pt
                 spacing.set(f"{{{_W}}}line", str(int(ls * 20)))
@@ -1096,13 +1510,13 @@ def _make_empty_paragraph() -> etree._Element:
 
 
 def _parse_pt(value) -> float | None:
-    """'12.5pt' → 12.5, or float/int → float, or Ratio → Ratio.value. invalid → None."""
+    """'12.5pt' → 12.5, or float/int → float, or Ratio → Ratio.percent. invalid → None."""
     if value is None:
         return None
     if isinstance(value, (int, float)):
         return float(value)
-    if hasattr(value, "value"):  # Ratio or similar
-        return float(value.value)
+    if hasattr(value, "percent"):  # Ratio or similar
+        return float(value.percent)
     # String parsing (v1 compatibility)
     if isinstance(value, str):
         if value.endswith("pt"):
@@ -1127,8 +1541,8 @@ def _to_pt_value(val: object) -> float | None:
     """padding 등의 다양한 형식을 pt 숫자로 변환."""
     if isinstance(val, (int, float)):
         return float(val)
-    if hasattr(val, "value"):
-        return float(val.value)
+    if hasattr(val, "percent"):
+        return float(val.percent)
     if isinstance(val, str):
         s = val.strip()
         if s.endswith("pt"):
@@ -1167,6 +1581,23 @@ def _apply_border_side(parent: etree._Element, side: str, spec: str) -> None:
     el.set(f"{{{_W}}}sz", str(max(1, int(width_pt * 8))))
     el.set(f"{{{_W}}}space", "0")
     el.set(f"{{{_W}}}color", color)
+
+
+_HIGHLIGHT_NAME_MAP = {
+    "#ffff00": "yellow", "#00ff00": "green", "#00ffff": "cyan",
+    "#ff00ff": "magenta", "#0000ff": "blue", "#ff0000": "red",
+    "#000080": "darkBlue", "#008080": "darkCyan", "#008000": "darkGreen",
+    "#800080": "darkMagenta", "#800000": "darkRed", "#808000": "darkYellow",
+    "#808080": "darkGray", "#c0c0c0": "lightGray", "#000000": "black",
+}
+
+
+def _color_to_highlight_name(color_hex: str) -> str | None:
+    """Map a hex color to OOXML highlight name. Returns None if no match."""
+    c = color_hex.lower().lstrip("#")
+    if len(c) == 6:
+        c = f"#{c}"
+    return _HIGHLIGHT_NAME_MAP.get(c)
 
 
 def _strip_hash(color) -> str:
