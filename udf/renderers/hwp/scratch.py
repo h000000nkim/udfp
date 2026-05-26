@@ -26,13 +26,14 @@ from udf.core.schema import (
     Block, BookmarkBlock, ChartBlock, CodeBlock, CommentBlock, DrawingBlock,
     EndnoteBlock, EquationBlock, EquationInline, FieldBlock, FooterBlock,
     FootnoteBlock, FootnoteRefInline, HeaderBlock, HeadingBlock,
-    HorizontalRuleBlock, ImageBlock, LinkInline, ListBlock, PageBreakBlock,
-    ParagraphBlock, QuoteBlock, TableBlock, TextArtBlock, TextBoxBlock,
-    TextInline, UdfDocument, UnknownBlock,
+    HorizontalRuleBlock, ImageBlock, ImageInline, LinkInline, ListBlock,
+    PageBreakBlock, ParagraphBlock, QuoteBlock, TableBlock, TextArtBlock,
+    TextBoxBlock, TextInline, UdfDocument, UnknownBlock,
 )
 from udf.pipeline.loss import BlockLoss, LossCategory, LossReport
 from udf.renderers.hwp.body_builder import (
-    TextSpan, build_equation, build_footnote, build_endnote, build_image,
+    TextSpan, build_equation, build_footnote, build_endnote,
+    build_header_footer, build_image,
     build_paragraph, build_secd_paragraph, build_term_paragraph,
     build_section, build_table,
     _EFFECTIVE_PARA_HEIGHT,
@@ -118,6 +119,7 @@ def _charshape_key(spec: CharShapeSpec) -> tuple:
     return (
         spec.size_pt, spec.bold, spec.italic, spec.underline,
         spec.strikethrough, spec.color_r, spec.color_g, spec.color_b,
+        spec.font_name,
     )
 
 
@@ -155,6 +157,7 @@ def _charshape_from_inline(inline: TextInline) -> CharShapeSpec:
         underline=1 if inline.underline else 0,
         strikethrough=inline.strikethrough or False,
         color_r=r, color_g=g, color_b=b,
+        font_name=inline.font_name,
     )
 
 
@@ -166,9 +169,8 @@ def _parashape_from_block(block: ParagraphBlock | HeadingBlock) -> ParaShapeSpec
     ls = fmt.line_spacing
     if ls is None:
         ls_val = HWP_DEFAULTS["line_spacing_pct"]
-    elif hasattr(ls, "value"):
-        # Ratio object (e.g. Ratio(160))
-        ls_val = int(ls.value)
+    elif hasattr(ls, "percent"):
+        ls_val = int(ls.percent)
     elif isinstance(ls, (int, float)):
         ls_val = int(ls)
     elif isinstance(ls, str) and ls.endswith("%"):
@@ -176,7 +178,7 @@ def _parashape_from_block(block: ParagraphBlock | HeadingBlock) -> ParaShapeSpec
     else:
         ls_val = HWP_DEFAULTS["line_spacing_pct"]
     return ParaShapeSpec(
-        alignment=fmt.alignment or "left",
+        alignment=fmt.alignment or "justify",
         line_spacing=ls_val,
     )
 
@@ -219,7 +221,7 @@ def collect_shapes(doc: UdfDocument) -> tuple[list[CharShapeSpec], list[ParaShap
     cs_map[dk] = 0
     cs_list.append(default_cs)
 
-    default_ps = ParaShapeSpec(alignment="left", line_spacing=HWP_DEFAULTS["line_spacing_pct"])
+    default_ps = ParaShapeSpec(alignment="justify", line_spacing=HWP_DEFAULTS["line_spacing_pct"])
     dpk = _parashape_key(default_ps)
     ps_map[dpk] = 0
     ps_list.append(default_ps)
@@ -231,10 +233,23 @@ def collect_shapes(doc: UdfDocument) -> tuple[list[CharShapeSpec], list[ParaShap
             ps_map[pk] = len(ps_list)
             ps_list.append(ps)
 
+        heading_size: float | None = None
+        if isinstance(block, HeadingBlock):
+            heading_size = _HEADING_SIZE_PT.get(max(1, min(block.level, 6)))
+
         inlines = block.inlines if hasattr(block, "inlines") else []
         for il in inlines:
             if isinstance(il, TextInline):
                 cs = _charshape_from_inline(il)
+                if heading_size and cs.size_pt == HWP_DEFAULTS["font_size_pt"]:
+                    cs = CharShapeSpec(
+                        face_hangul=cs.face_hangul, face_latin=cs.face_latin,
+                        size_pt=heading_size, bold=cs.bold or True,
+                        italic=cs.italic, underline=cs.underline,
+                        strikethrough=cs.strikethrough,
+                        color_r=cs.color_r, color_g=cs.color_g, color_b=cs.color_b,
+                        font_name=cs.font_name,
+                    )
             elif _extract_inline_text(il):
                 cs = CharShapeSpec()
             else:
@@ -243,6 +258,13 @@ def collect_shapes(doc: UdfDocument) -> tuple[list[CharShapeSpec], list[ParaShap
             if ck not in cs_map:
                 cs_map[ck] = len(cs_list)
                 cs_list.append(cs)
+
+    for lvl, sz in _HEADING_SIZE_PT.items():
+        hcs = CharShapeSpec(size_pt=sz, bold=True)
+        hk = _charshape_key(hcs)
+        if hk not in cs_map:
+            cs_map[hk] = len(cs_list)
+            cs_list.append(hcs)
 
     return cs_list, ps_list, cs_map, ps_map
 
@@ -498,6 +520,42 @@ def _spans_for_paragraph(
     return spans or [TextSpan("", 0)]
 
 
+def _spans_for_paragraph_heading(
+    block: ParagraphBlock,
+    cs_map: dict[tuple, int],
+    heading_size: float,
+) -> list[TextSpan]:
+    """Like _spans_for_paragraph but applies heading font size to default-sized inlines."""
+    spans: list[TextSpan] = []
+    for inline in block.inlines:
+        if isinstance(inline, TextInline):
+            text = inline.text
+            if not text:
+                continue
+            cs = _charshape_from_inline(inline)
+            if cs.size_pt == HWP_DEFAULTS["font_size_pt"]:
+                cs = CharShapeSpec(
+                    face_hangul=cs.face_hangul, face_latin=cs.face_latin,
+                    size_pt=heading_size, bold=cs.bold or True,
+                    italic=cs.italic, underline=cs.underline,
+                    strikethrough=cs.strikethrough,
+                    color_r=cs.color_r, color_g=cs.color_g, color_b=cs.color_b,
+                    font_name=cs.font_name,
+                )
+        else:
+            text = _extract_inline_text(inline)
+            if not text:
+                continue
+            cs = CharShapeSpec(size_pt=heading_size, bold=True)
+        ck = _charshape_key(cs)
+        cs_id = cs_map.get(ck, 0)
+        if spans and spans[-1].cs_id == cs_id:
+            spans[-1] = TextSpan(spans[-1].text + text, cs_id)
+        else:
+            spans.append(TextSpan(text, cs_id))
+    return spans or [TextSpan("", 0)]
+
+
 # ---------------------------------------------------------------------------
 # Block builder context + registry
 # ---------------------------------------------------------------------------
@@ -564,19 +622,22 @@ def _text_from_blocks(blocks: list[Block]) -> str:
 BuildResult = tuple[bytes, int]  # (record_bytes, height)
 
 
+_HEADING_SIZE_PT = {1: 20.0, 2: 16.0, 3: 14.0, 4: 12.0, 5: 11.0, 6: 10.0}
+
+
 def _build_heading(block: HeadingBlock, vpos: int, ctx: _BuildCtx, is_last: bool) -> BuildResult:
     """Build records for a HeadingBlock with outline style."""
     level = max(1, min(block.level, 6))
     style_id = _STYLE_HEADING[level - 1]
-    # 인라인이 있으면 실제 서식 사용, 없으면 기본 bold
+    heading_size = _HEADING_SIZE_PT[level]
     inlines = getattr(block, "inlines", None)
     if inlines:
-        spans = _spans_for_paragraph(
+        spans = _spans_for_paragraph_heading(
             type("_P", (), {"inlines": inlines})(),  # type: ignore[arg-type]
-            ctx.cs_map,
+            ctx.cs_map, heading_size,
         )
     else:
-        cs = CharShapeSpec(size_pt=HWP_DEFAULTS["font_size_pt"], bold=True)
+        cs = CharShapeSpec(size_pt=heading_size, bold=True)
         ck = _charshape_key(cs)
         bold_cs_id = ctx.cs_map.get(ck, 0)
         spans = [TextSpan(block.text, bold_cs_id)]
@@ -599,8 +660,8 @@ def _build_para(block: ParagraphBlock, vpos: int, ctx: _BuildCtx, is_last: bool)
     ls_pct = ctx.line_spacing_pct
     fmt = getattr(block, "format", None)
     if fmt and fmt.line_spacing is not None:
-        if hasattr(fmt.line_spacing, "value"):
-            ls_pct = int(fmt.line_spacing.value)
+        if hasattr(fmt.line_spacing, "percent"):
+            ls_pct = int(fmt.line_spacing.percent)
         elif isinstance(fmt.line_spacing, (int, float)):
             ls_pct = int(fmt.line_spacing)
     return build_paragraph(
@@ -801,33 +862,24 @@ def _build_horizontal_rule(_block: HorizontalRuleBlock, vpos: int, ctx: _BuildCt
     )
 
 
-def _build_header_block(block: HeaderBlock, vpos: int, ctx: _BuildCtx, is_last: bool) -> BuildResult:
-    """HeaderBlock → 텍스트를 본문 단락으로 (HWP 머리글 구조는 손실)."""
-    spans = _extract_text_from_blocks(block.content, ctx.cs_map)
-    ctx.losses.append(BlockLoss(
-        block_id=block.id,
-        loss_type=LossCategory.FORMAT_LIMIT,
-        description="HeaderBlock rendered as plain paragraph (HWP header structure lost)",
-    ))
-    return build_paragraph(
-        spans, vpos=vpos,
-        content_width=ctx.content_width, font_size_hu=ctx.font_size_hu,
-        line_spacing_pct=ctx.line_spacing_pct, is_last=is_last,
-    )
+def _build_hf_ctrl_records(block: HeaderBlock | FooterBlock, ctx: _BuildCtx) -> bytes:
+    """HeaderBlock/FooterBlock → native CTRL_HEADER 'head'/'foot' records.
 
-
-def _build_footer_block(block: FooterBlock, vpos: int, ctx: _BuildCtx, is_last: bool) -> BuildResult:
-    """FooterBlock → 텍스트를 본문 단락으로 (HWP 바닥글 구조는 손실)."""
+    These records are appended to the secd paragraph as children (level 1),
+    not placed as standalone body paragraphs.
+    """
     spans = _extract_text_from_blocks(block.content, ctx.cs_map)
-    ctx.losses.append(BlockLoss(
-        block_id=block.id,
-        loss_type=LossCategory.FORMAT_LIMIT,
-        description="FooterBlock rendered as plain paragraph (HWP footer structure lost)",
-    ))
-    return build_paragraph(
-        spans, vpos=vpos,
-        content_width=ctx.content_width, font_size_hu=ctx.font_size_hu,
-        line_spacing_pct=ctx.line_spacing_pct, is_last=is_last,
+    if not spans:
+        spans = [TextSpan("", 0)]
+    is_footer = isinstance(block, FooterBlock)
+    return build_header_footer(
+        spans,
+        is_footer=is_footer,
+        apply_to=block.apply_to or "all",
+        level=1,
+        font_size_hu=ctx.font_size_hu,
+        line_spacing_pct=ctx.line_spacing_pct,
+        content_width=ctx.content_width,
     )
 
 
@@ -917,7 +969,7 @@ _LOSS_ONLY_TYPES = {
 }
 
 
-_SKIP_TYPES = (BookmarkBlock, CommentBlock)
+_SKIP_TYPES = (BookmarkBlock, CommentBlock, HeaderBlock, FooterBlock)
 
 
 # Builder function type: (block, vpos, ctx, is_last) -> (bytes, height)
@@ -935,8 +987,6 @@ _BLOCK_BUILDERS: dict[type, Any] = {
     EndnoteBlock: _build_endnote_block,
     FieldBlock: _build_field_block,
     HorizontalRuleBlock: _build_horizontal_rule,
-    HeaderBlock: _build_header_block,
-    FooterBlock: _build_footer_block,
     ImageBlock: _build_image_block,
 }
 
@@ -966,6 +1016,30 @@ def _dispatch_block(block: Block, vpos: int, ctx: _BuildCtx, is_last: bool) -> B
         description=f"Unknown block type: {block.type}",
     ))
     return None
+
+
+def _flatten_image_inlines(blocks: list[Block]) -> list[Block]:
+    """Extract ImageInline from paragraphs into separate ImageBlocks."""
+    result: list[Block] = []
+    counter = 0
+    for blk in blocks:
+        result.append(blk)
+        inlines = getattr(blk, "inlines", None)
+        if not inlines:
+            continue
+        for il in inlines:
+            if isinstance(il, ImageInline):
+                counter += 1
+                img = ImageBlock(
+                    type="image",
+                    id=f"img_from_inline_{counter}",
+                    src=il.src,
+                    width=il.width,
+                    height=il.height,
+                    alt=il.alt,
+                )
+                result.append(img)
+    return result
 
 
 def _has_tables(blocks: list[Block]) -> bool:
@@ -1025,6 +1099,9 @@ def generate_hwp_scratch(
     LossReport or None
         Loss report if any blocks had lossy conversion, None otherwise.
     """
+    # 0. ImageInline → ImageBlock 변환 (인라인 이미지를 별도 블록으로 분리)
+    doc_blocks = _flatten_image_inlines(doc.blocks)
+
     # 1. OLE 컨테이너 복사
     shutil.copy2(seed_path, output_path)
 
@@ -1043,8 +1120,8 @@ def generate_hwp_scratch(
     ps_map, new_ps_specs = _resolve_ps_ids(seed_ps_list, ps_list, raw_ps_map)
 
     # 3. 테이블 BorderFill 준비
-    has_tbl = _has_tables(doc.blocks)
-    cell_bg_colors = _collect_cell_bg_colors(doc.blocks)
+    has_tbl = _has_tables(doc_blocks)
+    cell_bg_colors = _collect_cell_bg_colors(doc_blocks)
     extra_bf_specs: list[BorderFillSpec] = []
     for r, g, b in cell_bg_colors:
         extra_bf_specs.append(BorderFillSpec(
@@ -1112,11 +1189,17 @@ def generate_hwp_scratch(
     first_block_idx = -1
     first_text = ""
     first_cs_id = 0
-    for i, block in enumerate(doc.blocks):
+    first_ps_id: int | None = None
+    first_ls_pct = default_ls_pct
+    for i, block in enumerate(doc_blocks):
         if isinstance(block, ParagraphBlock):
             spans = _spans_for_paragraph(block, cs_map)
             first_text = "".join(s.text for s in spans)
             first_cs_id = spans[0].cs_id if spans else 0
+            ps = _parashape_from_block(block)
+            pk = _parashape_key(ps)
+            first_ps_id = ps_map.get(pk)
+            first_ls_pct = ps.line_spacing
             first_block_idx = i
             break
         elif isinstance(block, HeadingBlock):
@@ -1132,14 +1215,24 @@ def generate_hwp_scratch(
                 cs = CharShapeSpec(size_pt=HWP_DEFAULTS["font_size_pt"], bold=True)
                 ck = _charshape_key(cs)
                 first_cs_id = cs_map.get(ck, 0)
+            ps = _parashape_from_block(block)
+            pk = _parashape_key(ps)
+            first_ps_id = ps_map.get(pk)
+            first_ls_pct = ps.line_spacing
             first_block_idx = i
             break
 
     secd_prefix = build_secd_paragraph(
         seed_section, page_meta=page_meta,
         text=first_text, cs_id=first_cs_id,
-        dist=content_width, line_spacing_pct=default_ls_pct,
+        ps_id_override=first_ps_id,
+        dist=content_width, line_spacing_pct=first_ls_pct,
     )
+
+    # 머리글/바닥글 → secd 단락의 자식으로 CTRL_HEADER 레코드 생성
+    for block in doc_blocks:
+        if isinstance(block, (HeaderBlock, FooterBlock)):
+            secd_prefix += _build_hf_ctrl_records(block, ctx)
 
     para_records: list[bytes] = []
     current_vpos = _EFFECTIVE_PARA_HEIGHT  # secd 단락이 vpos=0 을 차지
@@ -1147,23 +1240,23 @@ def generate_hwp_scratch(
     # 종결 단락 전략: 마지막 빈 블록이 있으면 별도 term 추가, 없으면 마지막 단락에 MSB
     last_block_idx = -1
     need_term = False
-    if doc.blocks:
-        lb = doc.blocks[-1]
+    if doc_blocks:
+        lb = doc_blocks[-1]
         if isinstance(lb, ParagraphBlock) and not any(
             _extract_inline_text(il) for il in lb.inlines
         ):
-            last_block_idx = len(doc.blocks) - 1
+            last_block_idx = len(doc_blocks) - 1
             need_term = True
 
     # 마지막으로 생성될 블록 인덱스 계산 (is_last 마킹용)
     last_effective_idx = -1
     if not need_term:
-        for idx in range(len(doc.blocks) - 1, -1, -1):
+        for idx in range(len(doc_blocks) - 1, -1, -1):
             if idx != first_block_idx and idx != last_block_idx:
                 last_effective_idx = idx
                 break
 
-    for i, block in enumerate(doc.blocks):
+    for i, block in enumerate(doc_blocks):
         if i == first_block_idx or i == last_block_idx:
             continue
         is_last_para = (not need_term and i == last_effective_idx)
@@ -1193,8 +1286,8 @@ def generate_hwp_scratch(
 
     if losses:
         return LossReport(
-            total_blocks=len(doc.blocks),
-            lossless_blocks=len(doc.blocks) - len(losses),
+            total_blocks=len(doc_blocks),
+            lossless_blocks=len(doc_blocks) - len(losses),
             lossy_blocks=losses,
             is_roundtrip_safe=False,
         )
