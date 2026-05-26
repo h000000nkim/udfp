@@ -37,9 +37,16 @@ class ValidationRule(Protocol):
 ### 트랙별 R-규칙
 
 - **HWP**: R1-R4 (`udf/validation/hwp/rules.py`) + I1-I3 (`integrity.py`) — **구현 완료**
-- **HWPX**: HX-1~4 — 계획됨, 미구현 (현재 시맨틱 diff만으로 검증)
+- **HWPX**: HX1-HX4 (`udf/validation/hwpx/rules.py`) — **구현 완료**
+  - HX1: mimetype 첫 번째 + 비압축(STORED) + 정확한 내용
+  - HX2: 필수 파트 존재 (mimetype, version.xml, container.xml, content.hpf, header.xml, section*.xml)
+  - HX3: manifest(content.hpf) ↔ 실제 ZIP 엔트리 일관성
+  - HX4: header.xml 필수 구조 (fontfaces 7언어, charPr, paraPr, style)
+- **DOCX**: D1-D3 (`udf/validation/docx/rules.py`) — **구현 완료**
+  - D1: 필수 파트 존재 ([Content_Types].xml, _rels/.rels, document.xml, styles.xml, document.xml.rels)
+  - D2: Content_Types Override ↔ 실제 ZIP 엔트리 일관성 + MIME 타입 정확성
+  - D3: Relationships 참조 무결성 (내부 Target이 ZIP에 존재)
 - **PDF**: P-1~4 — 계획됨, 미구현 (PDF는 읽기 전용이므로 생성 시점까지 불필요)
-- **DOCX**: D-1~3 — 계획됨, 미구현 (현재 시맨틱 diff만으로 검증)
 
 상세: `dev/architecture.md` §8.3
 
