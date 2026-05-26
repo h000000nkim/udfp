@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<article xmlns="http://docbook.org/ns/docbook"
+         xmlns:xlink="http://www.w3.org/1999/xlink"
+         version="5.0">
+  <info>
+    <title>Sample DocBook Article</title>
+    <author>
+      <personname>
+        <firstname>John</firstname>
+        <surname>Doe</surname>
+      </personname>
+    </author>
+  </info>
+
+  <section>
+    <title>Introduction</title>
+    <para>This is a <emphasis>simple</emphasis> paragraph with
+      <emphasis role="bold">bold</emphasis> text and a
+      <link xlink:href="https://example.com">link</link>.
+    </para>
+    <para>Second paragraph with <literal>inline code</literal>,
+      <superscript>super</superscript> and <subscript>sub</subscript>.
+    </para>
+  </section>
+
+  <section>
+    <title>Code Example</title>
+    <programlisting language="python">def hello():
+    print("Hello, world!")</programlisting>
+    <screen>$ python hello.py
+Hello, world!</screen>
+  </section>
+
+  <section>
+    <title>Lists</title>
+    <itemizedlist>
+      <listitem><para>First item</para></listitem>
+      <listitem><para>Second item</para></listitem>
+    </itemizedlist>
+    <orderedlist>
+      <listitem><para>Step one</para></listitem>
+      <listitem><para>Step two</para></listitem>
+    </orderedlist>
+  </section>
+
+  <section>
+    <title>Table Example</title>
+    <table>
+      <title>Sample Table</title>
+      <tgroup cols="2">
+        <colspec colname="col1"/>
+        <colspec colname="col2"/>
+        <thead>
+          <row>
+            <entry>Header A</entry>
+            <entry>Header B</entry>
+          </row>
+        </thead>
+        <tbody>
+          <row>
+            <entry>Cell 1</entry>
+            <entry>Cell 2</entry>
+          </row>
+          <row>
+            <entry namest="col1" nameend="col2">Spanning cell</entry>
+          </row>
+        </tbody>
+      </tgroup>
+    </table>
+  </section>
+
+  <section>
+    <title>Figure</title>
+    <figure>
+      <title>A sample figure</title>
+      <mediaobject>
+        <imageobject>
+          <imagedata fileref="images/sample.png" contentwidth="400px"/>
+        </imageobject>
+      </mediaobject>
+    </figure>
+  </section>
+
+  <section>
+    <title>Blockquote</title>
+    <blockquote>
+      <para>This is a quoted paragraph.</para>
+    </blockquote>
+  </section>
+
+  <section>
+    <title>Equation</title>
+    <equation>
+      <mathphrase>E = mc^2</mathphrase>
+    </equation>
+  </section>
+
+  <section>
+    <title>Footnote Test</title>
+    <para>Text with a footnote<footnote><para>This is the footnote content.</para></footnote>.</para>
+  </section>
+
+  <section>
+    <title>Variable List</title>
+    <variablelist>
+      <varlistentry>
+        <term>Term One</term>
+        <listitem><para>Definition one.</para></listitem>
+      </varlistentry>
+      <varlistentry>
+        <term>Term Two</term>
+        <listitem><para>Definition two.</para></listitem>
+      </varlistentry>
+    </variablelist>
+  </section>
+</article>

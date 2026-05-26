@@ -1,0 +1,1 @@
+HWP, HWPX, PDF, DOCX, XLSX 포맷을 지원 목표로 합니다.

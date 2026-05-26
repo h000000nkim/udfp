@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Bash(pytest:*)",
+      "Bash(python -m pytest *)",
+      "Bash(python3 -m pytest *)",
+      "Bash(ruff:*)",
+      "Bash(mypy:*)",
+      "Bash(maturin:*)",
+      "Bash(cargo:*)",
+      "Bash(udfp:*)",
+      "Bash(rhwp:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(pip-licenses:*)"
+    ],
+    "ask": [
+      "Bash(pip install:*)",
+      "Bash(cargo add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(rm:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(curl:*)",
+      "Bash(wget:*)"
+    ]
+  },
+  "env": {
+    "PYTHONPATH": "${workspaceFolder}",
+    "RUST_LOG": "info"
+  }
+}
