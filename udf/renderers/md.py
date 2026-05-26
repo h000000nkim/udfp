@@ -48,9 +48,8 @@ def _to_float(v: Any) -> float:
         return float(v)
     if isinstance(v, str):
         return float(v.replace("pt", "").replace("mm", "").replace("%", "").strip())
-    # Ratio-like or other objects with .value
-    if hasattr(v, "value"):
-        return float(v.value)
+    if hasattr(v, "percent"):
+        return float(v.percent)
     return 0.0
 
 
@@ -60,15 +59,15 @@ def _to_css_val(v: Any, default_unit: str = "pt") -> str:
         return v
     if isinstance(v, (int, float)):
         return f"{v}{default_unit}"
-    if hasattr(v, "value"):
-        return f"{v.value}{default_unit}"
+    if hasattr(v, "percent"):
+        return f"{v.percent}{default_unit}"
     return f"0{default_unit}"
 
 
 def _parse_line_spacing(ls: Any) -> float:
     """line_spacing을 비율(1.6 = 160%)로 반환. 문자열('160%') / float / Ratio 모두 처리."""
-    if hasattr(ls, "value"):
-        return float(ls.value) / 100
+    if hasattr(ls, "percent"):
+        return float(ls.percent) / 100
     if isinstance(ls, (int, float)):
         return float(ls) / 100  # assume percentage number e.g. 160 → 1.6
     if isinstance(ls, str):
@@ -842,8 +841,8 @@ def _parse_spacing_pt(val: Any) -> float:
         return 0.0
     if isinstance(val, (int, float)):
         return float(val)
-    if hasattr(val, "value"):
-        return float(val.value)
+    if hasattr(val, "percent"):
+        return float(val.percent)
     if not isinstance(val, str):
         return 0.0
     v = val.strip()
@@ -1344,10 +1343,10 @@ def _render_inlines_html(inlines: list[Any], ctx: _HtmlCtx | None = None) -> str
                     text = f'<span style="{ss}">{text}</span>'
             parts.append(text)
         elif isinstance(il, LinkInline):
-            parts.append(f'<a href="{il.url}">{_escape_html(il.text)}</a>')
+            parts.append(f'<a href="{_escape_html(il.url)}">{_escape_html(il.text)}</a>')
         elif isinstance(il, ImageInline):
             alt = _escape_html(il.alt or "")
-            parts.append(f'<img src="{il.src}" alt="{alt}" style="max-height:1.2em;vertical-align:middle">')
+            parts.append(f'<img src="{_escape_html(il.src)}" alt="{alt}" style="max-height:1.2em;vertical-align:middle">')
         elif isinstance(il, EquationInline):
             latex = il.latex or il.hwp_script or ""
             parts.append(f"\\({_escape_html(latex)}\\)")
@@ -1436,8 +1435,8 @@ def _cell_style(cell: TableCell) -> str:
                 if isinstance(pv, (int, float)):
                     # numeric: assume pt
                     pad_parts.append(f"{pv:.1f}pt")
-                elif hasattr(pv, "value"):
-                    pad_parts.append(f"{pv.value:.1f}pt")
+                elif hasattr(pv, "percent"):
+                    pad_parts.append(f"{pv.percent:.1f}pt")
                 elif isinstance(pv, str) and pv.endswith("mm"):
                     mm_val = float(pv[:-2])
                     pad_parts.append(f"{mm_val * 2.835:.1f}pt")
@@ -1703,8 +1702,13 @@ def _render_list(block: ListBlock, ctx: Any) -> str:
 
 
 def _escape_html(text: str) -> str:
-    """Escape HTML special characters (&, <, >)."""
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    """Escape HTML special characters (&, <, >, ")."""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 def _merge_adjacent_inlines(inlines: list[Any]) -> list[Any]:
