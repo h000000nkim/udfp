@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;700&family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+<style>
+@font-face { font-family: '함초롬바탕'; src: local('함초롬바탕'); }
+@font-face { font-family: '함초롬돋움'; src: local('함초롬돋움'); }
+@font-face { font-family: '한컴돋움'; src: local('한컴돋움'); }
+@font-face { font-family: '한컴바탕'; src: local('한컴바탕'); }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 20px; background: #e0e0e0; font-family: 'Noto Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
+.page {
+  width: 595pt;
+  height: 841pt;
+  margin: 0 auto 40px auto;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  overflow: hidden;
+  position: relative;
+  page-break-after: always;
+}
+.page .content {
+  padding: 56pt 70pt 42pt 70pt;
+  line-height: 1.6;
+  font-size: 10pt;
+  overflow: hidden;
+}
+.page .content p { margin: 0.15em 0; white-space: pre-wrap; }
+.page .content h1,.page .content h2,.page .content h3,
+.page .content h4,.page .content h5,.page .content h6 { margin: 0.15em 0; font-size: inherit; }
+table { border-collapse: collapse; table-layout: fixed; margin: 0.4em 0; }
+td, th { border: none; padding: 1pt 2pt; vertical-align: top; font-size: 10pt; }
+.fn { font-size: 8pt; color: #555; margin-top: 0.4em; }
+.img-left { float: left; margin: 4pt 10pt 4pt 0; }
+.img-right { float: right; margin: 4pt 0 4pt 10pt; }
+.img-center { display: block; margin: 8pt auto; }
+.img-full { display: block; width: 100% !important; height: auto !important; margin: 8pt 0; }
+.clear { clear: both; }
+</style>
+<style id='cmp'>body{margin:0!important;padding:0!important;background:#fff!important}.page{margin:0 0 4px 0!important;box-shadow:none!important;transform-origin:top left!important;border-bottom:2px solid red!important}</style><script>window.addEventListener('load',function(){document.querySelectorAll('.page').forEach(function(p){var s=p.parentElement.clientWidth/p.offsetWidth;if(s<1){p.style.transform='scale('+s+')';p.style.marginBottom='-'+(p.offsetHeight*(1-s))+'px'}})});</script></head>
+<body>
+<div class="page">
+<div class="content">
+<p style="text-align:justify;line-height:1.70">&nbsp;</p>
+<table style="width:380pt">
+<tr>
+<td style="width:61.8pt;background:#000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:318.2pt;background:#0066ff;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+</tr>
+<tr>
+<td colspan="2" style="width:380.0pt;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;height:34.9pt;text-align:justify"><span style="font-size:20.0pt;font-family:'바탕','Noto Serif KR',serif"><strong>05 하노이타워 (점화식)</strong></span></td>
+</tr>
+<tr>
+<td style="width:61.8pt;background:#ea0000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:318.2pt;background:#000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+</tr>
+</table>
+<p>&nbsp;</p>
+<p><span style="font-size:10.0pt">베나레스에는 세계의 중심이 있고, 그 곳에는 아주 큰 사원이 있다. 이 사원에는 높이 50cm 정도 되는 다이아몬드 막대 3개가 있다. 그 중 한 막대에는 천지 창조 때에 신이 구멍이 뚫린 64장의 순금으로 된 원판을 크기가 큰 것부터 아래에 놓이도록 하면서 차례로 쌓아 놓았다. 그리고 신은 승려들에게 밤낮으로 쉬지 않고 한 장씩 원판을 옮기어 빈 다이아몬드 막대 중 어느 한 곳으로 모두 옮겨 놓도록 명령하였다. 원판은 한 번에 한 개씩 옮겨야 하고, 절대로 작은 원판 위에 큰 원판을 올려 놓을 수 없다.(단, 64개의 원판의 크기는 모두 다르다) 이 원판이 다른 한쪽으로 모두 이동되면 세상의 종말이 온다고 한다.</span></p>
+<p><span style="font-size:10.0pt">  고대 인도의 이 전설의 탑을 '하노이의 탑(The Tower of Hanoi)'이라고 부른다. 왜 이런 이름이 붙여졌는지에 대한 명확한 설명을 찾을 수가 없다. 이 전설의 무대가 되는 사원이 베트남의 도시 '하노이' 근처에 실제로 존재한다는 설과 '하노이'를 통하여 세계에 알려진 문제이므로 이런 이름이 붙여졌다는 두 가지의 설이 있다.(이하생략)</span></p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">1. 아래 그림과 같이 막대기 3개가 있고 그 중 한 개의 막대기에 크기가 다른 원반(가운데 구멍이 있음) 3개가 쌓여 있다. 이 3개의 원반을 맨 끝의 막대기에 다음의 규칙을 이용하여 옮길 때 몇 번의 조작이 필요한가?</span></p>
+<p>   </p>
+<div style="position:absolute;left:332.3pt;top:511.6pt;z-index:10;width:164pt;height:62pt;background:#ffffff;border:0.3pt solid #000000">
+<div style="position:absolute;left:125pt;top:0pt;width:0pt;height:61pt;background:#ffffff;border:3.0pt solid #000000"></div>
+<div style="position:absolute;left:77pt;top:0pt;width:0pt;height:61pt;background:#ffffff;border:3.0pt solid #000000"></div>
+<div style="position:absolute;left:31pt;top:1pt;width:1pt;height:1pt;background:#ffffff;border:3.0pt solid #000000"></div>
+<div style="position:absolute;left:23pt;top:42pt;width:15pt;height:7pt;background:#ffffff;border:0.3pt solid #000000"></div>
+<div style="position:absolute;left:18pt;top:48pt;width:26pt;height:6pt;background:#ffffff;border:0.3pt solid #000000"></div>
+<div style="position:absolute;left:13pt;top:55pt;width:36pt;height:7pt;background:#ffffff;border:0.3pt solid #000000"></div>
+<div style="position:absolute;left:0pt;top:62pt;width:1pt;height:1pt;background:#ffffff;border:0.3pt solid #000000"></div>
+</div>
+<table style="width:206pt">
+<tr>
+<td style="width:205.8pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;height:75.0pt;text-align:justify"><span style="font-size:10.0pt;font-family:'바탕','Noto Serif KR',serif">&lt; 규    칙 &gt;</span> <span style="font-size:10.0pt;font-family:'바탕','Noto Serif KR',serif">  한 번에 한 개씩 옮겨야 하고, 절대로 큰 원반이 작은 원반 위에 놓이게 해서는 안 된다.</span></td>
+</tr>
+</table>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">2. 원반이 4개일 때는 몇 번의 조작이 필요한지를 곰곰이 생각해 보자?</span></p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">3. 원반이 5개일 때는 몇 번의 조작이 필요한가?</span></p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">4. 원반을 계속 하나씩 추가해 나간다면 어떤 규칙성을 찾을 수 있을까? 그 규칙성을 공식으로 만들 수는 없을까?</span></p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<div style="clear:both"></div>
+</div>
+<div style="text-align:center;font-size:9pt;padding:8pt 0;color:#333">- 1 -</div>
+</div>
+<div class="page">
+<div class="content">
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">5. 맨 위에 놓여 있는 가장 작은 고리를 몇 번 기둥으로 옮겨야 하는가? 고리의 개수가 짝수일 때와 홀수일 때로 나누어 생각해 보아라.</span></p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">※ 바둑판 ※</span></p>
+<p>&nbsp;</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">6. 그림과 같은 5×5의 바둑판에는 몇 개의 정사각형이 있는가?</span></p>
+<table style="width:96pt">
+<tr>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+</tr>
+<tr>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+</tr>
+<tr>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+</tr>
+<tr>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+</tr>
+<tr>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+</tr>
+</table>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">어렵다면 </span>\(2×2\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">, </span>\(3×3\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">의 바둑판부터 각각 생각해 보자.</span></p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">7. 만약 10×10의 바둑판에는 몇 개의 정사각형이 있겠는가?</span></p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>$$n×n \,$$</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">&lt;해설&gt;  지도하면서 생각해 볼 이야기</span></p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">※ 정답 ※ (정답 이라기보다는 그냥 답)</span></p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">답을 보고도 이해가 안되면 아실만한 분에게 물어보시고 그래도 의문이 생기면 블로그에 댓글 남기세요....</span></p>
+<p>&nbsp;</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">1. 7번</span></p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">2. 15번</span></p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">3. 31번</span></p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">4. </span>\(a_{n + 1} \, = \, 2a_{n} \, + 1 \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">이라는 규칙성을 찾을 수 있다. (단, </span>\(n \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">은 원반의 수를 나타낸다.)</span></p>
+<p>$$a_{n} \, = \, 2^{n} -1 \, \,$$</p>
+<p>&nbsp;</p>
+<p><span style="font-size:10.0pt">  위에서 예언한 세상의 종말까지 걸리는 시간을 계산해 보자.</span></p>
+<p><span style="font-size:10.0pt">  원판의 개수가 64개인 경우의 최소 이동 횟수는 </span>\(2^{64} - 1 \,\)<span style="font-size:10.0pt">이라고 추측할 수 있다. 승려들이 부지런하여 원판 1개를 옮기는 데 1초 걸린다고 가정하면 이 원판을 모두 옮기는 데 필요한 시간은   </span>\(2^{64} - 1 \, \, Image \, \, 585 , 000 , 000 , 000 \,\)<span style="font-size:10.0pt"> (약 5,800억 년) 이다. 천문학자들의 말에 의하면 우주의 나이는 약 200억 년, 지구의 나이는 약 30억 년이라고 한다. 이 전설에 의하여 지금으로부터 세상의 종말이 올 때까지는 세상의 종말을 우주의 종말로 생각할 때  5800－200＝5600억 년, 세상의 종말을 지구의 종말로 생각할 때 5800－30＝5770억 년의 세월이 남아 있다.</span></p>
+<p>&nbsp;</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">5. 홀수일 때는 끝 고리(가야할 곳)에 먼저하고, 짝수일 때는 가운데 고리(가야할 곳이 아닌 곳)에 먼저 조작을 해야 한다.</span></p>
+<p>&nbsp;</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">6. 55개. 어렵다면 , 의 바둑판부터 각각 생각해 보자.</span></p>
+<table style="width:96pt">
+<tr>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+</tr>
+<tr>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+</tr>
+<tr>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+</tr>
+<tr>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+</tr>
+<tr>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+<td style="width:19.1pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:left"></td>
+</tr>
+</table>
+<div style="clear:both"></div>
+</div>
+<div style="text-align:center;font-size:9pt;padding:8pt 0;color:#333">- 2 -</div>
+</div>
+<div class="page">
+<div class="content">
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">   (아래 표와 같이 구할 수 있다.)</span></p>
+<table style="width:228pt">
+<tr>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">1×1</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">2×2</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">3×3</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">4×4</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">…</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">계</span></td>
+</tr>
+<tr>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">1×1</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">1</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">1</span></td>
+</tr>
+<tr>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">2×2</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">4</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">1</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">5</span></td>
+</tr>
+<tr>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">3×3</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">9</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">4</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">1</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">14</span></td>
+</tr>
+<tr>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">4×4</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">16</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">9</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">4</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">1</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">30</span></td>
+</tr>
+<tr>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">⋮</span></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+<td style="width:32.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"></td>
+</tr>
+</table>
+<p>&nbsp;</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">7. 385개</span></p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">8. 일반화시킨 공식은 다음과 같다.</span></p>
+<p>$$1^{2} + 2^{2} + 3^{2} + … + n^{2} = \sum_{k = 1}^{n} k^{2} = \frac{n(n + 1)(2n + 1)}{6}$$</p>
+<p><span style="font-size:12.0pt;font-family:'바탕','Noto Serif KR',serif"><strong>&lt;참고 1&gt;</strong></span></p>
+<p>&nbsp;</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">※ 점화식 </span>\(a_{n + 1} = p \, a_{n} + q \  (단 , \  p \neq 0 , \, \, 1 , \  q \neq 0) \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">에서 수열 </span>\(\left\{ a_{n} \, \right\} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">의 일반항 </span>\(a_{n} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">구하기</span></p>
+<table style="width:454pt">
+<tr>
+<td style="width:448.0pt;border-top:1.1pt solid #000000;border-bottom:1.1pt solid #000000;border-left:1.1pt solid #000000;border-right:1.1pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;height:167.7pt;text-align:left"> \(a_{n + 1} = p \, a_{n} + q \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> 로 정의되는 수열 </span>\(\left\{ a_{n} \, \right\} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">의 일반항 </span>\(a_{n} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">은 다음 세 가지 방법으로 구할 수 있다.</span> \(a_{n + 1} - \alpha = p(a_{n} - \alpha ) \,\) <span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">    이 때, 수열 </span>\(\left\{ a_{n} - \alpha \right\} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">는 첫째항 </span>\((a_{1} - \alpha ) , \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> 공비 </span>\(p \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> 인 등비수열이 된다.</span> <span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> (2) 주어진 점화식과 이 점화식의 </span>\(n \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">대신 </span>\(n-1 \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">을 대입하여 얻은 식을 변변 빼면</span> \(a_{n + 1} -a_{n} = p(a_{n} -a_{n-1} ) \,\) <span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">    이 때 수열 </span>\(\left\{ a_{n} \, \right\} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">의 계차수열은 첫째항 </span>\((a_{2} -a_{1} ) \, , \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> 공비 </span>\(p \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> 인 등비수열이 된다.</span> \(x\) <span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">    좀 더 간단하게 구할 수 있다.   </span></td>
+</tr>
+</table>
+<p>&nbsp;</p>
+<table style="width:27pt">
+<tr>
+<td style="width:27.3pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">해설</span> <span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> 󰋎</span></td>
+</tr>
+</table>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">       ①을 ②의 꼴로 변형하기 위해  ①식 </span>\(a_{n + 1} = p \, a_{n} + q \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">의 양변에서 </span>\(\alpha \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">를 빼면,</span></p>
+<p>       \(a_{n + 1} - \alpha = p \, a_{n} + q- \alpha \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> 이다. 우변을 </span>\(p \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">로 묶으면 </span>\(p \, a_{n} + q- \alpha = p \, \left( a_{n} - \frac{\alpha -q}{p} \right) \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">이 되므로</span></p>
+<p>$$a_{n + 1} - \alpha = p \, \left( a_{n} - \frac{\alpha -q}{p} \right) \,$$</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">       여기서 </span>\(\alpha = \frac{\alpha -q}{p} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">이므로 </span>\(\alpha = \frac{q}{1-p} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">가 된다.</span></p>
+<p>$$a_{n + 1} - \alpha = p \, (a_{n} - \alpha ) \,$$</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">       수열 </span>\(\left\{ a_{n} - \alpha \right\}\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">은 첫째항 </span>\((a_{1} - \alpha ) \, ,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> 공비 </span>\(p \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">인 등비수열을 이룬다.</span></p>
+<p>$$\therefore \  \  a_{n} - \alpha = (a_{1} - \alpha ) \, p^{n-1} \  \  \  \therefore \  \  a_{n} = \alpha + (a_{1} - \alpha )p^{n-1} \,$$</p>
+<table style="width:27pt">
+<tr>
+<td style="width:27.3pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;text-align:justify"><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">해설</span> <span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> 󰋏</span></td>
+</tr>
+</table>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">       ①의 </span>\(n \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">대신 </span>\(n-1 \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">을 대입하면, </span>\(a_{n} = p \, a_{n-1} + q \  \  \cdots \cdots ④ \,\)</p>
+<p>$$a_{n + 1} -a_{n} = p \, (a_{n} -a_{n-1} ) \,$$</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">       따라서, 수열 </span>\(\left\{ a_{n} \, \right\} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">의 계차수열은 첫째항 </span>\((a_{2} -a_{1} ) \, ,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> 공비 </span>\(p \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">인 등비수열을 이룬다.</span></p>
+<p>$$\therefore \  \  a_{n} = a_{1} + \sum_{k = 1}^{n-1} (a_{2} -a_{1} ) \, p^{k-1}$$</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"><strong>※ 다음과 같이 정의되는 수열 </strong></span>\(\left\{ a_{n} \, \right\}\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"><strong>의 일반항 </strong></span>\(a_{n}\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"><strong>을 구하여라. </strong></span></p>
+<table style="width:235pt">
+<tr>
+<td style="width:234.6pt;border-top:0.3pt solid #000000;border-bottom:0.3pt solid #000000;border-left:0.3pt solid #000000;border-right:0.3pt solid #000000;vertical-align:top;padding:1.4pt 1.4pt 1.4pt 1.4pt;height:27.6pt">\(a_{1} = 1 \, , \  \  a_{n + 1} = 2a_{n} + 1(n = 1 , \, \, 2 , \, \, 3 , \, \, \cdots ) \,\)</td>
+</tr>
+</table>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">(풀이 1)   </span></p>
+<p>  \(a_{n + 1} = 2a_{n} + 1 \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">을 변형하면 </span>\(a_{n + 1} + 1 = 2(a_{n} + 1) \,\)</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">  따라서, 수열 </span>\(\left\{ a_{n} + 1 \right\} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">은 첫째항 </span>\((a_{1} + 1) = 2 \, , \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> 공비 </span>\(2 \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">인 등비수열을 이룬다.</span></p>
+<p>$$\therefore \  \  a_{n} + 1 = 2 \cdot 2^{n-1} \  \  \  \  \  \  \  \therefore \  \  a_{n} = 2^{\, n} -1 \,$$</p>
+<div style="clear:both"></div>
+</div>
+<div style="text-align:center;font-size:9pt;padding:8pt 0;color:#333">- 3 -</div>
+</div>
+<div class="page">
+<div class="content">
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">(풀이 2)</span></p>
+<p>$$a_{n + 1} = 2a_{n} + 1 \, \, \cdots \cdots ① \,$$</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">  ①의 </span>\(n \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">대신 </span>\(n-1 \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">을 대입하면, </span>\(a_{n} = 2a_{n-1} + 1 \, \, \, (n = 2 , \, \, 3 , \, \, 4 , \, \, \cdots ) \cdots \cdots ② \,\)</p>
+<p>$$a_{n + 1} -a_{n} = 2 \, (a_{n} -a_{n-1} ) \,$$</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">  따라서, 수열 </span>\(\left\{ a_{n} \, \right\} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">의 계차수열은 첫째항이 </span>\(a_{2} -a_{1} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">이고, 공비가 </span>\(2 \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">인 등비수열을 이룬다.</span></p>
+<p>$$\therefore \  \  a_{n} = a_{1} + \sum_{k = 1}^{n-1} (a_{2} -a_{1} ) \cdot 2^{k-1} = a_{1} + (a_{2} -a_{1} ) \frac{2^{n-1} -1}{2-1} \,$$</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">  그런데, </span>\(a_{1} = 1 \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">이고 ①의 </span>\(n \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">대신 </span>\(1 \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">을 대입하면, </span>\(a_{2} = 3 \, \,\)</p>
+<p>$$\therefore \  \  a_{n} = 1 + (3-1)(2^{n-1} -1) = 2^{n} -1 \,$$</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p><span style="font-size:12.0pt;font-family:'바탕','Noto Serif KR',serif"><strong>&lt;참고 2&gt;</strong></span></p>
+<p>$$1^{2} + 2^{2} + 3^{2} + \cdots + n^{2} = \frac{n(n + 1)(2n + 1)}{6} \, \,$$</p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">(증명)</span></p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">ⅰ) </span>\(n = 1 \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">일 때,  </span>\(1^{2} = \frac{1 \times 2 \times 3}{6} \, \,\)   \(\therefore\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">성립</span></p>
+<p><span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">ⅱ) </span>\(n = k \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">일 때 성립가정하면 </span>\(1^{2} + 2^{2} + 3^{2} + \cdots + k^{2} = \frac{k(k + 1)(2k + 1)}{6} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">이고</span></p>
+<p>$$n = k + 1 \,$$</p>
+<p>&nbsp;</p>
+<p>$$= 1^{2} + 2^{2} + 3^{2} + \cdots + k^{2} + (k + 1)^{2}$$</p>
+<p>$$= \frac{k(k + 1)(2k + 1)}{6} + (k + 1)^{2} \, = \frac{2k^{3} + 9k^{2} + 13k + 6}{6} \,$$</p>
+<p>$$= \frac{(k + 1)(k + 2)(2k + 3)}{6} \, = \frac{2k^{3} + 9k^{2} + 13k + 6}{6}$$</p>
+<p>\(\therefore\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif"> ⅰ)과 ⅱ)에 의해 </span>\(1^{2} + 2^{2} + 3^{2} + \cdots + n^{2} = \frac{n(n + 1)(2n + 1)}{6} \,\)<span style="font-size:11.0pt;font-family:'바탕','Noto Serif KR',serif">은 성립한다.</span></p>
+<div style="clear:both"></div>
+</div>
+<div style="text-align:center;font-size:9pt;padding:8pt 0;color:#333">- 4 -</div>
+</div>
+</body>
+</html>

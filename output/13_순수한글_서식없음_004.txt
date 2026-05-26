@@ -1,0 +1,1 @@
+Seed Patch 모드와 From Scratch 모드 두 가지로 동작합니다.

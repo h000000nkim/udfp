@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document>
+  <title>Generic Document</title>
+
+  <p>A simple paragraph.</p>
+  <paragraph>Another paragraph style.</paragraph>
+
+  <h1>Main Heading</h1>
+  <h2>Sub Heading</h2>
+
+  <pre language="javascript">console.log("hello");</pre>
+
+  <ul>
+    <li>Bullet one</li>
+    <li>Bullet two</li>
+  </ul>
+  <ol>
+    <li>Ordered one</li>
+    <li>Ordered two</li>
+  </ol>
+
+  <table>
+    <tr>
+      <th>Name</th>
+      <th>Value</th>
+    </tr>
+    <tr>
+      <td>Alpha</td>
+      <td>100</td>
+    </tr>
+  </table>
+
+  <img src="photo.jpg" width="640" height="480"/>
+
+  <p>Text with <a href="https://example.com">a link</a> and <strong>bold</strong>
+     and <em>italic</em> and <code>mono</code>.</p>
+
+  <custom-element attr="value">Unknown content here</custom-element>
+</document>
