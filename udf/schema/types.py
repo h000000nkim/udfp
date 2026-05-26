@@ -319,8 +319,10 @@ class Color:
                 return cls.from_hex(value)
             raise ValueError(f"Cannot convert {value!r} to Color")
 
-        def serialize(value: Color) -> str:
+        def serialize(value: Any) -> str:
             """Pydantic serializer for Color."""
+            if isinstance(value, str):
+                return value
             return value.to_hex()
 
         return core_schema.no_info_plain_validator_function(
@@ -385,8 +387,12 @@ class Ratio:
                 return cls(value)
             raise ValueError(f"Cannot convert {value!r} to Ratio")
 
-        def serialize(value: Ratio) -> dict[str, float]:
+        def serialize(value: Any) -> dict[str, float]:
             """Pydantic serializer for Ratio."""
+            if isinstance(value, dict):
+                return value
+            if isinstance(value, (int, float)):
+                return {"percent": float(value)}
             return {"percent": value.percent}
 
         return core_schema.no_info_plain_validator_function(

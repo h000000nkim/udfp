@@ -1207,7 +1207,11 @@ class UdfDocument(_Base):
         str
             JSON representation with 2-space indentation.
         """
-        return self.model_dump_json(indent=2, **kwargs)
+        try:
+            return self.model_dump_json(indent=2, **kwargs)
+        except Exception:
+            import json
+            return json.dumps(self.model_dump(), indent=2, ensure_ascii=False, default=str)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize this document to a plain Python dictionary.
@@ -1220,15 +1224,27 @@ class UdfDocument(_Base):
         return self.model_dump()
 
     def save(self, path: str) -> None:
-        """Serialize this document to UDF JSON and write it to a file.
+        """Save the document to a file.
+
+        The output format is determined by the file extension:
+        - ``.hwp``, ``.docx``, ``.hwpx`` → render to that binary format
+        - ``.md``, ``.html`` → render to that text format
+        - ``.json`` or other → save as UDF JSON
 
         Parameters
         ----------
         path : str
-            Output file path (UTF-8 encoded).
+            Output file path.
         """
         from pathlib import Path as _P
-        _P(path).write_text(self.to_json(), encoding="utf-8")
+
+        ext = _P(path).suffix.lower()
+        _RENDER_EXTS = {".hwp", ".docx", ".hwpx", ".md", ".html"}
+        if ext in _RENDER_EXTS:
+            from udf.renderers import render
+            render(self, ext.lstrip("."), output_path=path)
+        else:
+            _P(path).write_text(self.to_json(), encoding="utf-8")
 
 
 def _replace_text_in_block(block: Block, old: str, new: str) -> int:

@@ -91,6 +91,7 @@ class UdfDocument(BaseModel):
     loss_report: LossReport | None = None
     extensions: dict[str, FormatExtension] = {}
     outline: list[OutlineItem] = []
+    _content_modified: bool = False
 
     def __init__(self, path_or_data: Any = None, /, **kwargs: Any) -> None:
         """Create a UdfDocument from a file path, dict, or keyword arguments.
@@ -232,6 +233,8 @@ class UdfDocument(BaseModel):
         count = 0
         for block in self.blocks:
             count += _replace_text_in_block(block, old, new)
+        if count > 0:
+            self._content_modified = True
         return count
 
     def find_text(self, pattern: str) -> list[dict[str, Any]]:
@@ -348,6 +351,7 @@ class UdfDocument(BaseModel):
         """
         block, parent_list, idx = _find_block_deep(self.blocks, block_id)
         if block is not None and parent_list is not None and idx is not None:
+            self._content_modified = True
             return parent_list.pop(idx)
         return None
 
@@ -419,6 +423,7 @@ class UdfDocument(BaseModel):
         block = self.get_block(block_id)
         if block is None:
             return
+        self._content_modified = True
         if isinstance(block, HeadingBlock):
             block.text = text
             if block.inlines and 0 <= idx < len(block.inlines):
@@ -452,7 +457,11 @@ class UdfDocument(BaseModel):
         """
         inlines = self._get_inlines_for(block_id)
         if inlines is not None and 0 <= idx < len(inlines):
-            inlines[idx] = inlines[idx].model_copy(update=fmt)
+            inline = inlines[idx]
+            valid = {k: v for k, v in fmt.items() if k in type(inline).model_fields}
+            if valid:
+                inlines[idx] = inline.model_copy(update=valid)
+                self._content_modified = True
 
     def add_inline(
         self, block_id: str, inline: Inline, *, at: int | None = None,
@@ -471,6 +480,7 @@ class UdfDocument(BaseModel):
         inlines = self._get_inlines_for(block_id)
         if inlines is None:
             return
+        self._content_modified = True
         if at is None:
             inlines.append(inline)
         else:
@@ -493,6 +503,7 @@ class UdfDocument(BaseModel):
         """
         inlines = self._get_inlines_for(block_id)
         if inlines is not None and 0 <= idx < len(inlines):
+            self._content_modified = True
             return inlines.pop(idx)
         return None
 
@@ -565,6 +576,7 @@ class UdfDocument(BaseModel):
         block = self.get_block(block_id)
         if block is None:
             return
+        self._content_modified = True
         current = getattr(block, "format", None)
         if current is not None:
             block.format = current.model_copy(update=fmt)  # type: ignore[attr-defined]
@@ -829,7 +841,11 @@ class UdfDocument(BaseModel):
         str
             Pretty-printed JSON representation.
         """
-        return self.model_dump_json(indent=2, **kwargs)
+        try:
+            return self.model_dump_json(indent=2, **kwargs)
+        except Exception:
+            import json
+            return json.dumps(self.model_dump(), indent=2, ensure_ascii=False, default=str)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the document to a dictionary.
@@ -842,7 +858,12 @@ class UdfDocument(BaseModel):
         return self.model_dump()
 
     def save(self, path: str) -> None:
-        """Save the document as a JSON file.
+        """Save the document to a file.
+
+        The output format is determined by the file extension:
+        - ``.hwp``, ``.docx``, ``.hwpx`` → render to that binary format
+        - ``.md``, ``.html`` → render to that text format
+        - ``.json`` or other → save as UDF JSON
 
         Parameters
         ----------
@@ -850,7 +871,13 @@ class UdfDocument(BaseModel):
             Destination file path.
         """
         from pathlib import Path as _P
-        _P(path).write_text(self.to_json(), encoding="utf-8")
+
+        ext = _P(path).suffix.lower()
+        _RENDER_EXTS = {".hwp", ".docx", ".hwpx", ".md", ".html"}
+        if ext in _RENDER_EXTS:
+            self.to(ext.lstrip("."), output_path=path)
+        else:
+            _P(path).write_text(self.to_json(), encoding="utf-8")
 
 
 
