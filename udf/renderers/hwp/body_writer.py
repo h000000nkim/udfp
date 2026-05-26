@@ -161,11 +161,92 @@ def _has_trailing_cr(pt_payload: bytes) -> bool:
     return pt_payload.endswith(b"\x0d\x00")
 
 
+def _common_prefix_len_seq(a: list[int], b: list[int]) -> int:
+    n = min(len(a), len(b))
+    for i in range(n):
+        if a[i] != b[i]:
+            return i
+    return n
+
+
+def _common_suffix_len_seq(a: list[int], b: list[int], prefix_len: int) -> int:
+    n = min(len(a) - prefix_len, len(b) - prefix_len)
+    for i in range(1, n + 1):
+        if a[-i] != b[-i]:
+            return i - 1
+    return n
+
+
+def _adjust_pcs_positions(
+    old_pt: bytes, new_pt: bytes, pcs_entries: list[bytes],
+) -> list[bytes]:
+    """Adjust PCS entry positions to account for text length changes.
+
+    Uses prefix/suffix matching on the full PT char stream to find
+    exactly where text was inserted or removed, then shifts PCS
+    entries accordingly.
+    """
+    old_total = len(old_pt) // 2
+    new_total = len(new_pt) // 2
+    if old_total == new_total:
+        return pcs_entries
+
+    old_chars = [struct.unpack_from("<H", old_pt, i * 2)[0] for i in range(old_total)]
+    new_chars = [struct.unpack_from("<H", new_pt, i * 2)[0] for i in range(new_total)]
+
+    prefix = _common_prefix_len_seq(old_chars, new_chars)
+    suffix = _common_suffix_len_seq(old_chars, new_chars, prefix)
+
+    delta = new_total - old_total
+    old_change_end = old_total - suffix
+
+    adjusted = []
+    for entry in pcs_entries:
+        old_pos = struct.unpack_from("<I", entry, 0)[0]
+        cs_id = struct.unpack_from("<I", entry, 4)[0]
+
+        if old_pos < prefix:
+            new_pos = old_pos
+        elif old_pos >= old_change_end:
+            new_pos = old_pos + delta
+        else:
+            new_pos = max(prefix, old_pos + delta)
+
+        if new_pos < new_total:
+            adjusted.append(struct.pack("<II", new_pos, cs_id))
+
+    return adjusted
+
+
+def _apply_cs_override(
+    entries: list[bytes], override: int | dict[int, int],
+) -> list[bytes]:
+    """Apply CharShape override to PCS entries.
+
+    If override is an int, replace ALL entries' cs_id.
+    If override is a dict, replace only entries whose original pos
+    matches a key (using closest-match for shifted positions).
+    """
+    if isinstance(override, int):
+        return [
+            struct.pack("<II", struct.unpack_from("<I", e, 0)[0], override)
+            for e in entries
+        ]
+    result = []
+    for e in entries:
+        pos = struct.unpack_from("<I", e, 0)[0]
+        cs_id = struct.unpack_from("<I", e, 4)[0]
+        if pos in override:
+            cs_id = override[pos]
+        result.append(struct.pack("<II", pos, cs_id))
+    return result
+
+
 def apply_paragraph_patches(
     section_bytes: bytes,
     patches: list[tuple[int, str]],
     *,
-    cs_overrides: dict[int, int] | None = None,
+    cs_overrides: dict[int, int | dict[int, int]] | None = None,
 ) -> bytes:
     """Apply text patches to paragraphs in a section stream.
 
@@ -181,10 +262,10 @@ def apply_paragraph_patches(
         List of (ph_offset, new_text) pairs. ``ph_offset`` is the byte
         offset of the target PARA_HEADER record. ``new_text`` is the
         replacement text (without trailing CR).
-    cs_overrides : dict[int, int] or None
-        Optional mapping of ph_offset → new CharShape ID. When provided,
-        all PCS entries for that paragraph are rewritten to use the
-        given CharShape ID.
+    cs_overrides : dict[int, int | dict[int, int]] or None
+        ph_offset → CharShape override. Value can be a single int (applied
+        to all PCS entries) or a dict mapping pcs_pos → new cs_id for
+        per-entry overrides.
 
     Returns
     -------
@@ -230,10 +311,13 @@ def apply_paragraph_patches(
         struct.pack_into("<I", ph_payload, 0, msb | (new_char_cnt & 0x3FFFFFFF))
 
         # PARA_CHAR_SHAPE 정리 (R4: pos < charCnt) + cs_overrides 적용
-        override_cs_id = (cs_overrides or {}).get(rec.offset)
+        cs_override_val = (cs_overrides or {}).get(rec.offset)
+        new_pcs: bytes | None = None
         if pcs_idx is not None:
             pcs = records[pcs_idx].payload
             entries = [pcs[k : k + 8] for k in range(0, len(pcs) - len(pcs) % 8, 8)]
+            if old_pt_payload and len(entries) > 1:
+                entries = _adjust_pcs_positions(old_pt_payload, new_pt, entries)
             valid = [
                 e for e in entries if struct.unpack_from("<I", e, 0)[0] < new_char_cnt
             ]
@@ -241,11 +325,8 @@ def apply_paragraph_patches(
                 first = bytearray(entries[0])
                 struct.pack_into("<I", first, 0, 0)
                 valid = [bytes(first)]
-            if override_cs_id is not None:
-                valid = [
-                    struct.pack("<II", struct.unpack_from("<I", e, 0)[0], override_cs_id)
-                    for e in valid
-                ]
+            if cs_override_val is not None:
+                valid = _apply_cs_override(valid, cs_override_val)
             new_pcs = b"".join(valid)
             struct.pack_into("<H", ph_payload, 12, len(valid))  # csCount
             records[pcs_idx] = HwpRecord(
@@ -254,6 +335,14 @@ def apply_paragraph_patches(
                 new_pcs,
                 records[pcs_idx].offset,
             )
+        elif new_char_cnt > 0:
+            cs_id = 0
+            if isinstance(cs_override_val, int):
+                cs_id = cs_override_val
+            elif isinstance(cs_override_val, dict) and 0 in cs_override_val:
+                cs_id = cs_override_val[0]
+            new_pcs = struct.pack("<II", 0, cs_id)
+            struct.pack_into("<H", ph_payload, 12, 1)
 
         records[i] = HwpRecord(
             HWPTAG_PARA_HEADER, rec.level, bytes(ph_payload), rec.offset
@@ -264,9 +353,14 @@ def apply_paragraph_patches(
                 HWPTAG_PARA_TEXT, records[pt_idx].level, new_pt, records[pt_idx].offset
             )
         else:
-            records.insert(i + 1, HwpRecord(
+            insert_pos = i + 1
+            records.insert(insert_pos, HwpRecord(
                 HWPTAG_PARA_TEXT, ph_level + 1, new_pt, 0
             ))
+            if pcs_idx is None and new_pcs is not None:
+                records.insert(insert_pos + 1, HwpRecord(
+                    HWPTAG_PARA_CHAR_SHAPE, ph_level + 1, new_pcs, 0
+                ))
 
     return _serialize_records(records)
 
@@ -339,7 +433,7 @@ def apply_section_patches(
     eq_patches: list[tuple[int, str]] | None = None,
     tbl_attr_patches: list[tuple[int, dict[str, bool]]] | None = None,
     *,
-    cs_overrides: dict[int, int] | None = None,
+    cs_overrides: dict[int, int | dict[int, int]] | None = None,
 ) -> bytes:
     """Apply text, equation, and table attr patches in a single parse-modify-serialize cycle.
 
@@ -408,10 +502,12 @@ def apply_section_patches(
             msb = old_dw & 0x80000000
             struct.pack_into("<I", ph_payload, 0, msb | (new_char_cnt & 0x3FFFFFFF))
 
-            override_cs_id = (cs_overrides or {}).get(rec.offset)
+            cs_override_val = (cs_overrides or {}).get(rec.offset)
             if pcs_idx is not None:
                 pcs = records[pcs_idx].payload
                 entries = [pcs[k : k + 8] for k in range(0, len(pcs) - len(pcs) % 8, 8)]
+                if old_pt_payload and len(entries) > 1:
+                    entries = _adjust_pcs_positions(old_pt_payload, new_pt, entries)
                 valid = [
                     e for e in entries if struct.unpack_from("<I", e, 0)[0] < new_char_cnt
                 ]
@@ -419,17 +515,22 @@ def apply_section_patches(
                     first = bytearray(entries[0])
                     struct.pack_into("<I", first, 0, 0)
                     valid = [bytes(first)]
-                if override_cs_id is not None:
-                    valid = [
-                        struct.pack("<II", struct.unpack_from("<I", e, 0)[0], override_cs_id)
-                        for e in valid
-                    ]
+                if cs_override_val is not None:
+                    valid = _apply_cs_override(valid, cs_override_val)
                 new_pcs = b"".join(valid)
                 struct.pack_into("<H", ph_payload, 12, len(valid))
                 records[pcs_idx] = HwpRecord(
                     HWPTAG_PARA_CHAR_SHAPE, records[pcs_idx].level,
                     new_pcs, records[pcs_idx].offset,
                 )
+            elif new_char_cnt > 0:
+                cs_id = 0
+                if isinstance(cs_override_val, int):
+                    cs_id = cs_override_val
+                elif isinstance(cs_override_val, dict) and 0 in cs_override_val:
+                    cs_id = cs_override_val[0]
+                new_pcs = struct.pack("<II", 0, cs_id)
+                struct.pack_into("<H", ph_payload, 12, 1)
 
             records[i] = HwpRecord(
                 HWPTAG_PARA_HEADER, rec.level, bytes(ph_payload), rec.offset
@@ -440,9 +541,14 @@ def apply_section_patches(
                     HWPTAG_PARA_TEXT, records[pt_idx].level, new_pt, records[pt_idx].offset
                 )
             else:
-                records.insert(i + 1, HwpRecord(
+                insert_pos = i + 1
+                records.insert(insert_pos, HwpRecord(
                     HWPTAG_PARA_TEXT, ph_level + 1, new_pt, 0
                 ))
+                if pcs_idx is None and new_char_cnt > 0:
+                    records.insert(insert_pos + 1, HwpRecord(
+                        HWPTAG_PARA_CHAR_SHAPE, ph_level + 1, new_pcs, 0
+                    ))
 
         # --- Equation patch ---
         if rec.offset in eq_map:

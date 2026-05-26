@@ -28,7 +28,7 @@ CharShape 바이너리 레이아웃 (74 bytes):
   70-73  strike_color: uint32
 
 ParaShape 바이너리 레이아웃 (88 bytes):
-  0-3    attr: uint32  (alignment = bits 2-4: 0=left, 1=right, 2=center, 3=justify)
+  0-3    attr: uint32  (alignment = bits 2-4: 0=justify, 1=left, 2=right, 3=center)
   4-27   margins/spacing: uint32[6] (left, right, top, bot, first, line_spacing)
   28-87  기타 (0으로 채움)
 """
@@ -62,7 +62,7 @@ _IDMAP_CHARSHAPE_OFF = 36
 _IDMAP_PARASHAPE_OFF = 52
 
 # 정렬 값 → attr bits 2-4
-_ALIGN_ATTR = {"left": 0, "right": 1, "center": 2, "justify": 3}
+_ALIGN_ATTR = {"justify": 0, "left": 1, "right": 2, "center": 3, "distribute": 4, "divide": 5}
 
 # 테이블 셀용 BorderFill: 4면 실선 1px 검정, 채움 없음 (f04_simple_table BF[3] 참조)
 _TABLE_CELL_BF = (
@@ -112,6 +112,7 @@ class CharShapeSpec:
     color_r: int = 0
     color_g: int = 0
     color_b: int = 0
+    font_name: str | None = None
 
 
 @dataclass
@@ -319,7 +320,23 @@ def _read_seed_faces(seed_docinfo_bytes: bytes) -> list[int]:
     return [0] * 7
 
 
-_ALIGN_FROM_ATTR = {0: "left", 1: "right", 2: "center", 3: "justify"}
+def _count_seed_faces(seed_docinfo_bytes: bytes) -> int:
+    """seed DocInfo에서 카테고리당 FaceName 레코드 수를 반환한다."""
+    count = 0
+    for rec in iter_records(seed_docinfo_bytes):
+        if rec.tag_id == HWPTAG_FACE_NAME:
+            count += 1
+    return count // 7 if count >= 7 else count
+
+
+def _pack_face_name(name: str) -> bytes:
+    """Build a minimal FaceName record payload (property + length + name)."""
+    encoded = name.encode("utf-16-le")
+    name_len = len(name)
+    return struct.pack("<BH", 0x01, name_len) + encoded
+
+
+_ALIGN_FROM_ATTR = {0: "justify", 1: "left", 2: "right", 3: "center", 4: "distribute", 5: "divide"}
 
 
 def read_seed_charshapes(seed_docinfo_bytes: bytes) -> list[CharShapeSpec]:
@@ -378,7 +395,7 @@ def read_seed_parashapes(seed_docinfo_bytes: bytes) -> list[ParaShapeSpec]:
         align_val = (attr >> 2) & 0x07
         left, right, top, bot, first, line_sp = struct.unpack_from("<6I", p, 4)
         result.append(ParaShapeSpec(
-            alignment=_ALIGN_FROM_ATTR.get(align_val, "left"),
+            alignment=_ALIGN_FROM_ATTR.get(align_val, "justify"),
             line_spacing=line_sp,
             indent_left=left,
             indent_right=right,
@@ -432,6 +449,7 @@ def build_docinfo(
     seed_bindata_count = 0
 
     seed_faces = _read_seed_faces(seed_docinfo_bytes)
+    seed_face_per_cat = _count_seed_faces(seed_docinfo_bytes)
 
     for rec in iter_records(seed_docinfo_bytes):
         if rec.tag_id == HWPTAG_BORDER_FILL:
@@ -447,10 +465,34 @@ def build_docinfo(
     if need_table_bf:
         first_extra_bf_id = seed_bf_count + 1
 
-    # 새 CS에 seed의 face_id 적용
+    # 새 폰트 → FaceName 레코드 생성 + face_id 매핑
+    unique_fonts: list[str] = []
+    font_to_face_id: dict[str, int] = {}
     for cs in char_shapes:
-        cs.face_hangul = seed_faces[0]
-        cs.face_latin = seed_faces[1]
+        if cs.font_name and cs.font_name not in font_to_face_id:
+            face_id = seed_face_per_cat + len(unique_fonts)
+            font_to_face_id[cs.font_name] = face_id
+            unique_fonts.append(cs.font_name)
+
+    # FaceName은 카테고리별로 정렬되어야 하므로,
+    # 각 카테고리의 마지막 시드 FaceName 뒤에 새 폰트를 삽입한다.
+    # _extra_face_by_cat[cat_idx] = [record bytes for that category]
+    _extra_face_by_cat: list[list[bytes]] = [[] for _ in range(7)]
+    for fname in unique_fonts:
+        payload = _pack_face_name(fname)
+        for cat in range(7):
+            _extra_face_by_cat[cat].append(_pack_record(HWPTAG_FACE_NAME, 1, payload))
+    n_new_faces_per_cat = len(unique_fonts)
+
+    # 새 CS에 face_id 적용
+    for cs in char_shapes:
+        if cs.font_name and cs.font_name in font_to_face_id:
+            fid = font_to_face_id[cs.font_name]
+            cs.face_hangul = fid
+            cs.face_latin = fid
+        else:
+            cs.face_hangul = seed_faces[0]
+            cs.face_latin = seed_faces[1]
     extra_cs = [_pack_record(HWPTAG_CHAR_SHAPE, 1, pack_char_shape(s)) for s in char_shapes]
     extra_ps = [_pack_record(HWPTAG_PARA_SHAPE, 1, pack_para_shape(s)) for s in para_shapes]
     extra_bd = []
@@ -477,6 +519,8 @@ def build_docinfo(
     n_new_bd = len(extra_bd)
 
     out_buf = b""
+    _face_cat_idx = 0
+    _face_in_cat = 0
     cs_appended = False
     ps_appended = False
     bf_appended = False
@@ -492,6 +536,12 @@ def build_docinfo(
             if n_new_bd and len(idmap) > _IDMAP_BINDATA_OFF + 3:
                 old = struct.unpack_from("<I", idmap, _IDMAP_BINDATA_OFF)[0]
                 struct.pack_into("<I", idmap, _IDMAP_BINDATA_OFF, old + n_new_bd)
+            # FaceName × 7 categories at offsets 4-28
+            if n_new_faces_per_cat:
+                for cat_off in range(4, 32, 4):
+                    if len(idmap) > cat_off + 3:
+                        old = struct.unpack_from("<I", idmap, cat_off)[0]
+                        struct.pack_into("<I", idmap, cat_off, old + n_new_faces_per_cat)
             if n_new_bf and len(idmap) > _IDMAP_BORDERFILL_OFF + 3:
                 old = struct.unpack_from("<I", idmap, _IDMAP_BORDERFILL_OFF)[0]
                 struct.pack_into("<I", idmap, _IDMAP_BORDERFILL_OFF, old + n_new_bf)
@@ -503,6 +553,16 @@ def build_docinfo(
                 struct.pack_into("<I", idmap, _IDMAP_PARASHAPE_OFF, old + n_new_ps)
             out_buf += _pack_record(rec.tag_id, rec.level, bytes(idmap))
             continue
+
+        if rec.tag_id == HWPTAG_FACE_NAME:
+            _face_in_cat += 1
+            if _face_in_cat >= seed_face_per_cat and _face_cat_idx < 7:
+                out_buf += _pack_record(rec.tag_id, rec.level, rec.payload)
+                for r in _extra_face_by_cat[_face_cat_idx]:
+                    out_buf += r
+                _face_cat_idx += 1
+                _face_in_cat = 0
+                continue
 
         if rec.tag_id == HWPTAG_BIN_DATA:
             last_bd_seen = True
@@ -534,6 +594,10 @@ def build_docinfo(
 
         out_buf += _pack_record(rec.tag_id, rec.level, rec.payload)
 
+    while _face_cat_idx < 7:
+        for r in _extra_face_by_cat[_face_cat_idx]:
+            out_buf += r
+        _face_cat_idx += 1
     if extra_bd and not bd_appended:
         for r in extra_bd:
             out_buf += r
