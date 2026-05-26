@@ -36,12 +36,12 @@ from udf.parsers.hwp.records import (
 )
 
 _ALIGN_MAP = {
-    0: "left",
-    1: "right",
-    2: "center",
-    3: "justify",
-    4: "justify",
-    5: "justify",
+    0: "justify",
+    1: "left",
+    2: "right",
+    3: "center",
+    4: "distribute",
+    5: "divide",
 }
 _UNDERLINE_TYPE_MAP = {0: None, 1: "solid", 2: "dot", 3: "dash", 4: "wave", 5: "double"}
 _LINE_SPACING_TYPE_MAP = {
@@ -287,7 +287,7 @@ def _parse_para_shape(payload: bytes) -> dict[str, Any]:
     바이너리 레이아웃 (54-88바이트, 버전에 따라 다름):
       0-3    attr1: uint32
                bits 0-1: line_spacing_type (0=ratio, 1=fixed, 2=leading_only, 3=minimum)
-               bits 2-4: alignment (0=left, 1=right, 2=center, 3=justify, 4=distribute, 5=divide)
+               bits 2-4: alignment (0=justify, 1=left, 2=right, 3=center, 4=distribute, 5=divide)
                bit 5: protect (과부/고아 제어)
                bit 6: start_new_page (강제 페이지 나눔)
                bit 7: with_next_paragraph (keep_with_next)
@@ -304,7 +304,7 @@ def _parse_para_shape(payload: bytes) -> dict[str, Any]:
     ls_type_val = attr & 0x3
 
     result: dict[str, Any] = {
-        "alignment": _ALIGN_MAP.get(align_val, "left"),
+        "alignment": _ALIGN_MAP.get(align_val, "justify"),
         "line_spacing_type": _LINE_SPACING_TYPE_MAP.get(ls_type_val, "ratio"),
         "protect": bool(attr & (1 << 5)) or None,
         "start_new_page": bool(attr & (1 << 6)) or None,
@@ -847,10 +847,17 @@ def parse_doc_info(stream_bytes: bytes) -> DocInfoResult:
         border_fills=border_fills,
         tab_defs=tab_defs,
     )
-    # BinData: bindata_items를 GlobalResources.bin_data에도 저장
+    # BinData: bindata_items를 GlobalResources.bin_data에 BinDataDef로 저장
+    from udf.pipeline.verbatim import BinDataDef
     bin_data_dict: dict[str, Any] = {}
     for i, bd in enumerate(bindata_items):
-        bin_data_dict[str(i)] = bd
+        bin_data_dict[str(i)] = BinDataDef(
+            flags=bd.get("flags"),
+            bin_type=str(bd.get("type", "")),
+            bin_id=bd.get("id"),
+            ext=bd.get("ext"),
+            stream=bd.get("stream"),
+        )
 
     gr.bin_data = bin_data_dict
 
