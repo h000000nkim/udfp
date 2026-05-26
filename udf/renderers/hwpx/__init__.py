@@ -70,7 +70,9 @@ def render_hwpx(
         for b in doc.blocks
     )
 
-    if has_verbatim and has_container and not has_structural_change:
+    has_content_change = getattr(doc, "_content_modified", False)
+
+    if has_verbatim and has_container and not has_structural_change and not has_content_change:
         _render_seed_patch(doc, output_path)
     else:
         _render_from_scratch(doc, output_path)

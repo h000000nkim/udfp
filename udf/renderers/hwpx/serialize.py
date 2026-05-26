@@ -125,7 +125,7 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
 
     # fontfaces — 한글 + Latin 기본
     fontfaces = etree.SubElement(ref_list, f"{_HH}fontfaces")
-    for lang in ("hangul", "latin", "hanja", "japanese", "other", "symbol", "user"):
+    for lang in ("HANGUL", "LATIN", "HANJA", "JAPANESE", "OTHER", "SYMBOL", "USER"):
         ff = etree.SubElement(fontfaces, f"{_HH}fontface")
         ff.set("lang", lang)
         font = etree.SubElement(ff, f"{_HH}font")
@@ -149,7 +149,7 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
     cp.set("textColor", "#000000")
     cp.set("shadeColor", "none")
     font_ref = etree.SubElement(cp, f"{_HH}fontRef")
-    for lang in ("hangul", "latin", "hanja", "japanese", "other", "symbol", "user"):
+    for lang in ("HANGUL", "LATIN", "HANJA", "JAPANESE", "OTHER", "SYMBOL", "USER"):
         font_ref.set(lang, "0")
 
     # paraProperties — 기본 paraPr 1개
