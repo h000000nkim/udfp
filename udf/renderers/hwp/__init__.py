@@ -54,19 +54,16 @@ _COMPRESS_FLAG_BIT = 0
 
 _RENDERER_VERSION = "0.1.0"
 
-_DEFAULT_SEED_CANDIDATES = [
-    "tests/fixtures/hwp/f01_plain_text.hwp",
-]
-
-
 def _find_default_seed() -> str | None:
-    """프로젝트 루트 기준으로 기본 seed HWP 파일을 찾는다."""
+    """패키지 내장 seed HWP 파일을 찾는다."""
     import pathlib
+    pkg_seed = pathlib.Path(__file__).resolve().parent / "seed" / "empty.hwp"
+    if pkg_seed.exists():
+        return str(pkg_seed)
     base = pathlib.Path(__file__).resolve().parent.parent.parent.parent
-    for candidate in _DEFAULT_SEED_CANDIDATES:
-        p = base / candidate
-        if p.exists():
-            return str(p)
+    fallback = base / "tests" / "fixtures" / "hwp" / "f01_plain_text.hwp"
+    if fallback.exists():
+        return str(fallback)
     return None
 
 
@@ -279,6 +276,70 @@ def _detect_color_override(block: ParagraphBlock | HeadingBlock) -> str | None:
     return None
 
 
+def _detect_per_inline_colors(
+    block: ParagraphBlock,
+) -> list[tuple[int, str]] | None:
+    """Detect per-inline color overrides.
+
+    Returns list of (inline_index, color_hex) for inlines with non-None
+    color, or None if no colors are set.
+    """
+    result = []
+    for idx, il in enumerate(block.inlines):
+        if isinstance(il, TextInline) and il.color:
+            result.append((idx, str(il.color)))
+    return result or None
+
+
+def _get_pcs_entries(pcs_b64: str | None) -> list[tuple[int, int]]:
+    """Extract all (pos, cs_id) pairs from base64-encoded PCS bytes."""
+    if not pcs_b64:
+        return []
+    pcs = base64.b64decode(pcs_b64)
+    entries = []
+    for i in range(0, len(pcs) - 7, 8):
+        pos, cs_id = struct.unpack_from("<II", pcs, i)
+        entries.append((pos, cs_id))
+    return entries
+
+
+def _map_pcs_to_inlines(
+    pt_b64: str, pcs_entries: list[tuple[int, int]],
+) -> dict[int, int]:
+    """Map PCS entry indices to TextInline indices.
+
+    PCS entries covering only control characters don't produce
+    TextInlines and are skipped in the mapping.
+    """
+    if not pt_b64 or not pcs_entries:
+        return {}
+    pt = base64.b64decode(pt_b64)
+    total_chars = len(pt) // 2
+
+    result: dict[int, int] = {}
+    inline_idx = 0
+    for pcs_idx, (pos, _) in enumerate(pcs_entries):
+        end = pcs_entries[pcs_idx + 1][0] if pcs_idx + 1 < len(pcs_entries) else total_chars
+        has_text = False
+        cp = pos
+        while cp < end and cp < total_chars:
+            byte_off = cp * 2
+            if byte_off + 2 > len(pt):
+                break
+            code = struct.unpack_from("<H", pt, byte_off)[0]
+            if code > 0x001F and code != 0xFFFF:
+                has_text = True
+                break
+            if code not in (0x0000, 0x0009, 0x000A, 0x000D):
+                cp += 8
+            else:
+                cp += 1
+        if has_text:
+            result[pcs_idx] = inline_idx
+            inline_idx += 1
+    return result
+
+
 def _get_pcs_first_cs_id(pcs_b64: str | None) -> int | None:
     """Extract the first charShapeId from base64-encoded PCS bytes."""
     if not pcs_b64:
@@ -302,7 +363,7 @@ def _apply_ast_patches(doc: UdfDocument) -> dict[str, list[tuple[int, int]]]:
     text_patches: dict[str, list[tuple[int, str]]] = {}
     eq_patches: dict[str, list[tuple[int, str]]] = {}
     tbl_attr_patches: dict[str, list[tuple[int, dict[str, bool]]]] = {}
-    style_requests: list[tuple[str, int, str, int | None]] = []
+    multi_style_requests: list[tuple[str, int, list[tuple[int, str, int]]]] = []
 
     for block in _iter_all_blocks(doc.blocks):
         ref = getattr(block, "verbatim_ref", None)
@@ -327,18 +388,32 @@ def _apply_ast_patches(doc: UdfDocument) -> dict[str, list[tuple[int, int]]]:
                 curr_text = block.text
 
             text_changed = orig_text.rstrip() != curr_text.rstrip()
-            target_color = _detect_color_override(block) if isinstance(block, ParagraphBlock) else None
-            orig_cs_id = _get_pcs_first_cs_id(decoded.get("pcs_bytes"))
+
+            per_inline_colors: list[tuple[int, str, int]] | None = None
+            if isinstance(block, ParagraphBlock):
+                inline_colors = _detect_per_inline_colors(block)
+                if inline_colors:
+                    pcs_entries = _get_pcs_entries(decoded.get("pcs_bytes"))
+                    pcs_to_inline = _map_pcs_to_inlines(pt_b64 or "", pcs_entries)
+                    inline_to_pcs = {v: k for k, v in pcs_to_inline.items()}
+                    per_inline_colors = []
+                    for il_idx, color_hex in inline_colors:
+                        pcs_idx = inline_to_pcs.get(il_idx)
+                        if pcs_idx is not None and pcs_idx < len(pcs_entries):
+                            _, base_cs = pcs_entries[pcs_idx]
+                            per_inline_colors.append((pcs_entries[pcs_idx][0], color_hex, base_cs))
+                    if not per_inline_colors and pcs_entries:
+                        per_inline_colors = [(-1, inline_colors[0][1], pcs_entries[0][1])]
 
             if text_changed:
                 section = decoded.get("section", "Section0")
                 text_patches.setdefault(section, []).append(
                     (int(ph_offset), curr_text)
                 )
-                if target_color and orig_cs_id is not None:
-                    style_requests.append((section, int(ph_offset), target_color, orig_cs_id))
-            elif target_color and orig_cs_id is not None:
-                style_requests.append((decoded.get("section", "Section0"), int(ph_offset), target_color, orig_cs_id))
+                if per_inline_colors:
+                    multi_style_requests.append((section, int(ph_offset), per_inline_colors))
+            elif per_inline_colors:
+                multi_style_requests.append((decoded.get("section", "Section0"), int(ph_offset), per_inline_colors))
 
         elif isinstance(block, EquationBlock):
             ph_offset = decoded.get("ph_offset")
@@ -367,9 +442,9 @@ def _apply_ast_patches(doc: UdfDocument) -> dict[str, list[tuple[int, int]]]:
                     )
 
     cs_override_result: dict[str, list[tuple[int, int]]] = {}
-    cs_overrides_by_section: dict[str, dict[int, int]] = {}
+    cs_overrides_by_section: dict[str, dict[int, dict[int, int]]] = {}
 
-    if style_requests and doc.original_container:
+    if multi_style_requests and doc.original_container:
         import zlib
         from udf.parsers.hwp.ole import OleReader
         try:
@@ -380,29 +455,39 @@ def _apply_ast_patches(doc: UdfDocument) -> dict[str, list[tuple[int, int]]]:
 
         if docinfo_raw is not None:
             docinfo_modified = docinfo_raw
-            for section, ph_off, target_color, base_cs_id in style_requests:
-                orig_color = get_charshape_color(docinfo_modified, base_cs_id)
-                if orig_color and orig_color.lower() == target_color.lower():
-                    continue
-                docinfo_modified, new_cs_id = find_or_add_charshape(
-                    docinfo_modified, base_cs_id, target_color
-                )
-                cs_overrides_by_section.setdefault(section, {})[ph_off] = new_cs_id
-                cs_override_result.setdefault(section, []).append((ph_off, new_cs_id))
-                if ph_off not in {off for off, _ in text_patches.get(section, [])}:
-                    vb_block = next(
-                        (b for b in _iter_all_blocks(doc.blocks)
-                         if isinstance(b, ParagraphBlock)
-                         and getattr(b, "verbatim_ref", None)
-                         and b.verbatim_ref in doc.verbatim.blocks
-                         and (doc.verbatim.blocks[b.verbatim_ref].decoded or {}).get("ph_offset") == ph_off),
-                        None,
+            for section, ph_off, per_entry_colors in multi_style_requests:
+                entry_overrides: dict[int, int] = {}
+                for pcs_pos, target_color, base_cs_id in per_entry_colors:
+                    orig_color = get_charshape_color(docinfo_modified, base_cs_id)
+                    if orig_color and orig_color.lower() == target_color.lower():
+                        continue
+                    docinfo_modified, new_cs_id = find_or_add_charshape(
+                        docinfo_modified, base_cs_id, target_color
                     )
-                    if vb_block:
-                        curr_text = "".join(
-                            i.text for i in vb_block.inlines if isinstance(i, TextInline)
+                    entry_overrides[pcs_pos] = new_cs_id
+                    cs_override_result.setdefault(section, []).append((ph_off, new_cs_id))
+
+                if entry_overrides:
+                    if -1 in entry_overrides and len(entry_overrides) == 1:
+                        cs_overrides_by_section.setdefault(section, {})[ph_off] = entry_overrides[-1]
+                    else:
+                        cleaned = {k: v for k, v in entry_overrides.items() if k >= 0}
+                        if cleaned:
+                            cs_overrides_by_section.setdefault(section, {})[ph_off] = cleaned
+                    if ph_off not in {off for off, _ in text_patches.get(section, [])}:
+                        vb_block = next(
+                            (b for b in _iter_all_blocks(doc.blocks)
+                             if isinstance(b, ParagraphBlock)
+                             and getattr(b, "verbatim_ref", None)
+                             and b.verbatim_ref in doc.verbatim.blocks
+                             and (doc.verbatim.blocks[b.verbatim_ref].decoded or {}).get("ph_offset") == ph_off),
+                            None,
                         )
-                        text_patches.setdefault(section, []).append((ph_off, curr_text))
+                        if vb_block:
+                            curr_text = "".join(
+                                i.text for i in vb_block.inlines if isinstance(i, TextInline)
+                            )
+                            text_patches.setdefault(section, []).append((ph_off, curr_text))
 
             if docinfo_modified != docinfo_raw:
                 compressed = _read_compress_flag(doc.original_container.path)
