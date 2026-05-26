@@ -65,6 +65,7 @@ udfp = "udfp:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["udf", "udfp"]
+artifacts = ["udf/renderers/hwp/seed/*.hwp"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
