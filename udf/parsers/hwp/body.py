@@ -1623,14 +1623,20 @@ def _parse_field_ctrl(
     value: str | None = None
 
     if ctrl_id == _CTRL_ID_ATNO and len(ctrl_rec.payload) >= 12:
-        num_kind = struct.unpack_from("<H", ctrl_rec.payload, 4)[0]
+        # Field common header: ctrl_id(4) + properties(4) + field-specific data
+        # For atno, numbering kind is uint32 at offset 8
+        num_kind = struct.unpack_from("<I", ctrl_rec.payload, 8)[0]
         value = _ATNO_KIND_MAP.get(num_kind, str(num_kind))
-    elif ctrl_id == _CTRL_ID_HLK and len(ctrl_rec.payload) >= 8:
+    elif ctrl_id == _CTRL_ID_HLK and len(ctrl_rec.payload) >= 11:
         try:
-            raw = ctrl_rec.payload[4:]
-            url_text = raw.decode("utf-16-le", errors="replace").split("\x00")[0]
-            if url_text:
-                value = url_text
+            # Field common header: ctrl_id(4) + properties(4) + etc_char(1) + strlen(2) + string
+            pay = ctrl_rec.payload
+            str_len = struct.unpack_from("<H", pay, 9)[0]
+            if str_len > 0 and len(pay) >= 11 + str_len * 2:
+                cmd_str = pay[11 : 11 + str_len * 2].decode("utf-16-le", errors="replace")
+                url = cmd_str.split(";")[0]
+                if url:
+                    value = url.replace("\\:", ":").replace("\\#", "#").replace("\\?", "?")
         except Exception:
             pass
 

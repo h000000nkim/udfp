@@ -39,8 +39,8 @@ _ALIGN_MAP = {
     "LEFT": "left",
     "RIGHT": "right",
     "CENTER": "center",
-    "DISTRIBUTE": "justify",
-    "DIVIDE": "justify",
+    "DISTRIBUTE": "distribute",
+    "DIVIDE": "divide",
 }
 
 _LS_TYPE_MAP = {
