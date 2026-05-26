@@ -35,6 +35,11 @@ from udf.renderers.docx.serialize import (
 _RENDERER_VERSION = "0.1.0"
 
 
+def _detect_content_changes(doc: UdfDocument) -> bool:
+    """Check if the document has been modified since parsing."""
+    return getattr(doc, "_content_modified", False)
+
+
 class DocxRenderError(Exception):
     pass
 
@@ -81,9 +86,12 @@ def render_docx(
     has_structural_change = any(
         not getattr(b, "verbatim_ref", None)
         for b in doc.blocks
+        if not isinstance(b, (HeaderBlock, FooterBlock))
     )
 
-    if has_verbatim and has_container and not has_structural_change:
+    has_content_change = _detect_content_changes(doc) if has_verbatim else False
+
+    if has_verbatim and has_container and not has_structural_change and not has_content_change:
         _render_seed_patch(doc, output_path)
     else:
         _render_from_scratch(doc, output_path)
@@ -121,6 +129,14 @@ def _render_from_scratch(doc: UdfDocument, output_path: str) -> None:
     """From Scratch: Document Model에서 모든 XML을 생성."""
     entries: dict[str, bytes] = {}
 
+    # Seed verbatim streams first (everything except document.xml).
+    # Only use DOCX verbatim — HWP/HWPX streams must not leak into DOCX.
+    if doc.verbatim and doc.verbatim.format == "docx" and doc.verbatim.section_streams:
+        for stream_name, b64_data in doc.verbatim.section_streams.items():
+            if stream_name == "word/document.xml":
+                continue
+            entries[stream_name] = base64.b64decode(b64_data)
+
     has_list = any(isinstance(b, ListBlock) for b in doc.blocks)
 
     headers = [b for b in doc.blocks if isinstance(b, HeaderBlock)]
@@ -142,33 +158,56 @@ def _render_from_scratch(doc: UdfDocument, output_path: str) -> None:
 
     header_rids = [f"rHdr{i}" for i in range(1, len(headers) + 1)]
     footer_rids = [f"rFtr{i}" for i in range(1, len(footers) + 1)]
-    doc_xml, hyperlink_rels = blocks_to_document_xml(
+    doc_xml, hyperlink_rels, image_rels = blocks_to_document_xml(
         doc.blocks, doc,
         header_rids=header_rids or None,
         footer_rids=footer_rids or None,
     )
     entries["word/document.xml"] = doc_xml
-    entries["word/styles.xml"] = build_styles_xml()
 
-    numbering_bytes = build_numbering_xml(doc.blocks)
-    if numbering_bytes is not None:
-        entries["word/numbering.xml"] = numbering_bytes
+    if "word/styles.xml" not in entries:
+        entries["word/styles.xml"] = build_styles_xml()
+
+    if "word/numbering.xml" not in entries:
+        numbering_bytes = build_numbering_xml(doc.blocks)
+        if numbering_bytes is not None:
+            entries["word/numbering.xml"] = numbering_bytes
+
+    has_numbering = "word/numbering.xml" in entries
+    has_footnotes = bool(footnotes) or "word/footnotes.xml" in entries
+    has_endnotes = "word/endnotes.xml" in entries
+    has_font_table = "word/fontTable.xml" in entries
+    has_theme = "word/theme/theme1.xml" in entries
+    has_web_settings = "word/webSettings.xml" in entries
+    has_app_props = "docProps/app.xml" in entries
 
     entries["[Content_Types].xml"] = build_content_types_xml(
-        has_numbering=has_list,
-        has_footnotes=bool(footnotes),
+        has_numbering=has_numbering,
+        has_footnotes=has_footnotes,
+        has_endnotes=has_endnotes,
+        has_font_table=has_font_table,
+        has_theme=has_theme,
+        has_web_settings=has_web_settings,
+        has_app_props=has_app_props,
         header_count=len(headers),
         footer_count=len(footers),
     )
-    entries["_rels/.rels"] = build_rels_xml()
+    entries["_rels/.rels"] = build_rels_xml(has_app_props=has_app_props)
     entries["word/_rels/document.xml.rels"] = build_document_rels_xml(
         has_styles=True,
-        has_numbering=has_list,
+        has_numbering=has_numbering,
+        has_footnotes=has_footnotes,
+        has_endnotes=has_endnotes,
+        has_font_table=has_font_table,
+        has_theme=has_theme,
+        has_web_settings=has_web_settings,
+        image_rels=image_rels or None,
         hyperlink_rels=hyperlink_rels,
         header_footer_rels=hf_rels,
     )
 
-    entries["word/settings.xml"] = build_settings_xml()
+    if "word/settings.xml" not in entries:
+        entries["word/settings.xml"] = build_settings_xml()
 
     title = ""
     creator = ""
