@@ -129,6 +129,10 @@ def parse_docx(path: str) -> UdfDocument:
             "word/settings.xml",
             "word/footnotes.xml",
             "word/endnotes.xml",
+            "word/fontTable.xml",
+            "word/theme/theme1.xml",
+            "word/webSettings.xml",
+            "docProps/app.xml",
         ):
             if xml_name in names:
                 section_streams[xml_name] = base64.b64encode(zf.read(xml_name)).decode()
