@@ -22,6 +22,7 @@ from udf.core.schema import (
     FooterBlock,
     HeaderBlock,
     HeadingBlock,
+    ImageBlock,
     ImageInline,
     ListBlock,
     PageBreakBlock,
@@ -575,11 +576,8 @@ class TestImageInlineType:
         )
         doc = parse_docx(path)
         b = doc.blocks[0]
-        assert isinstance(b, ParagraphBlock)
-        assert len(b.inlines) == 1
-        il = b.inlines[0]
-        assert isinstance(il, ImageInline)
-        assert "image1.png" in il.src
+        assert isinstance(b, ImageBlock)
+        assert "image1.png" in b.src
 
 
 class TestTrackedInsertText:

@@ -259,6 +259,97 @@ class TestFromScratchTable:
         assert gs is not None
         assert gs.get(_w("val")) == "2"
 
+    def test_table_row_span_vmerge(self):
+        """row_span > 1 → vMerge restart + continuation cells."""
+        doc = _make_doc([
+            TableBlock(
+                type="table",
+                id="t1",
+                rows=[
+                    TableRow(cells=[
+                        TableCell(id="c1", row_span=2, content=[
+                            ParagraphBlock(type="paragraph", id="p1",
+                                           inlines=[TextInline(text="A")]),
+                        ]),
+                        TableCell(id="c2", content=[
+                            ParagraphBlock(type="paragraph", id="p2",
+                                           inlines=[TextInline(text="B")]),
+                        ]),
+                    ]),
+                    TableRow(cells=[
+                        TableCell(id="c3", content=[
+                            ParagraphBlock(type="paragraph", id="p3",
+                                           inlines=[TextInline(text="C")]),
+                        ]),
+                    ]),
+                ],
+            ),
+        ])
+        root = _generate_and_read_xml(doc)
+        tbl = root.find(f".//{_w('tbl')}")
+        trs = tbl.findall(_w("tr"))
+        assert len(trs) == 2
+
+        # Row 0: cell A has vMerge restart, cell B is normal
+        tcs0 = trs[0].findall(_w("tc"))
+        assert len(tcs0) == 2
+        vm0 = tcs0[0].find(f"./{_w('tcPr')}/{_w('vMerge')}")
+        assert vm0 is not None
+        assert vm0.get(_w("val")) == "restart"
+
+        # Row 1: continuation cell (vMerge, no val) + cell C
+        tcs1 = trs[1].findall(_w("tc"))
+        assert len(tcs1) == 2
+        vm1 = tcs1[0].find(f"./{_w('tcPr')}/{_w('vMerge')}")
+        assert vm1 is not None
+        assert vm1.get(_w("val")) is None  # continue = no val attribute
+        assert tcs1[1].find(f".//{_w('t')}").text == "C"
+
+    def test_colspan_gridcol_distribution(self):
+        """col_span > 1 → cell width split evenly across grid columns."""
+        doc = _make_doc([
+            TableBlock(
+                type="table",
+                id="t1",
+                rows=[
+                    TableRow(cells=[
+                        TableCell(id="c1", col_span=2, width=200.0, content=[
+                            ParagraphBlock(type="paragraph", id="p1",
+                                           inlines=[TextInline(text="Wide")]),
+                        ]),
+                        TableCell(id="c2", width=100.0, content=[
+                            ParagraphBlock(type="paragraph", id="p2",
+                                           inlines=[TextInline(text="Narrow")]),
+                        ]),
+                    ]),
+                    TableRow(cells=[
+                        TableCell(id="c3", width=100.0, content=[
+                            ParagraphBlock(type="paragraph", id="p3",
+                                           inlines=[TextInline(text="A")]),
+                        ]),
+                        TableCell(id="c4", width=100.0, content=[
+                            ParagraphBlock(type="paragraph", id="p4",
+                                           inlines=[TextInline(text="B")]),
+                        ]),
+                        TableCell(id="c5", width=100.0, content=[
+                            ParagraphBlock(type="paragraph", id="p5",
+                                           inlines=[TextInline(text="C")]),
+                        ]),
+                    ]),
+                ],
+            ),
+        ])
+        root = _generate_and_read_xml(doc)
+        tbl = root.find(f".//{_w('tbl')}")
+        grid = tbl.find(_w("tblGrid"))
+        grid_cols = grid.findall(_w("gridCol"))
+        assert len(grid_cols) == 3
+        widths = [int(gc.get(_w("w"))) for gc in grid_cols]
+        # 200pt col_span=2 → 100pt each = 2000 twips each; 100pt → 2000 twips
+        assert widths[0] == 2000
+        assert widths[1] == 2000
+        assert widths[2] == 2000
+
 
 class TestFromScratchBoldItalic:
     """From Scratch 모드: 인라인 서식."""
@@ -669,6 +760,47 @@ class TestRoundtripParseGenerateParse:
         assert "A" in cell_texts
         assert "D" in cell_texts
 
+    def test_roundtrip_table_rowspan(self):
+        """rowspan이 라운드트립(generate→parse) 후 보존."""
+        from udf.parsers.docx.parse import parse_docx
+
+        doc1 = _make_doc([
+            TableBlock(
+                type="table",
+                id="t1",
+                rows=[
+                    TableRow(cells=[
+                        TableCell(id="c1", row_span=2, content=[
+                            ParagraphBlock(type="paragraph", id="p1",
+                                           inlines=[TextInline(text="span2")]),
+                        ]),
+                        TableCell(id="c2", content=[
+                            ParagraphBlock(type="paragraph", id="p2",
+                                           inlines=[TextInline(text="B")]),
+                        ]),
+                    ]),
+                    TableRow(cells=[
+                        TableCell(id="c3", content=[
+                            ParagraphBlock(type="paragraph", id="p3",
+                                           inlines=[TextInline(text="C")]),
+                        ]),
+                    ]),
+                ],
+            ),
+        ])
+
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as f:
+            gen_path = f.name
+        generate_docx(doc1, gen_path)
+        doc2 = parse_docx(gen_path)
+
+        t_blocks = [b for b in doc2.blocks if isinstance(b, TableBlock)]
+        assert len(t_blocks) == 1
+        tbl = t_blocks[0]
+        assert len(tbl.rows) == 2
+        assert tbl.rows[0].cells[0].row_span == 2
+        assert len(tbl.rows[1].cells) == 1
+
     def test_roundtrip_bold_formatting(self):
         """볼드 서식이 라운드트립 후 보존."""
         from tests.unit.docx.test_parse import _create_docx, _make_paragraph
@@ -837,8 +969,11 @@ class TestBlockTypeCoverage:
         body = root.find(_w("body"))
         paras = body.findall(_w("p"))
         assert len(paras) == 1
-        text = "".join(t.text or "" for t in paras[0].iter(f"{{{_W_NS}}}t"))
-        assert "E=mc^2" in text
+        _M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+        omml = paras[0].find(f".//{{{_M_NS}}}oMathPara")
+        assert omml is not None, "equation should produce OMML, not plain text"
+        math_text = "".join(t.text or "" for t in omml.iter(f"{{{_M_NS}}}t"))
+        assert "E" in math_text and "mc" in math_text
 
     def test_footnote_block_inlined(self):
         doc = _make_doc([
@@ -887,7 +1022,12 @@ class TestBlockTypeCoverage:
         root = _generate_and_read_xml(doc)
         body = root.find(_w("body"))
         text = "".join(t.text or "" for t in body.iter(f"{{{_W_NS}}}t"))
-        assert "a^2+b^2" in text
+        assert "공식:" in text.replace(" ", "")
+        _M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+        omml = body.find(f".//{{{_M_NS}}}oMath")
+        assert omml is not None, "inline equation should produce OMML"
+        math_text = "".join(t.text or "" for t in omml.iter(f"{{{_M_NS}}}t"))
+        assert "a" in math_text and "b" in math_text
 
     def test_footnote_ref_inline(self):
         doc = _make_doc([

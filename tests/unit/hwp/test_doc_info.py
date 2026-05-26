@@ -181,17 +181,21 @@ class TestParseParaShape:
         struct.pack_into("<I", buf, 0, attr)
         return bytes(buf)
 
-    def test_left_align(self) -> None:
+    def test_justify_align_0(self) -> None:
         ps = _parse_para_shape(self._make_payload(align=0))
+        assert ps["alignment"] == "justify"
+
+    def test_left_align(self) -> None:
+        ps = _parse_para_shape(self._make_payload(align=1))
         assert ps["alignment"] == "left"
 
-    def test_center_align(self) -> None:
+    def test_right_align(self) -> None:
         ps = _parse_para_shape(self._make_payload(align=2))
-        assert ps["alignment"] == "center"
+        assert ps["alignment"] == "right"
 
-    def test_justify_align(self) -> None:
+    def test_center_align(self) -> None:
         ps = _parse_para_shape(self._make_payload(align=3))
-        assert ps["alignment"] == "justify"
+        assert ps["alignment"] == "center"
 
     def test_line_spacing_type_ratio(self) -> None:
         ps = _parse_para_shape(self._make_payload(ls_type=0))
@@ -244,7 +248,7 @@ class TestParseDocInfo:
 
     def test_para_shape_collected(self) -> None:
         ps_payload = bytearray(54)
-        struct.pack_into("<I", ps_payload, 0, 2 << 2)  # center
+        struct.pack_into("<I", ps_payload, 0, 3 << 2)  # center
         stream = self._stream([_make_record(HWPTAG_PARA_SHAPE, 0, bytes(ps_payload))])
         result = parse_doc_info(stream)
         assert len(result.para_shapes) == 1
@@ -257,7 +261,7 @@ class TestParseDocInfo:
         struct.pack_into("<I", cs_payload, 46, attr)
 
         ps_payload = bytearray(54)
-        struct.pack_into("<I", ps_payload, 0, 2 << 2)  # center
+        struct.pack_into("<I", ps_payload, 0, 3 << 2)  # center
 
         style_name = "본문"
         encoded_name = style_name.encode("utf-16-le")
