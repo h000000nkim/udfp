@@ -6,7 +6,6 @@ PDF 파서를 통하지 않으므로 렌더러 로직만 독립적으로 테스�
 
 from __future__ import annotations
 
-import pytest
 
 from udf.renderers.html import render_html
 from udf.core.schema import (

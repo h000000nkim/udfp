@@ -242,7 +242,7 @@ def create_server() -> FastMCP:
         gutter: 다단 간격 (mm)
         output_path: 저장 경로 (미지정 시 원본 파일 덮어쓰기)
         """
-        from udfp.create import _PAPER_SIZES, _build_page_settings
+        from udfp.create import _build_page_settings
         try:
             if not os.path.exists(path):
                 return f"Error: File not found: {path}"

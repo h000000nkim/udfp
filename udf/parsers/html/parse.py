@@ -10,7 +10,7 @@ from __future__ import annotations
 import itertools
 import re
 from html.parser import HTMLParser
-from typing import Any, cast
+from typing import Any
 
 from udf.core.ids import make_block_id
 from udf.schema import (
@@ -501,7 +501,7 @@ def _parse_table_node(
     bid: str,
     counter: itertools.count[int],
 ) -> TableBlock:
-    sty = _parse_style(node.get("style"))
+    _parse_style(node.get("style"))
     rows: list[TableRow] = []
 
     for tr in node.children:

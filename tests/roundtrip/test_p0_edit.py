@@ -68,7 +68,7 @@ class TestP0SingleEdit:
         edited_md = md.replace(_escape_md(first_text), new_text)
 
         out = str(tmp_path / filename)
-        report = patch_hwp_from_md(orig_path, edited_md, out)
+        patch_hwp_from_md(orig_path, edited_md, out)
 
         doc_rt = parse_hwp(out)
         rt_texts = _all_texts(doc_rt)

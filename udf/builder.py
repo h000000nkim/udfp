@@ -20,7 +20,6 @@ Usage:
 from __future__ import annotations
 
 import itertools
-from typing import Any
 
 from udf.schema.blocks import (
     Block,

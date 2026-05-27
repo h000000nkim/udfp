@@ -4,18 +4,15 @@ from __future__ import annotations
 
 import itertools
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from udf.core.schema import (
     HeadingBlock,
-    LinkInline,
     ListBlock,
     ParagraphBlock,
     TableBlock,
-    TextInline,
     UdfDocument,
 )
 from udf.schema import (
@@ -30,7 +27,6 @@ from udf.parsers.pdf.parse import (
     parse_pdf,
 )
 from udf.parsers.pdf.layout import (
-    _Column,
     _ExtractedBlock,
     _detect_columns,
     _detect_footnotes,
@@ -356,7 +352,6 @@ class TestFootnoteDetection:
 
     def test_footnote_regex_matches(self) -> None:
         """하단 텍스트가 숫자로 시작하는 패턴 확인 (함수 내부 로직 간접 테스트)."""
-        import re
         from udf.parsers.pdf.layout import _FOOTNOTE_RE
 
         assert _FOOTNOTE_RE.match("1. First footnote") is not None

@@ -511,7 +511,7 @@ def _render_page(
     # 텍스트 y 추정: 누적 높이, 이미지 y를 앵커로 보정
     cursor_y = 0.0
     text_with_y: list[tuple[float, int, Block]] = []
-    img_anchors = [y for y, _, _ in img_queue]
+    [y for y, _, _ in img_queue]
 
     for idx, (i, b) in enumerate(text_blocks):
         # 이 텍스트 블록의 스트림 위치(i) 이전에 있는 이미지들의 y로 보정
@@ -873,7 +873,6 @@ def _estimate_block_height(b: Block, content_width: float = 481.0) -> float:
             return h + para_spacing
     if isinstance(b, TableBlock):
         total = 0.0
-        seen_rows: set[int] = set()
         for row in (b.rows or []):
             max_h = 0.0
             for cell in row.cells:
@@ -1069,7 +1068,7 @@ def _abs_position_styles(pos: Any, ctx: _HtmlCtx) -> list[str]:
         top = ctx.margin_top + y_pt
     else:
         top = ctx.margin_top + ctx.flow_cursor_y + y_pt
-    sty = [f"position:absolute", f"left:{left:.1f}pt", f"top:{top:.1f}pt"]
+    sty = ["position:absolute", f"left:{left:.1f}pt", f"top:{top:.1f}pt"]
     if pos.flow == "front":
         sty.append("z-index:10")
     elif pos.flow == "back":

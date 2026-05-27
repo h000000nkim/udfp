@@ -8,7 +8,6 @@ from __future__ import annotations
 from lxml import etree
 
 from udf.core.schema import (
-    HeadingBlock,
     ImageBlock,
     ParagraphBlock,
     TableBlock,
@@ -23,10 +22,8 @@ from tests.unit.docx.test_parse import (
     _R_NS,
     _W_NS,
     _WP_NS,
-    _build_styles_xml,
     _create_docx,
     _make_paragraph,
-    _make_table,
 )
 
 _NSMAP = {"w": _W_NS, "r": _R_NS}
@@ -371,7 +368,7 @@ class TestImageCrop:
             for attr, val in crop.items():
                 src_rect.set(attr, val)
 
-        sp_pr = etree.SubElement(pic, f"{{{_PIC_NS}}}spPr")
+        etree.SubElement(pic, f"{{{_PIC_NS}}}spPr")
 
         rels = {
             "rId1": (

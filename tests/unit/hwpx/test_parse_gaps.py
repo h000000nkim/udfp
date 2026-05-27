@@ -14,7 +14,7 @@ from udf.schema import ListBlock, ParagraphBlock, TextInline
 from udf.schema.types import Color
 from udf.pipeline.verbatim import GlobalResources
 from udf.parsers.hwp.doc_info import DocInfoResult
-from udf.parsers.hwpx.header import _parse_single_char_pr, NS
+from udf.parsers.hwpx.header import _parse_single_char_pr
 from udf.parsers.hwpx.section import (
     _build_para_format,
     _extract_from_page_pr,

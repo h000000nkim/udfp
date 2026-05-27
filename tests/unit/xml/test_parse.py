@@ -17,7 +17,6 @@ from udf.core.schema import (
     ParagraphBlock,
     QuoteBlock,
     TableBlock,
-    UnknownBlock,
 )
 
 
@@ -106,8 +105,8 @@ class TestDocBook:
     def test_lists(self):
         lists = [b for b in self.doc.blocks if isinstance(b, ListBlock)]
         assert len(lists) >= 3
-        unordered = [l for l in lists if not l.ordered]
-        ordered = [l for l in lists if l.ordered]
+        unordered = [ln for ln in lists if not ln.ordered]
+        ordered = [ln for ln in lists if ln.ordered]
         assert len(unordered) >= 1
         assert len(ordered) >= 1
 
@@ -152,9 +151,9 @@ class TestDocBook:
 
     def test_variable_list(self):
         lists = [b for b in self.doc.blocks if isinstance(b, ListBlock)]
-        var_lists = [l for l in lists if not l.ordered and any(
+        var_lists = [ln for ln in lists if not ln.ordered and any(
             any(getattr(i, "bold", False) for i in item.inlines)
-            for item in l.items
+            for item in ln.items
         )]
         assert len(var_lists) >= 1
 
@@ -201,8 +200,8 @@ class TestGeneric:
     def test_lists(self):
         lists = [b for b in self.doc.blocks if isinstance(b, ListBlock)]
         assert len(lists) >= 2
-        unordered = [l for l in lists if not l.ordered]
-        ordered = [l for l in lists if l.ordered]
+        unordered = [ln for ln in lists if not ln.ordered]
+        ordered = [ln for ln in lists if ln.ordered]
         assert len(unordered) >= 1
         assert len(ordered) >= 1
 

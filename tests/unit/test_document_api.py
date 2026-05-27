@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
 
 from udf.pipeline.document import UdfDocument
 from udf.schema.blocks import (
     Block,
     FootnoteBlock,
     HeadingBlock,
-    ListBlock,
-    ListItem,
     ParagraphBlock,
     TableBlock,
     TableCell,

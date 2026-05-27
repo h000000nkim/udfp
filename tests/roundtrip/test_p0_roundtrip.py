@@ -15,7 +15,7 @@ import pathlib
 import pytest
 
 from udf.core.loss import diff_documents
-from udf.core.schema import ParagraphBlock, HeadingBlock, TableBlock, TextInline
+from udf.core.schema import ParagraphBlock, HeadingBlock, TextInline
 from udf.renderers.hwp import generate_hwp
 from udf.parsers.hwp.parse import parse_hwp
 from udf.parsers.md.parse import parse_md

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from udf.core.schema import BlockLoss, LossCategory, LossReport, UdfDocument
+
+if TYPE_CHECKING:
+    from udf.core.schema import ParagraphBlock, TableBlock
 
 
 def build_loss_report(doc: UdfDocument, lossy: list[BlockLoss]) -> LossReport:

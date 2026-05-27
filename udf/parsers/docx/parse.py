@@ -18,17 +18,17 @@ from lxml import etree
 
 _HUGE_PARSER = etree.XMLParser(huge_tree=True)
 
-from udf.schema import (
+from udf.schema import (  # noqa: E402
     ColumnDef,
     DocumentMetadata,
     DocumentSchema,
     PageMargins,
     SectionDef,
 )
-from udf.pipeline import UdfDocument, VerbatimLayer
-from udf.pipeline.container import ConversionTrace, OriginalContainer
-from udf.pipeline.verbatim import GlobalResources
-from udf.parsers.docx.document import (
+from udf.pipeline import UdfDocument, VerbatimLayer  # noqa: E402
+from udf.pipeline.container import ConversionTrace, OriginalContainer  # noqa: E402
+from udf.pipeline.verbatim import GlobalResources  # noqa: E402
+from udf.parsers.docx.document import (  # noqa: E402
     extract_all_sections,
     parse_document_body,
     parse_endnotes_xml,
@@ -36,7 +36,7 @@ from udf.parsers.docx.document import (
     parse_footnotes_xml,
     parse_header_xml,
 )
-from udf.parsers.docx.styles import NS, parse_style_info
+from udf.parsers.docx.styles import NS, parse_style_info  # noqa: E402
 
 _PARSER_VERSION = "0.1.0"
 

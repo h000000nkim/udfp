@@ -14,7 +14,6 @@ from udf.renderers.hwp.docinfo_builder import (
 from udf.parsers.hwp.records import (
     HWPTAG_CHAR_SHAPE,
     HWPTAG_ID_MAPPINGS,
-    HWPTAG_PARA_SHAPE,
     iter_records,
 )
 from udf.validation.hwp.integrity import (
