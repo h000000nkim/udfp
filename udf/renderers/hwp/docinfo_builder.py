@@ -36,7 +36,7 @@ ParaShape 바이너리 레이아웃 (88 bytes):
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from udf.parsers.hwp.records import (
     HWPTAG_BIN_DATA,
@@ -50,7 +50,6 @@ from udf.parsers.hwp.records import (
     HWPTAG_PARA_SHAPE,
     HWPTAG_STYLE,
     HWPTAG_TAB_DEF,
-    HwpRecord,
     iter_records,
 )
 

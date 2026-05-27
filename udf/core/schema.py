@@ -1,4 +1,5 @@
 """Backward compatibility — all types now in udf.schema and udf.pipeline."""
+# ruff: noqa: F401
 
 from udf.schema.blocks import (
     Block,
@@ -52,7 +53,7 @@ from udf.schema.metadata import (
     SectionDef,
 )
 from udf.pipeline.container import ConversionTrace, OriginalContainer
-from udf.pipeline.document import UdfDocument, UdfDocument
+from udf.pipeline.document import UdfDocument
 from udf.pipeline.loss import BlockLoss, LossCategory, LossReport
 from udf.pipeline.verbatim import (
     BinDataDef,

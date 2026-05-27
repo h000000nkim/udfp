@@ -8,7 +8,6 @@ container is available; falls back to From Scratch mode otherwise.
 from __future__ import annotations
 
 import base64
-import shutil
 import zipfile
 from io import BytesIO
 
@@ -138,7 +137,7 @@ def _render_from_scratch(doc: UdfDocument, output_path: str) -> None:
                 continue
             entries[stream_name] = base64.b64decode(b64_data)
 
-    has_list = any(isinstance(b, ListBlock) for b in doc.blocks)
+    any(isinstance(b, ListBlock) for b in doc.blocks)
 
     headers = [b for b in doc.blocks if isinstance(b, HeaderBlock)]
     footers = [b for b in doc.blocks if isinstance(b, FooterBlock)]

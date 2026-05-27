@@ -44,14 +44,10 @@ from udf.renderers.hwp.docinfo_builder import (
     CharShapeSpec,
     ParaShapeSpec,
     build_docinfo,
-    pack_border_fill,
-    pack_char_shape,
-    pack_para_shape,
     read_seed_charshapes,
     read_seed_parashapes,
 )
 from udf.renderers.hwp.ole_patch import add_hwp_stream, patch_hwp_stream
-from udf.parsers.hwp.doc_info import parse_doc_info
 from udf.parsers.hwp.ole import OleReader
 
 

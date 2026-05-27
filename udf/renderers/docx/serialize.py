@@ -32,6 +32,7 @@ from udf.core.schema import (
     QuoteBlock,
     SectionDef,
     TableBlock,
+    TableCell,
     TextBoxBlock,
     TextInline,
     UdfDocument,

@@ -1199,7 +1199,6 @@ def _extract_nested_textboxes(
     while i < len(ctrl_children):
         rec = ctrl_children[i]
         if rec.tag_id == HWPTAG_LIST_HEADER:
-            lh_rec = rec
             lh_level = rec.level
             # 직전 SHAPE_COMPONENT에서 위치/스타일 추출
             pos = None
@@ -1585,8 +1584,8 @@ def _extract_equation_latex(
 # body.py의 기존 _hwp_script_to_latex / _tokenize_hwp_eq는
 # udf.parsers.hwp.equation 모듈로 이전됨.
 # 하위 호환을 위한 re-export:
-from udf.parsers.hwp.equation import hwp_script_to_latex as _hwp_script_to_latex  # noqa: F401
-from udf.parsers.hwp.equation import tokenize as _tokenize_hwp_eq  # noqa: F401
+from udf.parsers.hwp.equation import hwp_script_to_latex as _hwp_script_to_latex  # noqa: F401, E402
+from udf.parsers.hwp.equation import tokenize as _tokenize_hwp_eq  # noqa: F401, E402
 
 
 # ---------------------------------------------------------------------------

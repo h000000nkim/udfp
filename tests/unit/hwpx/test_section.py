@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
-import pytest
 
 from udf.schema import (
     EndnoteBlock,
@@ -60,7 +58,7 @@ def _wrap_run(inner_xml: str, char_pr="0") -> str:
 # ---------------------------------------------------------------------------
 
 # DocInfoResult는 dataclass이므로 직접 import하여 사용
-from udf.parsers.hwp.doc_info import DocInfoResult
+from udf.parsers.hwp.doc_info import DocInfoResult  # noqa: E402
 
 
 def _make_info(

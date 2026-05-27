@@ -8,7 +8,6 @@ from __future__ import annotations
 import io
 import tempfile
 import zipfile
-from pathlib import Path
 
 import pytest
 from lxml import etree
@@ -24,12 +23,10 @@ from udf.core.schema import (
     HeaderBlock,
     HeadingBlock,
     ImageBlock,
-    ImageInline,
     ListBlock,
     PageBreakBlock,
     ParagraphBlock,
     TableBlock,
-    TextBoxBlock,
     TextInline,
     LinkInline,
 )
@@ -1210,7 +1207,7 @@ class TestSdtParsing:
 
     def _make_sdt(self, text: str) -> etree._Element:
         sdt = etree.Element(_w("sdt"), nsmap=_NSMAP)
-        sdt_pr = etree.SubElement(sdt, _w("sdtPr"))
+        etree.SubElement(sdt, _w("sdtPr"))
         sdt_content = etree.SubElement(sdt, _w("sdtContent"))
         sdt_content.append(_make_paragraph(text))
         return sdt

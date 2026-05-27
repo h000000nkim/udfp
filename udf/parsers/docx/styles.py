@@ -9,9 +9,8 @@ from lxml import etree
 
 _HUGE_PARSER = etree.XMLParser(huge_tree=True)
 
-from udf.schema import BlockFormat
-from udf.schema.types import twip_to_pt as _twip_to_pt
-from udf.pipeline.verbatim import NumberingDef, NumberingLevel, StyleDef
+from udf.schema import BlockFormat  # noqa: E402
+from udf.pipeline.verbatim import NumberingDef, NumberingLevel, StyleDef  # noqa: E402
 
 NS = {
     "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",

@@ -761,7 +761,7 @@ def _parse_table_cell(
             height = h / _HWPUNIT_PER_PT
 
     # format
-    border_fill_id_ref = tc_el.get("borderFillIDRef")
+    tc_el.get("borderFillIDRef")
     cell_margin_el = tc_el.find("hp:cellMargin", NS)
     sub_list_el = tc_el.find("hp:subList", NS)
 

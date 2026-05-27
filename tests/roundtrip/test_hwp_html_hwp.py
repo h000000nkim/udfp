@@ -154,7 +154,7 @@ class TestHwpHtmlTextEdit:
 
         out = str(tmp_path / "noedit_f01.hwp")
         report = patch_hwp_from_html(orig_path, html, out)
-        assert report.is_roundtrip_safe, f"LossReport not safe"
+        assert report.is_roundtrip_safe, "LossReport not safe"
 
         doc_rt = parse_hwp(out)
         assert _all_texts(doc_orig) == _all_texts(doc_rt)

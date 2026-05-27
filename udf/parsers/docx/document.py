@@ -10,10 +10,9 @@ from lxml import etree
 _HUGE_PARSER = etree.XMLParser(huge_tree=True)
 _RECOVER_PARSER = etree.XMLParser(huge_tree=True, recover=True)
 
-from udf.core.ids import make_block_id, make_verbatim_id
-from udf.schema import (
+from udf.core.ids import make_block_id, make_verbatim_id  # noqa: E402
+from udf.schema import (  # noqa: E402
     Block,
-    BlockFormat,
     CellFormat,
     EndnoteBlock,
     EquationBlock,
@@ -38,8 +37,8 @@ from udf.schema import (
     TextBoxBlock,
     TextInline,
 )
-from udf.pipeline.verbatim import VerbatimBlock
-from udf.parsers.docx.styles import NS, StyleInfo, _parse_ppr, _parse_rpr, _twip_to_pt
+from udf.pipeline.verbatim import VerbatimBlock  # noqa: E402
+from udf.parsers.docx.styles import NS, StyleInfo, _parse_ppr, _parse_rpr, _twip_to_pt  # noqa: E402
 
 _W = NS["w"]
 _M = NS["m"]
