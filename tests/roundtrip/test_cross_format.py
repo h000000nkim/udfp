@@ -238,11 +238,20 @@ class TestHwpxToHwp:
         hwp_doc = parse_hwp(out)
         assert hwp_doc.blocks, f"블록 없음: {filename}"
 
-    @pytest.mark.xfail(
-        reason="HWP From Scratch는 테이블/복잡 구조를 크로스포맷 IR에서 완전히 재현하지 못함",
-        strict=False,
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "table_text.hwpx",
+            "report_form.hwpx",
+            pytest.param(
+                "reading_log.hwpx",
+                marks=pytest.mark.xfail(
+                    reason="reading_log 크로스포맷 텍스트 순서 불일치",
+                    strict=True,
+                ),
+            ),
+        ],
     )
-    @pytest.mark.parametrize("filename", HWPX_ALL)
     def test_text_preserved(self, filename: str, tmp_path: pathlib.Path) -> None:
         from udf.parsers.hwp.parse import parse_hwp
         from udf.parsers.hwpx.parse import parse_hwpx
