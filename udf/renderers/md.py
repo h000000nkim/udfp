@@ -22,6 +22,7 @@ from udf.core.schema import (
     FootnoteRefInline,
     HeaderBlock,
     HeadingBlock,
+    HorizontalRuleBlock,
     ImageBlock,
     ImageInline,
     LinkInline,
@@ -1561,6 +1562,8 @@ def _render_block_md(block: Block, ctx: _MdCtx) -> str | None:
         if block.hwp_script:
             return id_comment + f"<!-- hwp-equation: {block.hwp_script} -->"
         return id_comment + "<!-- unsupported: equation -->"
+    if isinstance(block, HorizontalRuleBlock):
+        return id_comment + "---"
     if isinstance(block, (DrawingBlock, TextBoxBlock, ChartBlock, TextArtBlock)):
         return id_comment + f"<!-- unsupported: {block.type} -->"
     if isinstance(block, FieldBlock):

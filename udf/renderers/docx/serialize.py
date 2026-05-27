@@ -21,6 +21,7 @@ from udf.core.schema import (
     FootnoteRefInline,
     HeaderBlock,
     HeadingBlock,
+    HorizontalRuleBlock,
     ImageBlock,
     ImageInline,
     LinkInline,
@@ -634,6 +635,8 @@ def _serialize_block(block: Block) -> list[etree._Element]:
         return []
     elif isinstance(block, FieldBlock):
         return [_serialize_field_block(block)]
+    elif isinstance(block, HorizontalRuleBlock):
+        return [_serialize_horizontal_rule()]
     else:
         return [_make_empty_paragraph()]
 
@@ -882,6 +885,19 @@ def _serialize_list_item(
     for inline in item.inlines:
         _append_inline(p, inline)
 
+    return p
+
+
+def _serialize_horizontal_rule() -> etree._Element:
+    """Serialize a horizontal rule as a paragraph with a bottom border."""
+    p = etree.Element(f"{{{_W}}}p", nsmap=_NSMAP_DOC)
+    ppr = etree.SubElement(p, f"{{{_W}}}pPr")
+    pbdr = etree.SubElement(ppr, f"{{{_W}}}pBdr")
+    bottom = etree.SubElement(pbdr, f"{{{_W}}}bottom")
+    bottom.set(f"{{{_W}}}val", "single")
+    bottom.set(f"{{{_W}}}sz", "6")
+    bottom.set(f"{{{_W}}}space", "1")
+    bottom.set(f"{{{_W}}}color", "auto")
     return p
 
 
