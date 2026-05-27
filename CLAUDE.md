@@ -2,7 +2,7 @@
 
 어떤 문서 포맷(HWP/HWPX/PDF/DOCX/XLSX 등)이든 **Document Model**로 변환하고, 그 모델에서 다시 어떤 포맷으로든 재생성하는 라이브러리. 포맷 공통 기능은 블록 트리로 정규화하고, 포맷 고유 기능은 `unsupported` 메타데이터로 보존. 같은 포맷 라운드트립은 verbatim 레이어로 무손실 보장.
 
-상세 아키텍처: `@dev/architecture.md`
+상세 아키텍처: `@dev/docs/architecture.md`
 
 **관계 프로젝트:** PE-generation (별도 저장소). UDF를 라이브러리로 import하여 양식 채우기에 활용. UDF의 HWP 처리 자산은 PE-generation에서 흡수됨.
 
@@ -12,15 +12,15 @@
 
 1. **무손실 라운드트립 위반 금지.** 변환에서 정보가 손실되면 그 변환은 실패임. 모든 변환은 LossReport를 동반해야 함.
 2. **Verbatim 계층 절대 손실 금지.** 알 수 없는 chunk는 폐기하지 않고 `unknownChunks`에 raw bytes로 보존함. controlMask, instanceId 같은 미문서화 필드도 보존.
-3. **AGPL 코드 직접 인용 금지.** pyhwp, PyMuPDF, pymupdf4llm, python-ooxml 등은 알고리즘만 참조하고 코드는 직접 작성. 상세: `@dev/license-notes.md`
+3. **AGPL 코드 직접 인용 금지.** pyhwp, PyMuPDF, pymupdf4llm, python-ooxml 등은 알고리즘만 참조하고 코드는 직접 작성. 상세: `@dev/docs/license-notes.md`
 4. **수정 후 라운드트립 + R-규칙 + 시맨틱 diff 통과 필수.** `/roundtrip-test`로 검증. 둘 중 하나라도 실패하면 통과로 보고하지 말 것.
-5. **rhwp validate rc=0을 시각 정확성의 기준으로 사용 금지.** 구조 정합성 + 파싱 가능성 검증 도구이지 시각 정확성 보장 아님 (`@dev/known-issues/rhwp-rowspan.md`).
+5. **rhwp validate rc=0을 시각 정확성의 기준으로 사용 금지.** 구조 정합성 + 파싱 가능성 검증 도구이지 시각 정확성 보장 아님 (`@dev/docs/known-issues/rhwp-rowspan.md`).
 
 ## 우선순위
 
 - **P0**: HWP ↔ MD ↔ HWP 무손실 라운드트립
 - **P0**: PDF → MD 편집 가능 변환
-- 마일스톤: `@dev/architecture.md` §10
+- 마일스톤: `@dev/docs/architecture.md` §10
 
 ## 생성 모드 (HWP/HWPX 트랙)
 
@@ -69,8 +69,8 @@ udf validate file.hwp                     # 구조 정합성 검증
 
 기능을 추가하거나 수정할 때:
 
-1. 관련 라이브러리 알고리즘을 `@dev/library-mapping.md`에서 확인
-2. PE-generation 자산이 있는지 `@dev/pe-generation-mapping.md` 확인
+1. 관련 라이브러리 알고리즘을 `@dev/docs/library-mapping.md`에서 확인
+2. PE-generation 자산이 있는지 `@dev/legacy/docs/pe-generation-mapping.md` 확인
 3. Python으로 구현 (정확성 우선)
 4. 테스트 코퍼스에 라운드트립 케이스 추가
 5. `pytest tests/roundtrip/ tests/validation/` 통과 확인
@@ -93,13 +93,13 @@ udf validate file.hwp                     # 구조 정합성 검증
 
 ## 더 알아야 할 정보
 
-- 아키텍처: `@dev/architecture.md`
-- HWP 스펙: `@dev/format-specs/hwp.md`
+- 아키텍처: `@dev/docs/architecture.md`
+- HWP 스펙: `@dev/docs/format-specs/hwp.md`
 - 알려진 이슈: `dev/known-issues/`
-- PE-generation 흡수 매핑: `@dev/pe-generation-mapping.md`
-- 라이브러리 매핑: `@dev/library-mapping.md`
-- 라이선스 정책: `@dev/license-notes.md`
-- 마일스톤: `@dev/milestones.md`
+- PE-generation 흡수 매핑: `@dev/legacy/docs/pe-generation-mapping.md`
+- 라이브러리 매핑: `@dev/docs/library-mapping.md`
+- 라이선스 정책: `@dev/docs/license-notes.md`
+- 마일스톤: `@dev/docs/milestones.md`
 - API 레퍼런스: `@docs/api-reference.md`
 
 ## 사용자에 대한 주의

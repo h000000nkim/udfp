@@ -42,9 +42,13 @@ wheels/
 # dev 브랜치 전용 문서 (main에서 제외)
 dev/
 
-# 작업 산출물 및 스크립트 (배포 불포함)
+# 작업 산출물 (배포 불포함, dev/ 아래로 이동됨)
 output/
+sandbox/
+workspace/
 scripts/
+notebooks/
+
 # UDFP 작업 산출물
 /tmp_roundtrip/
 *.udfp.bak.json
