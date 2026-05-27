@@ -1,4 +1,4 @@
-name: Docs
+name: Deploy docs to GitHub Pages
 
 on:
   push:
@@ -7,19 +7,14 @@ on:
       - 'docs/**'
       - 'mkdocs.yml'
       - 'udf/**'
+      - 'udfp/**'
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: deploy-docs
-  cancel-in-progress: true
+  contents: write
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,26 +22,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: Install dependencies
         run: |
-          pip install mkdocs-material "mkdocstrings[python]"
-          pip install -e .
+          pip install -e ".[docs]" 2>/dev/null || pip install -e .
+          pip install mkdocs-material mkdocstrings[python]
 
-      - name: Build docs
-        run: python -m mkdocs build
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site/
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - id: deploy
-        uses: actions/deploy-pages@v4
+      - name: Build and deploy
+        run: mkdocs gh-deploy --force
