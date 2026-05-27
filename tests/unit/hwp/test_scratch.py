@@ -7,9 +7,12 @@ import pathlib
 import pytest
 
 from udf.core.schema import (
+    BlockFormat,
     BookmarkBlock,
     CodeBlock,
+    DocumentMetadata,
     EndnoteBlock,
+    EquationBlock,
     FieldBlock,
     FootnoteBlock,
     HeadingBlock,
@@ -17,6 +20,8 @@ from udf.core.schema import (
     ImageBlock,
     ListBlock,
     ListItem,
+    PageBreakBlock,
+    PageMargins,
     ParagraphBlock,
     QuoteBlock,
     TableBlock,
@@ -29,9 +34,12 @@ from udf.core.schema import (
 )
 from udf.renderers.hwp.scratch import (
     HWP_DEFAULTS,
+    CharShapeSpec,
+    ParaShapeSpec,
     collect_shapes,
     generate_hwp_scratch,
     _charshape_from_inline,
+    _charshape_key,
     _parse_color,
     _parse_font_size_pt,
 )

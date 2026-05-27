@@ -129,7 +129,7 @@ def _parse_face_name_detail(payload: bytes) -> dict[str, Any]:
 def _parse_char_shape(payload: bytes) -> dict[str, Any]:
     """CharShape 74바이트 구조 → dict.
 
-    바이너리 레이아웃:
+    바이너리 레이아웃 (docinfo_builder.py / rhwp 기준):
       0-13   face_id[7]: uint16[7]
       14-20  ratio[7]: uint8[7]       (장평 50-200, 기본 100)
       21-27  char_spacing[7]: int8[7] (자간 -50~50)

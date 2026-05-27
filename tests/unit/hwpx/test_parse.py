@@ -14,7 +14,9 @@ from pathlib import Path
 import pytest
 
 from udf.core.schema import (
+    HeadingBlock,
     ParagraphBlock,
+    TableBlock,
     TextInline,
 )
 from udf.parsers.hwpx.parse import parse_hwpx

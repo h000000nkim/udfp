@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "udfp"
-version = "1.0.0"
-description = "Universal Document Format Protocol — parse, transform, and render HWP/HWPX/DOCX/PDF/MD documents through a unified Document Model, with an MCP server for AI agents"
+version = "1.0.0a1"
+description = "Universal Document Format — parse, transform, and render HWP/HWPX/DOCX/PDF/MD documents through a unified Document Model"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -70,6 +70,7 @@ artifacts = ["udf/renderers/hwp/seed/*.hwp"]
 [tool.hatch.build.targets.sdist]
 exclude = [
     "tests/",
+    "dev/",
     "workspace/",
     "output/",
     "node_modules/",
@@ -78,13 +79,6 @@ exclude = [
     "sandbox/",
     "dist/",
     ".claude/",
-    "CLAUDE.md",
-    "CLAUDE.local.md",
-    "package.json",
-    "package-lock.json",
-    "docs/*.pdf",
-    ".gitignore",
-    ".DS_Store",
 ]
 
 [tool.pytest.ini_options]
@@ -93,10 +87,6 @@ addopts = "-ra --strict-markers"
 
 [tool.ruff]
 target-version = "py311"
-exclude = ["notebooks/", "sandbox/", "scripts/"]
-
-[tool.ruff.lint]
-ignore = ["E402"]
 
 [tool.mypy]
 python_version = "3.11"

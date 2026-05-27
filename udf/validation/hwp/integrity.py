@@ -19,6 +19,7 @@ from udf.parsers.hwp.records import (
     HWPTAG_BIN_DATA,
     HWPTAG_BORDER_FILL,
     HWPTAG_CHAR_SHAPE,
+    HWPTAG_FACE_NAME,
     HWPTAG_ID_MAPPINGS,
     HWPTAG_PARA_CHAR_SHAPE,
     HWPTAG_PARA_HEADER,
@@ -119,11 +120,13 @@ def check_i2(docinfo_bytes: bytes) -> list[IntegrityViolation]:
     violations: list[IntegrityViolation] = []
 
     face_counts: list[int] = []
+    idmap_payload: bytes | None = None
     cs_faces: list[tuple[int, list[int]]] = []  # (cs_idx, [face_id×7])
 
     cs_idx = 0
     for rec in iter_records(docinfo_bytes):
         if rec.tag_id == HWPTAG_ID_MAPPINGS and len(rec.payload) >= 32:
+            idmap_payload = rec.payload
             for lang in range(7):
                 face_counts.append(struct.unpack_from("<I", rec.payload, 4 + lang * 4)[0])
         elif rec.tag_id == HWPTAG_CHAR_SHAPE and len(rec.payload) >= 14:

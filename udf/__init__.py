@@ -25,9 +25,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from udf.fill import FillResult
-
 from udf.builder import DocumentBuilder
 from udf.pipeline.document import UdfDocument
 
@@ -49,7 +46,6 @@ __all__ = [
     "convert",
     "detect",
     "diff",
-    "fill_template",
 ]
 
 
@@ -196,32 +192,6 @@ def detect(path: str) -> dict[str, str]:
         "source": result.source,
         "warnings": result.warnings,
     }
-
-
-def fill_template(
-    template_path: str,
-    draft_md: str,
-    output_path: str | None = None,
-) -> "FillResult":
-    """Fill an HWP/HWPX template with Markdown draft content.
-
-    Parameters
-    ----------
-    template_path : str
-        Path to the HWP or HWPX template file.
-    draft_md : str
-        File path to a .md file, or raw Markdown string.
-    output_path : str, optional
-        Where to write the filled document.
-
-    Returns
-    -------
-    FillResult
-        Summary with output_path, match counts, and per-section detail.
-    """
-    from udf.fill import fill_template as _fill
-
-    return _fill(template_path, draft_md, output_path)
 
 
 def diff(

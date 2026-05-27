@@ -9,6 +9,7 @@ from lxml import etree
 from udf.core.ids import make_block_id
 from udf.schema import (
     Block,
+    BlockFormat,
     CodeBlock,
     EquationBlock,
     FootnoteBlock,

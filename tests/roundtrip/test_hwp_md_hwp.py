@@ -152,7 +152,7 @@ class TestHwpMdTableRoundtrip:
 
         doc_rt = parse_hwp(out)
         assert self._table_cell_texts(doc_orig) == self._table_cell_texts(doc_rt), (
-            "테이블 셀 텍스트 불일치"
+            f"테이블 셀 텍스트 불일치"
         )
 
     def test_table_cell_edit(self, tmp_path: pathlib.Path) -> None:
@@ -169,7 +169,7 @@ class TestHwpMdTableRoundtrip:
         edited_md = md.replace(target, new_text, 1)
 
         out = str(tmp_path / "edited_table.hwp")
-        patch_hwp_from_md(orig_path, edited_md, out)
+        report = patch_hwp_from_md(orig_path, edited_md, out)
 
         doc_rt = parse_hwp(out)
         rt_cells = self._table_cell_texts(doc_rt)

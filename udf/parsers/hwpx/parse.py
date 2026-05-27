@@ -21,7 +21,7 @@ from udf.schema import ColumnDef, DocumentMetadata, PageMargins, SectionDef
 from udf.schema.document import DocumentSchema
 from udf.pipeline import UdfDocument, VerbatimLayer
 from udf.pipeline.container import ConversionTrace, OriginalContainer
-from udf.parsers.hwpx.header import parse_header_xml
+from udf.parsers.hwpx.header import NS, parse_header_xml
 from udf.parsers.hwpx.section import extract_page_def, parse_section_xml
 
 _PARSER_VERSION = "0.1.0"

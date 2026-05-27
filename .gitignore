@@ -45,7 +45,6 @@ dev/
 # 작업 산출물 및 스크립트 (배포 불포함)
 output/
 scripts/
-
 # UDFP 작업 산출물
 /tmp_roundtrip/
 *.udfp.bak.json
@@ -59,4 +58,3 @@ tests/fixtures/html_screenshots/
 
 # Node
 node_modules/
-workspace/

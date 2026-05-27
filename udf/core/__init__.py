@@ -8,6 +8,7 @@ from udf.core.loss import (
 from udf.core.schema import (
     # 최상위
     UdfDocument,
+    UdfDocument,
     # 인라인
     Inline,
     TextInline,

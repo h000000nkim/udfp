@@ -13,4 +13,4 @@ Official documentation for the `udfp` package.
 
 ## Developer Documentation
 
-Internal design docs, format specs, and work logs are on the `dev` branch.
+Internal design docs, format specs, and work logs are in [`dev/`](../dev/).

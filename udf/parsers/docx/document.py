@@ -13,6 +13,7 @@ _RECOVER_PARSER = etree.XMLParser(huge_tree=True, recover=True)
 from udf.core.ids import make_block_id, make_verbatim_id
 from udf.schema import (
     Block,
+    BlockFormat,
     CellFormat,
     EndnoteBlock,
     EquationBlock,

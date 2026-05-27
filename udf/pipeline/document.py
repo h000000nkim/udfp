@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import itertools
-import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -11,6 +10,7 @@ from pydantic.alias_generators import to_camel
 
 from udf.schema.blocks import (
     Block,
+    BlockBase,
     CommentBlock,
     DrawingBlock,
     HeadingBlock,
@@ -31,6 +31,7 @@ from udf.schema.formats import BlockFormat
 from udf.schema.document import DocumentSchema
 from udf.schema.extensions import FormatExtension
 from udf.schema.inlines import Inline, TextInline
+from udf.schema.metadata import DocumentMetadata
 
 from .container import ConversionTrace, OriginalContainer
 from .loss import LossReport
@@ -606,6 +607,7 @@ class UdfDocument(BaseModel):
         TableCell or None
             The cell at the given position, or None if not found.
         """
+        from udf.schema.blocks import TableCell
         block = self.get_block(table_id)
         if not isinstance(block, TableBlock):
             return None
@@ -1026,6 +1028,7 @@ def _find_text_in_block(
     matches: list[dict[str, Any]],
 ) -> None:
     """Find regex matches within a block and append to the matches list."""
+    import re
 
     if isinstance(block, ParagraphBlock):
         for inline in block.inlines:

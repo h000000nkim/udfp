@@ -479,7 +479,7 @@ def _parse_styles(
     for st_el in container.iterfind("hh:style", NS):
         st_id = st_el.get("id", str(len(styles)))
         name = st_el.get("name", f"style_{st_id}")
-        st_el.get("engName", "")
+        eng_name = st_el.get("engName", "")
         st_type = st_el.get("type", "PARA")
         para_pr_id = st_el.get("paraPrIDRef")
         char_pr_id = st_el.get("charPrIDRef")

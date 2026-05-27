@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from enum import Enum
-import re
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -1299,6 +1298,7 @@ def _find_text_in_block(
     matches: list[dict[str, Any]],
 ) -> None:
     """Recursively collect regex matches from a single block into *matches*."""
+    import re
 
     if isinstance(block, ParagraphBlock):
         for inline in block.inlines:

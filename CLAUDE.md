@@ -93,8 +93,14 @@ udf validate file.hwp                     # 구조 정합성 검증
 
 ## 더 알아야 할 정보
 
+- 아키텍처: `@dev/architecture.md`
+- HWP 스펙: `@dev/format-specs/hwp.md`
+- 알려진 이슈: `dev/known-issues/`
+- PE-generation 흡수 매핑: `@dev/pe-generation-mapping.md`
+- 라이브러리 매핑: `@dev/library-mapping.md`
+- 라이선스 정책: `@dev/license-notes.md`
+- 마일스톤: `@dev/milestones.md`
 - API 레퍼런스: `@docs/api-reference.md`
-- 내부 개발 문서 (아키텍처, 스펙, known-issues 등): `dev` 브랜치에서 관리
 
 ## 사용자에 대한 주의
 
