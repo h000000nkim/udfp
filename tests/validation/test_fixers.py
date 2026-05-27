@@ -16,6 +16,8 @@ from udf.parsers.hwp.parse import parse_hwp
 from udf.parsers.hwp.records import (
     HWPTAG_PARA_CHAR_SHAPE,
     HWPTAG_PARA_HEADER,
+    HWPTAG_PARA_LINE_SEG,
+    HWPTAG_PARA_TEXT,
     HwpRecord,
     iter_records,
 )

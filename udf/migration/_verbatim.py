@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 
 from udf.core import _schema_v1 as v1
 

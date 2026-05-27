@@ -15,7 +15,7 @@ from udf.pipeline.container import OriginalContainer
 
 _FILE_HEADER_STREAM = "FileHeader"
 _FLAGS_OFFSET = 36
-_COMPRESS_FLAG_BIT = 0  # flags 비트0 = 스트림 압축 여부
+_COMPRESS_FLAG_BIT = 0  # flags 비트0 = 스트림 압축 여부 (rhwp: flags & 0x01)
 
 StreamPath = list[str]
 

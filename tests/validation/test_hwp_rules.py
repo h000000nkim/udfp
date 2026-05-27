@@ -244,9 +244,7 @@ class TestR1DetectsCorruption:
         Verifies R1 doesn't silently pass when charCnt exceeds actual PT length.
         charCnt를 99999로 부풀려서 R1이 위반을 보고하는지 확인.
         """
-        import base64
-        import copy
-        import struct
+        import base64, copy, struct
 
         doc = parse_hwp(_fixture("f01_plain_text.hwp"))
         doc = copy.deepcopy(doc)
@@ -269,9 +267,7 @@ class TestR1DetectsCorruption:
         Verifies R1 catches charCnt being too small (not just too large).
         charCnt를 0으로 만들어 R1이 탐지하는지 확인.
         """
-        import base64
-        import copy
-        import struct
+        import base64, copy, struct
 
         doc = parse_hwp(_fixture("f06_multiline.hwp"))
         doc = copy.deepcopy(doc)
@@ -299,9 +295,7 @@ class TestR4DetectsOobCharShape:
         Verifies the rule catches charshape offsets beyond text length.
         마지막 PCS 엔트리의 pos를 0xFFFF로 설정하여 R4 위반 탐지 확인.
         """
-        import base64
-        import copy
-        import struct
+        import base64, copy, struct
 
         doc = parse_hwp(_fixture("f02_char_format.hwp"))
         doc = copy.deepcopy(doc)

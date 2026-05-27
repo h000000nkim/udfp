@@ -12,9 +12,11 @@ from udf.parsers.hwp.doc_info import (
     parse_doc_info,
 )
 from udf.parsers.hwp.records import (
+    HWPTAG_BORDER_FILL,
     HWPTAG_CHAR_SHAPE,
     HWPTAG_FACE_NAME,
     HWPTAG_ID_MAPPINGS,
+    HWPTAG_NUMBERING,
     HWPTAG_PARA_SHAPE,
     HWPTAG_STYLE,
 )

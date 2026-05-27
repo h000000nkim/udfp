@@ -37,6 +37,7 @@ def validate_and_fix(
         The (possibly fixed) document and the final validation report.
         If no fixes were needed, the original document is returned.
     """
+    from udf.parsers.hwp.parse import parse_hwp as _reparse
 
     report = validate_hwp(doc)
     if report.is_passing():

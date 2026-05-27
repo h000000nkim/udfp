@@ -58,7 +58,7 @@ Package version string.
 
 ```python
 import udf
-print(udf.__version__)  # "1.0.0"
+print(udf.__version__)  # "1.0.0a1"
 ```
 
 ---
@@ -118,7 +118,6 @@ doc.remove_table_row("table_id", 0)
 doc.add_table_column("table_id", at=1)
 doc.remove_table_column("table_id", 2)
 doc.merge_cells("table_id", r1=0, c1=0, r2=1, c2=1)
-doc.split_cell("table_id", row=0, col=0)    # unmerge (reset spans to 1)
 ```
 
 ### Block Format
@@ -183,7 +182,6 @@ doc = (
     .quote("A wise quote.")
     .horizontal_rule()
     .page_break()
-    .block(custom_block)          # append a pre-constructed Block instance
     .build()
 )
 ```
@@ -217,132 +215,27 @@ Any block without `verbatim_ref` was programmatically created → forces From Sc
 | Text addition to empty paragraphs | Yes |
 | Table cell text modification | Yes |
 | Equation script replacement | Yes |
-| CharShape override (e.g., text color change) | Yes |
-| Table `like_char` toggle (page flow control) | Yes |
-| Combined single-pass patching (`apply_section_patches`) | Yes |
 | Adding new blocks | No (triggers From Scratch) |
 | Removing blocks | No (triggers From Scratch) |
-| Other format changes | No (triggers From Scratch) |
+| Format changes | No (triggers From Scratch) |
 
 ### From Scratch Capabilities
 
 All operations supported. Generates complete output from Document Model.
 
-**Limitations**: The following block types cannot be fully regenerated in From Scratch mode (reported as `FORMAT_LIMIT` loss):
-
-| Block Type | Reason |
-|-----------|--------|
-| `DrawingBlock` | Requires GSO ShapeComponent data only available in the original file |
-| `ChartBlock` | Requires embedded chart data only available in the original file |
-| `TextArtBlock` | Requires WordArt rendering data only available in the original file |
-| `UnknownBlock` | Format-specific content that cannot be interpreted |
-
----
-
-## LossReport
-
-Every conversion produces a `LossReport` tracking what information was preserved or lost.
-
-```python
-report = udf.diff(original, modified)
-
-report.total_blocks          # total block count
-report.lossless_blocks       # blocks with no loss
-report.lossy_blocks          # list of BlockLoss entries
-report.dropped_features      # list of dropped feature names
-report.is_roundtrip_safe     # True if no UNINTENDED losses
-```
-
-### BlockLoss
-
-Each entry in `lossy_blocks` describes a specific loss:
-
-```python
-loss.block_id                # affected block's ID
-loss.loss_type               # LossCategory enum
-loss.description             # human-readable explanation
-```
-
-### LossCategory
-
-| Value | Meaning | Passes validation? |
-|-------|---------|-------------------|
-| `USER_EDITED` | User intentionally changed content | Yes |
-| `FORMAT_LIMIT` | Inherent format limitation (e.g., MD can't store font info) | Yes |
-| `UNINTENDED` | Bug-level loss — something was dropped that shouldn't have been | **No** |
-
----
-
-## DocumentMetadata
-
-Accessible via `doc.metadata`. All lengths are in **points (pt)**.
-
-```python
-doc.set_metadata(title="Report", author="Kim", page_size="A4")
-```
-
-### Basic Properties
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `title` | `str \| None` | Document title |
-| `author` | `str \| None` | Author name |
-| `subject` | `str \| None` | Document subject |
-| `keywords` | `list[str]` | Keyword list |
-| `language` | `str \| None` | Language code |
-| `created_at` | `str \| None` | ISO creation timestamp |
-| `modified_at` | `str \| None` | ISO modification timestamp |
-
-### Page Layout
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `page_size` | `str \| None` | Page size name (e.g., `"A4"`, `"Letter"`) |
-| `page_width` | `float \| None` | Page width in pt |
-| `page_height` | `float \| None` | Page height in pt |
-| `margins` | `PageMargins \| None` | Top/bottom/left/right margins in pt |
-| `header_margin` | `float \| None` | Header margin in pt |
-| `footer_margin` | `float \| None` | Footer margin in pt |
-| `gutter` | `float \| None` | Binding/gutter margin in pt |
-| `columns` | `ColumnDef \| None` | Multi-column layout (count, gap, widths) |
-
-### Numbering
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `start_page_number` | `int \| None` | Starting page number |
-| `start_footnote_number` | `int \| None` | Starting footnote number |
-| `start_endnote_number` | `int \| None` | Starting endnote number |
-| `start_picture_number` | `int \| None` | Starting picture number |
-| `start_table_number` | `int \| None` | Starting table number |
-| `start_equation_number` | `int \| None` | Starting equation number |
-| `footnote_numbering_format` | `str \| None` | Footnote numbering style (e.g., `"decimal"`, `"roman_lower"`) |
-| `endnote_numbering_format` | `str \| None` | Endnote numbering style |
-| `compatibility_target` | `str \| None` | Target application compatibility version |
-
-### Sections
-
-Documents can have multiple sections with independent geometry:
-
-```python
-doc.metadata.sections        # list[SectionDef]
-```
-
-Each `SectionDef` has its own `page_width`, `page_height`, `margins`, `columns`, `orientation` (`"portrait"` / `"landscape"`), `break_type`, and `background_color`.
-
 ---
 
 ## Supported Formats
 
-| Format | Extensions | Parse | Render | Same-format Round-trip | Validation |
-|--------|-----------|-------|--------|----------------------|------------|
-| HWP | .hwp | Full | Full (Seed Patch + From Scratch) | Lossless (verbatim) | R1–R4, I1–I3 |
-| HWPX | .hwpx | Full | Full (Seed Patch + From Scratch) | Lossless (verbatim) | Semantic diff |
-| DOCX | .docx | Full | Full (Seed Patch + From Scratch) | Lossless (verbatim) | Semantic diff |
-| PDF | .pdf | Full | — | Parse only | — |
-| Markdown | .md | Full | Full | Text-level | Semantic diff |
-| HTML | .html, .htm | Full | Full | Text-level | Semantic diff |
-| XML | .xml | Full | — | Parse only | — |
+| Format | Extensions | Parse | Render | Round-trip |
+|--------|-----------|-------|--------|-----------|
+| HWP | .hwp | Full | Full (Seed Patch + From Scratch) | Lossless |
+| HWPX | .hwpx | Full | Full (Seed Patch + From Scratch) | Lossless |
+| DOCX | .docx | Full | Full (Seed Patch + From Scratch) | Lossless |
+| PDF | .pdf | Full | - | Parse only |
+| Markdown | .md | Full | Full | Text-level |
+| HTML | .html, .htm | Full | Full | Text-level |
+| XML | .xml | Full | - | Parse only |
 
 ---
 

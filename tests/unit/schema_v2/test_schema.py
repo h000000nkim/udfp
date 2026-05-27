@@ -4,6 +4,7 @@ import pytest
 
 from udf.schema import (
     BlockFormat,
+    CellFormat,
     Color,
     DocxExtension,
     DocumentMetadata,

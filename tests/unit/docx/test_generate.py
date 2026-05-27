@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import tempfile
 import zipfile
+from pathlib import Path
 
+import pytest
 from lxml import etree
 
 from udf.core.schema import (
     BlockFormat,
+    CellFormat,
     ColumnDef,
     DocumentMetadata,
     EquationBlock,
@@ -19,6 +22,7 @@ from udf.core.schema import (
     FootnoteBlock,
     FootnoteRefInline,
     HeadingBlock,
+    ImageBlock,
     LinkInline,
     ListBlock,
     ListItem,

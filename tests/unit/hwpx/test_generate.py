@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import base64
 import zipfile
 from pathlib import Path
 
 import pytest
 
 from udf.core.schema import (
+    BlockFormat,
+    CellFormat,
     ColumnDef,
     DocumentMetadata,
     EndnoteBlock,
     EquationInline,
     FootnoteRefInline,
     HeadingBlock,
+    OriginalContainer,
+    PageMargins,
     ParagraphBlock,
     SectionDef,
     TableBlock,
@@ -22,9 +27,10 @@ from udf.core.schema import (
     TextBoxBlock,
     TextInline,
     UdfDocument,
+    VerbatimLayer,
 )
 from udf.parsers.hwpx.parse import parse_hwpx
-from udf.renderers.hwpx import generate_hwpx
+from udf.renderers.hwpx import generate_hwpx, HwpxGenerateError
 from udf.renderers.hwpx.serialize import (
     blocks_to_section_xml,
     build_minimal_header_xml,

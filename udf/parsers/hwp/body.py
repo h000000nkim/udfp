@@ -761,8 +761,6 @@ def _parse_table(
         raw_bytes=base64.b64encode(ctrl_rec.payload).decode(),
         decoded={
             "section": section,
-            "ph_offset": ctrl_rec.offset,
-            "like_char": position.like_char if position else None,
             "table_rec_bytes": base64.b64encode(tbl_rec.payload).decode()
             if tbl_rec
             else None,
@@ -934,7 +932,7 @@ def _parse_header_footer(
 def _parse_ctrl_common(payload: bytes) -> PositionInfo | None:
     """CTRL_HEADER 공통 헤더에서 위치 정보 추출.
 
-    Layout (ctrlId 이후):
+    Layout (ctrlId 이후, pyhwp common_controls.py 기준):
       offset 4:  attr (uint32) — CommonControlFlags
       offset 8:  y (SHWPUNIT, signed int32)
       offset 12: x (SHWPUNIT, signed int32)
@@ -948,7 +946,7 @@ def _parse_ctrl_common(payload: bytes) -> PositionInfo | None:
       offset 34: margin_bottom (uint16)
       offset 36: instance_id (uint32)
 
-    attr bits:
+    attr bits (pyhwp CommonControlFlags):
       bit 0:     inline (like_char)
       bit 2:     affect_line_spacing
       bits 3-4:  vrelto (0=paper, 1=page, 2=paragraph)
@@ -1201,6 +1199,7 @@ def _extract_nested_textboxes(
     while i < len(ctrl_children):
         rec = ctrl_children[i]
         if rec.tag_id == HWPTAG_LIST_HEADER:
+            lh_rec = rec
             lh_level = rec.level
             # 직전 SHAPE_COMPONENT에서 위치/스타일 추출
             pos = None

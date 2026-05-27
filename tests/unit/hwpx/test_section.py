@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
 
 from udf.schema import (
     EndnoteBlock,

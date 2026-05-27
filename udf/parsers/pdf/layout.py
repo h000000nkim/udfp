@@ -28,6 +28,7 @@ from pdfminer.layout import (
     LTLine,
     LTPage,
     LTRect,
+    LTText,
     LTTextBox,
     LTTextLine,
 )

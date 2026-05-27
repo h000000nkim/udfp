@@ -4,7 +4,7 @@ seed DocInfo에서 DOCUMENT_PROPERTIES / FACE_NAME / BORDER_FILL / TAB_DEF /
 NUMBERING / STYLE 레코드는 그대로 유지하고, CHAR_SHAPE / PARA_SHAPE 레코드만
 교체 후 ID_MAPPINGS 카운트를 갱신하여 반환한다.
 
-CharShape 바이너리 레이아웃 (74 bytes):
+CharShape 바이너리 레이아웃 (74 bytes) — rhwp parser 기준:
   0-13   face_id[7]: uint16[7]
   14-20  ratio[7]: uint8[7]       (0–100, 언어별 장평)
   21-27  char_spacing[7]: int8[7]
@@ -36,7 +36,7 @@ ParaShape 바이너리 레이아웃 (88 bytes):
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from udf.parsers.hwp.records import (
     HWPTAG_BIN_DATA,
@@ -50,6 +50,7 @@ from udf.parsers.hwp.records import (
     HWPTAG_PARA_SHAPE,
     HWPTAG_STYLE,
     HWPTAG_TAB_DEF,
+    HwpRecord,
     iter_records,
 )
 

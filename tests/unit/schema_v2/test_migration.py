@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 
 from udf.core import _schema_v1 as v1
 
