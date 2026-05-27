@@ -29,6 +29,7 @@ from udf.schema import (
     FootnoteBlock,
     FootnoteRefInline,
     HeadingBlock,
+    HorizontalRuleBlock,
     Inline,
     LinkInline,
     ListBlock,
@@ -85,6 +86,7 @@ _FOOTNOTE_REF_RE = re.compile(r"\[\^(\w+)\](?!:)")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _UL_RE = re.compile(r"^(\s*)[-*+]\s+(.*)")
 _OL_RE = re.compile(r"^(\s*)(\d+)\.\s+(.*)")
+_THEMATIC_BREAK_RE = re.compile(r"^[-]{3,}$|^[*]{3,}$|^[_]{3,}$")
 
 
 def _parse_inlines(text: str) -> list[Inline]:
@@ -423,6 +425,14 @@ def _iter_blocks(
             i += 1
             continue
 
+        # 수평선 (ThematicBreak): ---, ***, ___
+        if _THEMATIC_BREAK_RE.match(line.strip()):
+            blk_id = pending_id or make_block_id(next(block_counter))
+            pending_id = None
+            yield HorizontalRuleBlock(type="horizontal_rule", id=blk_id)
+            i += 1
+            continue
+
         # HTML 테이블: <table> ~ </table> 수집
         if _HTML_TABLE_START_RE.match(line):
             html_lines: list[str] = [line]
@@ -501,15 +511,31 @@ def _iter_blocks(
                 break
             if _UL_RE.match(lines[i]) or _OL_RE.match(lines[i]):
                 break
+            if _THEMATIC_BREAK_RE.match(lines[i].strip()):
+                break
             para_lines.append(lines[i])
             i += 1
         if para_lines:
-            text = " ".join(para_lines).strip()
-            inlines = _parse_inlines(text)
-            if inlines:
-                blk_id = pending_id or make_block_id(next(block_counter))
-                pending_id = None
-                yield ParagraphBlock(type="paragraph", id=blk_id, inlines=inlines)
+            # M-5: trailing 2+ spaces → hard line break → 단락 분할
+            segments: list[str] = []
+            current: list[str] = []
+            for pline in para_lines:
+                has_hard_break = len(pline) > len(pline.rstrip()) and len(pline) - len(pline.rstrip()) >= 2
+                current.append(pline.rstrip())
+                if has_hard_break:
+                    segments.append(" ".join(current).strip())
+                    current = []
+            if current:
+                segments.append(" ".join(current).strip())
+
+            for seg in segments:
+                if not seg:
+                    continue
+                inlines = _parse_inlines(seg)
+                if inlines:
+                    blk_id = pending_id or make_block_id(next(block_counter))
+                    pending_id = None
+                    yield ParagraphBlock(type="paragraph", id=blk_id, inlines=inlines)
         continue
 
     # 남은 pending_id는 버림 (빈 블록)
