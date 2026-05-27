@@ -4,8 +4,6 @@
 
 상세 아키텍처: `@dev/docs/architecture.md`
 
-**관계 프로젝트:** PE-generation (별도 저장소). UDF를 라이브러리로 import하여 양식 채우기에 활용. UDF의 HWP 처리 자산은 PE-generation에서 흡수됨.
-
 ---
 
 ## 절대 원칙 (NEVER)
@@ -38,9 +36,9 @@ UDF는 두 가지 생성 모드를 가짐:
 - **시맨틱 diff = 0** (의미 보존)
 - **트랙별 R-규칙 통과** (구조 정합성)
   - HWP: R1-R4 (charCnt, count, lineSeg, OOB charShape) — **구현 완료**
-  - HWPX: HX-1~4 — 계획됨, 미구현
-  - PDF: P-1~4 — 계획됨, 미구현
-  - DOCX: D-1~3 — 계획됨, 미구현
+  - HWPX: HX-1~4 — **구현 완료**
+  - DOCX: D-1~3 — **구현 완료**
+  - PDF: P-1~4 — 계획됨 (PDF 생성 시점까지 불필요)
 
 Visual diff는 참고용이며 단일 렌더러 신뢰 금지 (rhwp rowspan 버그).
 
@@ -56,7 +54,7 @@ Visual diff는 참고용이며 단일 렌더러 신뢰 금지 (rhwp rowspan 버�
 pytest                                    # 전체 테스트
 pytest tests/roundtrip/                   # 라운드트립 검증
 pytest tests/validation/                  # R-규칙 검증
-pytest tests/regression/                  # PE-generation 회귀 검증
+pytest tests/regression/                  # 회귀 검증
 pytest -k hwp                             # HWP 트랙만
 ruff check . && ruff format .
 mypy udf/
@@ -70,12 +68,11 @@ udf validate file.hwp                     # 구조 정합성 검증
 기능을 추가하거나 수정할 때:
 
 1. 관련 라이브러리 알고리즘을 `@dev/docs/library-mapping.md`에서 확인
-2. PE-generation 자산이 있는지 `@dev/legacy/docs/pe-generation-mapping.md` 확인
-3. Python으로 구현 (정확성 우선)
-4. 테스트 코퍼스에 라운드트립 케이스 추가
-5. `pytest tests/roundtrip/ tests/validation/` 통과 확인
-6. PE-generation 트랙 변경 시 `pytest tests/regression/`도 통과
-7. 손실 보고서 검토
+2. Python으로 구현 (정확성 우선)
+3. 테스트 코퍼스에 라운드트립 케이스 추가
+4. `pytest tests/roundtrip/ tests/validation/` 통과 확인
+5. 회귀 가능성이 있으면 `pytest tests/regression/`도 통과
+6. 손실 보고서 검토
 
 ## 작업 완료 기준
 
@@ -95,8 +92,7 @@ udf validate file.hwp                     # 구조 정합성 검증
 
 - 아키텍처: `@dev/docs/architecture.md`
 - HWP 스펙: `@dev/docs/format-specs/hwp.md`
-- 알려진 이슈: `dev/known-issues/`
-- PE-generation 흡수 매핑: `@dev/legacy/docs/pe-generation-mapping.md`
+- 알려진 이슈: `dev/docs/known-issues/`
 - 라이브러리 매핑: `@dev/docs/library-mapping.md`
 - 라이선스 정책: `@dev/docs/license-notes.md`
 - 마일스톤: `@dev/docs/milestones.md`
