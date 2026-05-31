@@ -78,8 +78,8 @@ Inlines represent runs of content within a block (typically paragraphs and headi
 | `TextInline` | Plain text run | `text`, `bold`, `italic`, `font_name`, `font_size` |
 | `LinkInline` | Hyperlink | `text`, `url` |
 | `ImageInline` | Inline image | `src`, `width`, `height` |
-| `FootnoteRefInline` | Footnote reference | `note_id` |
-| `EndnoteRefInline` | Endnote reference | `note_id` |
+| `FootnoteRefInline` | Footnote reference | `ref_id` |
+| `EndnoteRefInline` | Endnote reference | `ref_id` |
 | `EquationInline` | Inline equation | `script` |
 | `RubyInline` | Ruby annotation (furigana) | `base_text`, `ruby_text` |
 | `CodeInline` | Inline code | `code` |
@@ -153,7 +153,7 @@ for heading in doc.headings:
 for table in doc.tables:
     for row in table.rows:
         for cell in row.cells:
-            print(f"Cell ({cell.row_span}x{cell.col_span}): {len(cell.blocks)} blocks")
+            print(f"Cell ({cell.row_span}x{cell.col_span}): {len(cell.content)} blocks")
 ```
 
 ## Format Extensions

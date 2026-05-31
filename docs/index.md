@@ -38,8 +38,8 @@ udf.render(doc, "hwp", output_path="filled.hwp")
 | HWPX | Full | Full | Lossless | ZIP-based (한컴오피스 NEX) |
 | DOCX | Full | Full | Lossless | Office Open XML |
 | PDF | Full | — | Parse only | Text extraction via pdfminer |
-| Markdown | Full | Full | Lossless | With sidecar JSON |
-| HTML | Full | Full | Lossless | HTML5 output |
+| Markdown | Full | Full | Text-level | CommonMark-compatible |
+| HTML | Full | Full | Text-level | HTML5 output |
 | XML | Full | — | Parse only | Generic XML extraction |
 
 ## Architecture

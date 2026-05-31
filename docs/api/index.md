@@ -4,7 +4,7 @@ The UDF Python API is organized into these layers:
 
 | Module | Purpose |
 |--------|---------|
-| `udf` | Top-level functions: `parse`, `render`, `convert`, `detect`, `diff` |
+| `udf` | Top-level functions: `parse`, `render`, `convert`, `detect`, `diff`, `merge_diff` |
 | `udf.UdfDocument` | Central document manipulation class |
 | `udf.DocumentBuilder` | Fluent API for programmatic document creation |
 | `udf.schema` | Block, Inline, Format, and Metadata types |

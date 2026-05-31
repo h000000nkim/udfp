@@ -22,7 +22,6 @@ doc = (
     # Metadata
     .title("Monthly Report")
     .author("Hoon Kim")
-    .subject("Q1 2026 Results")
 
     # Content
     .heading(1, "Executive Summary")
@@ -34,7 +33,7 @@ doc = (
         ["Product A", "1,200,000", "+15%"],
         ["Product B", "850,000", "+8%"],
         ["Total", "2,050,000", "+12%"],
-    ], header_rows=1)
+    ])
 
     .heading(2, "Key Highlights")
     .list([
@@ -79,7 +78,6 @@ md_text = udf.render(doc, "md")
 |--------|-------------|
 | `.title(text)` | Set document title |
 | `.author(text)` | Set document author |
-| `.subject(text)` | Set document subject |
 
 ### Content Blocks
 
@@ -87,12 +85,17 @@ md_text = udf.render(doc, "md")
 |--------|-------------|
 | `.heading(level, text, **fmt)` | Add heading (level 1-6) |
 | `.paragraph(text, **fmt)` | Add paragraph with optional formatting |
-| `.table(rows, col_widths=, header_rows=)` | Add table from 2D list |
+| `.table(data, *, header=True)` | Add table from 2D string list |
 | `.image(src, width=, height=, alt=)` | Add image block |
 | `.list(items, ordered=)` | Add ordered or unordered list |
 | `.code(code, language=)` | Add code block |
 | `.equation(latex)` | Add equation block |
 | `.quote(text)` | Add block quotation |
+| `.field(field_type, value=, **opts)` | Add form field block |
+| `.text_box(*blocks, width=, height=)` | Add text box with nested blocks |
+| `.footnote(content)` | Add footnote linked to previous paragraph |
+| `.bookmark(name)` | Add named bookmark |
+| `.link(text, url)` | Add paragraph with a hyperlink |
 
 ### Layout
 
@@ -101,10 +104,11 @@ md_text = udf.render(doc, "md")
 | `.horizontal_rule()` | Add horizontal rule |
 | `.page_break()` | Add page break |
 
-### Build
+### Generic
 
-| Method | Returns |
-|--------|---------|
-| `.build()` | `UdfDocument` |
+| Method | Description |
+|--------|-------------|
+| `.block(block)` | Append an arbitrary pre-constructed Block |
+| `.build()` | Finalize and return `UdfDocument` |
 
-All content methods accept `**fmt` keyword arguments for inline formatting: `bold`, `italic`, `underline`, `font_name`, `font_size`, `color`.
+The `.heading()` and `.paragraph()` methods accept `bold` and `font_size` keyword arguments for inline formatting.

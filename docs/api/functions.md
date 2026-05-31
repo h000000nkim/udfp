@@ -10,6 +10,7 @@ udf.render(...)
 udf.convert(...)
 udf.detect(...)
 udf.diff(...)
+udf.merge_diff(...)
 ```
 
 ---
@@ -43,6 +44,13 @@ udf.diff(...)
 ---
 
 ::: udf.diff
+    options:
+      show_root_heading: true
+      heading_level: 2
+
+---
+
+::: udf.merge_diff
     options:
       show_root_heading: true
       heading_level: 2

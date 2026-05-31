@@ -47,10 +47,11 @@ md_text = udf.render(doc, "md")  # text formats return a string
 | **HWPX →** | Full | Lossless | Full | Full | Full |
 | **DOCX →** | Full | Full | Lossless | Full | Full |
 | **PDF →** | — | — | — | Full | Full |
-| **MD →** | Full | Full | Full | Lossless | Full |
-| **HTML →** | Full | Full | Full | Full | Lossless |
+| **MD →** | Full | Full | Full | Text-level | Full |
+| **HTML →** | Full | Full | Full | Full | Text-level |
 
 **Lossless** = same-format round-trip via verbatim layer, no information loss.
+**Text-level** = same-format round-trip preserves text content but not binary-level formatting.
 **Full** = cross-format conversion with loss tracking.
 
 ## Loss Tracking

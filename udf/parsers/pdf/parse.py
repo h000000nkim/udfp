@@ -337,6 +337,38 @@ def parse_pdf(path: str) -> UdfDocument:
             page_blocks.append(block)
             page_ebs.append(eb)
 
+        # pypdf에서 발견했지만 pdfminer에서 감지 못한 이미지 추가
+        matched_names: set[str] = set()
+        for eb in page_ebs:
+            vd = eb.verbatim_data or {}
+            if vd.get("object_type") == "image" and "image_name" in vd:
+                matched_names.add(vd["image_name"])
+        page_img_cache = image_cache.get(page_num, {})
+        for img_name, (img_data, img_mime) in page_img_cache.items():
+            if img_name not in matched_names and len(img_data) > 100:
+                img_id = f"pdf_img_{next(block_counter)}"
+                img_src = _make_b64_src(img_data, img_mime)
+                img_block = ImageBlock(
+                    type="image",
+                    id=img_id,
+                    src=img_src,
+                    alt=img_name,
+                )
+                v_id = f"v_pdf_{next(verbatim_id_counter)}"
+                verbatim_blocks[v_id] = VerbatimBlock(
+                    decoded={
+                        "object_type": "image",
+                        "image_name": img_name,
+                        "page": page_num,
+                        "source": "pypdf_unmatched",
+                    },
+                )
+                try:
+                    img_block = img_block.model_copy(update={"verbatim_ref": v_id})
+                except Exception:
+                    pass
+                page_blocks.append(img_block)
+
         # 하이퍼링크 → LinkInline 변환 (post-processing)
         page_links = link_map.get(page_num, [])
         if page_links and page_blocks:

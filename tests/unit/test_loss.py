@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from udf.core.loss import (
     build_loss_report,
+    collect_render_losses,
     diff_documents,
     format_limit_loss,
     unintended_loss,
     user_edited_loss,
 )
 from udf.core.schema import (
+    DrawingBlock,
     HeadingBlock,
     LossCategory,
     ParagraphBlock,
@@ -192,3 +194,44 @@ class TestDiffFormatting:
         report = diff_documents(orig, result)
         assert not report.is_roundtrip_safe
         assert any("font_size" in b.description for b in report.lossy_blocks)
+
+
+class TestCollectRenderLosses:
+    def test_drawing_block_in_docx(self) -> None:
+        doc = _doc([
+            _para("b_0", "hello"),
+            DrawingBlock(type="drawing", id="d_0"),
+        ])
+        report = collect_render_losses(doc, "docx")
+        assert any("drawing" in b.description and "docx" in b.description for b in report.lossy_blocks)
+        assert report.is_roundtrip_safe is True
+
+    def test_drawing_block_in_hwpx(self) -> None:
+        doc = _doc([DrawingBlock(type="drawing", id="d_0")])
+        report = collect_render_losses(doc, "hwpx")
+        assert len(report.lossy_blocks) == 1
+        assert "hwpx" in report.lossy_blocks[0].description
+
+    def test_no_loss_for_supported_blocks(self) -> None:
+        doc = _doc([_para("b_0", "hello")])
+        report = collect_render_losses(doc, "docx")
+        assert report.lossy_blocks == []
+        assert report.is_roundtrip_safe is True
+
+    def test_from_scratch_verbatim_lost(self) -> None:
+        doc = _doc([_para("b_0", "hello")])
+        report = collect_render_losses(doc, "docx", is_from_scratch=True)
+        assert len(report.lossy_blocks) == 1
+        assert "verbatim_lost" in report.lossy_blocks[0].description
+
+    def test_from_scratch_with_verbatim_ref_no_loss(self) -> None:
+        p = _para("b_0", "hello")
+        p.verbatim_ref = "Section0:42"
+        doc = _doc([p])
+        report = collect_render_losses(doc, "docx", is_from_scratch=True)
+        assert report.lossy_blocks == []
+
+    def test_unknown_format_no_crash(self) -> None:
+        doc = _doc([DrawingBlock(type="drawing", id="d_0")])
+        report = collect_render_losses(doc, "unknown_format")
+        assert report.lossy_blocks == []

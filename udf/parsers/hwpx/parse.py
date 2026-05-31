@@ -22,10 +22,15 @@ from udf.schema.document import DocumentSchema
 from udf.pipeline import UdfDocument, VerbatimLayer
 from udf.pipeline.container import ConversionTrace, OriginalContainer
 from udf.parsers.hwpx.header import parse_header_xml
-from udf.parsers.hwpx.section import extract_page_def, parse_section_xml
+from udf.parsers.hwpx.section import (
+    extract_page_def,
+    parse_masterpage_xml,
+    parse_section_xml,
+)
 
 _PARSER_VERSION = "0.1.0"
 _SECTION_RE = re.compile(r"^Contents/section(\d+)\.xml$")
+_MASTERPAGE_RE = re.compile(r"^Contents/masterpage(\d+)\.xml$")
 
 
 class HwpxParseError(Exception):
@@ -100,6 +105,18 @@ def parse_hwpx(path: str) -> UdfDocument:
             if page_def is not None:
                 all_page_defs.append(page_def)
 
+        # masterpage 스트림에서 배경/장식 블록 추출
+        masterpage_names = sorted(
+            [n for n in zf.namelist() if _MASTERPAGE_RE.match(n)],
+            key=lambda n: int(_MASTERPAGE_RE.match(n).group(1)),  # type: ignore[union-attr]
+        )
+        for mp_path in masterpage_names:
+            mp_bytes = zf.read(mp_path)
+            mp_blocks = parse_masterpage_xml(mp_bytes, info)
+            if mp_blocks:
+                all_blocks = mp_blocks + all_blocks
+            all_section_streams[mp_path.split("/")[-1]] = base64.b64encode(mp_bytes).decode()
+
         # BinData 스트림 추출
         bindata_map: dict[str, str] = {}
         for name in zf.namelist():
@@ -164,6 +181,7 @@ def parse_hwpx(path: str) -> UdfDocument:
         author=author,
         created_at=created_at,
         modified_at=modified_at,
+        language=language,
         sections=sections,
         start_page_number=dp.get("start_page"),
         start_footnote_number=dp.get("start_footnote"),

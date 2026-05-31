@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -36,8 +38,11 @@ def create_server() -> FastMCP:
             "- insert_blocks(path, blocks): Add blocks to an existing document\n"
             "- remove_blocks(path, block_ids): Delete blocks by ID\n"
             "- set_page(path, ...): Change page layout (paper size, margins, columns)\n"
+            "- export_md(path): Export document as editable Markdown with block IDs\n"
+            "- import_md(path, edited_md): Apply edited Markdown back, preserving original formatting\n"
             "- describe(topic): Get schema docs — call describe('overview') first\n\n"
             "Workflow: read → understand block IDs → edit/insert/remove → render.\n"
+            "MD editing workflow: export_md → edit the returned MD → import_md → done.\n"
             "Format keys use short aliases (size, bold, align, bg, sp_before, indent_l, etc.).\n"
             "Call describe('fmt') for the full alias mapping table."
         ),
@@ -271,6 +276,93 @@ def create_server() -> FastMCP:
             return f"Page layout updated: {out}"
         except Exception as e:
             return f"Error: {type(e).__name__}: {e}\nTip: Paper sizes: A4, A3, A5, B5, Letter, Legal"
+
+    @mcp.tool()
+    async def export_md(path: str) -> str:
+        """문서를 편집 가능한 Markdown으로 변환합니다.
+
+        블록 ID가 HTML 주석(<!-- id: b_XXXX -->)으로 삽입되어
+        import_md에서 원본 서식과 매칭할 수 있습니다.
+
+        지원 입력: HWP, HWPX, DOCX, PDF, MD, HTML
+        반환: 블록 ID가 포함된 Markdown 텍스트
+
+        사용법:
+        1. export_md(path) → Markdown 텍스트 수령
+        2. Markdown 텍스트를 편집 (블록 ID 주석은 유지할 것)
+        3. import_md(path, edited_md) → 원본 서식 보존 + 편집 반영된 문서 저장
+        """
+        try:
+            if not os.path.exists(path):
+                return f"Error: File not found: {path}"
+            doc = udf.parse(path)
+            from udf.renderers.md import render_md
+            md = render_md(doc, embed_ids=True)
+            header = _build_source_header(path, doc)
+            return header + md
+        except Exception as e:
+            return f"Error: {type(e).__name__}: {e}"
+
+    @mcp.tool()
+    async def import_md(
+        path: str,
+        edited_md: str,
+        output_path: str | None = None,
+    ) -> str:
+        """편집된 Markdown을 원본 문서에 반영하여 저장합니다.
+
+        export_md로 내보낸 Markdown을 편집한 후, 이 도구로 적용하면
+        원본 문서의 서식·레이아웃·양식을 보존하면서 텍스트 변경만 반영됩니다.
+
+        path: 원본 문서 경로 (서식 소스)
+        edited_md: 편집된 Markdown 텍스트 (export_md 결과를 수정한 것)
+        output_path: 저장 경로 (미지정 시 원본 파일 덮어쓰기)
+
+        반환: 변경 요약 (변경 건수, 보존된 블록 수)
+        """
+        try:
+            if not os.path.exists(path):
+                return f"Error: File not found: {path}"
+
+            from udf.core.ids import max_block_index
+            from udf.merge_diff import merge_diff as _merge_diff
+            from udf.parsers.md.parse import parse_md
+
+            original = udf.parse(path)
+
+            warning = ""
+            source_meta = _parse_source_header(edited_md)
+            if source_meta:
+                expected_fp = source_meta.get("fingerprint", "")
+                actual_fp = _fingerprint(original)
+                if expected_fp and expected_fp != actual_fp:
+                    warning = (
+                        f"Warning: fingerprint mismatch — "
+                        f"MD was exported from a different version of this document "
+                        f"(expected {expected_fp}, got {actual_fp}). "
+                        f"Proceeding, but some edits may not align correctly.\n"
+                    )
+
+            clean_md = _strip_source_header(edited_md)
+            start = max_block_index(original.blocks) + 1
+            edited_doc = parse_md(clean_md, start_id=start)
+            result = _merge_diff(original, edited_doc)
+
+            out = output_path or path
+            _save_doc(result.document, out)
+
+            lines = []
+            if warning:
+                lines.append(warning)
+            lines.append(f"Saved: {out}")
+            lines.append(f"Changes: {len(result.changes)}")
+            for c in result.changes:
+                lines.append(f"  - [{c.change_type}] {c.description}")
+            if result.preserved_ids:
+                lines.append(f"Preserved (MD-unrepresentable): {len(result.preserved_ids)} blocks")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error: {type(e).__name__}: {e}\nTip: Use export_md(path) first to get editable Markdown."
 
     @mcp.tool()
     async def describe(topic: str = "overview") -> str:
@@ -591,11 +683,21 @@ set_page("/path/doc.hwp", paper="A4", orientation="landscape",
          margin_top=15, margin_bottom=15)
 ```
 
+## 7. Edit Document via Markdown (preserves formatting)
+```
+export_md("/path/doc.hwp")
+→ returns Markdown with block IDs (<!-- id: b_0000 -->)
+→ AI edits the Markdown text
+import_md("/path/doc.hwp", edited_md, "/path/doc_edited.hwp")
+→ merges edits back, preserving original HWP formatting
+```
+
 ## Tips
 - Always `read` first to discover block IDs before editing
 - Use `output_path` to save changes to a new file (non-destructive)
 - HWP/HWPX editing uses Seed Patch (preserves original binary fidelity)
 - Block structure changes (insert/remove) switch to From Scratch mode
+- For bulk text editing, prefer `export_md` + `import_md` over multiple `edit` calls
 - Call `describe('fmt')` for the full format alias table""",
 
     "api": """\
@@ -742,12 +844,16 @@ doc.loss_report
 ├── lossless_blocks: int     — Blocks with zero information loss
 ├── lossy_blocks: list[BlockLoss]
 │   ├── block_id: str        — Which block had loss
-│   ├── block_type: str      — "table" / "paragraph" / etc.
-│   ├── lost_features: list[str]  — What was lost
-│   └── severity: str        — "minor" / "major"
+│   ├── loss_type: str       — "user_edited" / "format_limit" / "unintended"
+│   └── description: str     — What was lost
 ├── dropped_features: list[str]  — Document-level features lost
 └── is_roundtrip_safe: bool  — Can this round-trip without loss?
 ```
+
+## Loss Types
+- `user_edited` — User intentionally changed content (expected, passes validation)
+- `format_limit` — Target format cannot represent feature (e.g. DrawingBlock in MD)
+- `unintended` — Unexpected loss, likely a bug (fails validation)
 
 ## Example
 ```json
@@ -755,12 +861,10 @@ doc.loss_report
   "total_blocks": 15,
   "lossless_blocks": 13,
   "lossy_blocks": [
-    {"block_id": "b_0007", "block_type": "table",
-     "lost_features": ["cell_shading", "vertical_merge"],
-     "severity": "minor"},
-    {"block_id": "b_0012", "block_type": "drawing",
-     "lost_features": ["3d_rotation"],
-     "severity": "major"}
+    {"block_id": "b_0007", "loss_type": "format_limit",
+     "description": "Table cell shading not supported in target format"},
+    {"block_id": "b_0012", "loss_type": "format_limit",
+     "description": "DrawingBlock cannot be regenerated without original file"}
   ],
   "dropped_features": ["macros", "vba_project"],
   "is_roundtrip_safe": false
@@ -781,6 +885,50 @@ if doc.loss_report and not doc.loss_report.is_roundtrip_safe:
     print(doc.loss_report.dropped_features)
 ```""",
 }
+
+
+# ------------------------------------------------------------------
+# Document fingerprint
+# ------------------------------------------------------------------
+
+_SOURCE_HEADER_RE = re.compile(
+    r"^<!--\s*udf-source:.*?-->\s*\n?", re.MULTILINE
+)
+
+
+def _fingerprint(doc: UdfDocument) -> str:
+    """Content-based fingerprint (first 12 chars of sha256 over block texts)."""
+    h = hashlib.sha256()
+    for b in doc.blocks:
+        bid = getattr(b, "id", "")
+        text = b.text_content() if hasattr(b, "text_content") else ""
+        h.update(f"{bid}:{text}\n".encode())
+    return h.hexdigest()[:12]
+
+
+def _build_source_header(path: str, doc: UdfDocument) -> str:
+    fp = _fingerprint(doc)
+    fmt = doc.source_format or "unknown"
+    n = len(doc.blocks)
+    abs_path = str(Path(path).resolve())
+    return f"<!-- udf-source: path={abs_path} format={fmt} fingerprint={fp} blocks={n} -->\n"
+
+
+def _parse_source_header(md: str) -> dict[str, str] | None:
+    m = _SOURCE_HEADER_RE.match(md)
+    if not m:
+        return None
+    header = m.group(0)
+    result: dict[str, str] = {}
+    for key in ("path", "format", "fingerprint", "blocks"):
+        km = re.search(rf"{key}=(\S+)", header)
+        if km:
+            result[key] = km.group(1)
+    return result
+
+
+def _strip_source_header(md: str) -> str:
+    return _SOURCE_HEADER_RE.sub("", md, count=1)
 
 
 # ------------------------------------------------------------------
