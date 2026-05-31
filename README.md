@@ -23,7 +23,7 @@ pip install udfp[mcp]   →  udfp             (MCP server)
 - **Cross-format conversion** — Convert between supported format pairs (e.g., HWP → DOCX, PDF → MD)
 - **Programmatic editing** — Add, modify, or remove blocks/inlines via `UdfDocument` API
 - **Two generation modes** — Seed Patch (modify in-place) and From Scratch (full regeneration)
-- **Structural validation** — R-rules for HWP (R1–R4 implemented); HWPX/DOCX/PDF rules planned
+- **Structural validation** — R-rules for HWP (R1–R4), HX-rules for HWPX (HX1–HX4), D-rules for DOCX (D1–D3) — all implemented
 - **MCP server** — Claude/LLM integration for reading, editing, and generating documents
 
 ## Installation
@@ -68,7 +68,8 @@ udf.convert("paper.pdf", "paper.md")
 
 ```python
 import udf
-from udf.core.schema import ParagraphBlock, TextInline
+from udf.schema.blocks import ParagraphBlock
+from udf.schema.inlines import TextInline
 
 doc = udf.parse("template.hwp")
 
@@ -115,6 +116,8 @@ udfp --transport streamable-http --port 8000  # HTTP
 | `insert_blocks(path, blocks)` | Add blocks to an existing document |
 | `remove_blocks(path, block_ids)` | Delete blocks by ID |
 | `set_page(path, ...)` | Change page layout (paper size, margins, columns) |
+| `export_md(path)` | Export document as editable Markdown with block IDs |
+| `import_md(path, edited_md)` | Apply edited Markdown back, preserving original formatting |
 | `describe(topic)` | Get schema documentation (start with `describe('overview')`) |
 
 ### Claude Desktop config
@@ -208,7 +211,9 @@ Regenerates the entire output file from the Document Model. Required when blocks
 **Validation rules**:
 
 - HWP: R1–R4 structural rules + I1–I3 integrity checks — fully implemented with auto-fixers
-- HWPX, DOCX, PDF: format-specific rules are planned but not yet implemented; semantic diff is used for validation
+- HWPX: HX1–HX4 structural rules — fully implemented
+- DOCX: D1–D3 structural rules — fully implemented
+- PDF: format-specific rules planned (not needed until PDF rendering is added)
 
 **Text-level formats** (MD, HTML):
 

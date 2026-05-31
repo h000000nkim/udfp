@@ -9,6 +9,7 @@ Seed Patch round-trip.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import datetime
 import hashlib
 import zipfile
@@ -36,7 +37,7 @@ from udf.parsers.docx.document import (  # noqa: E402
     parse_footnotes_xml,
     parse_header_xml,
 )
-from udf.parsers.docx.styles import NS, parse_style_info  # noqa: E402
+from udf.parsers.docx.styles import NS, parse_relationships, parse_style_info  # noqa: E402
 
 _PARSER_VERSION = "0.1.0"
 
@@ -176,6 +177,7 @@ def parse_docx(path: str) -> UdfDocument:
         author=doc_meta.get("author"),
         created_at=doc_meta.get("created_at"),
         modified_at=doc_meta.get("modified_at"),
+        language=doc_meta.get("language"),
         sections=sections,
     )
 
@@ -233,6 +235,27 @@ _HDR_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relations
 _FTR_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
 
 
+def _style_info_with_part_rels(
+    zf: zipfile.ZipFile,
+    xml_path: str,
+    style_info: Any,
+    names: set[str],
+) -> Any:
+    """Return style_info with relationships merged from a part's own .rels file."""
+    base = xml_path.rsplit("/", 1)
+    if len(base) == 2:
+        rels_path = f"{base[0]}/_rels/{base[1]}.rels"
+    else:
+        rels_path = f"_rels/{base[0]}.rels"
+    if rels_path not in names:
+        return style_info
+    part_rels = parse_relationships(zf.read(rels_path))
+    if not part_rels:
+        return style_info
+    merged = {**style_info.relationships, **part_rels}
+    return dataclasses.replace(style_info, relationships=merged)
+
+
 def _parse_headers_footers(
     zf: zipfile.ZipFile,
     doc_bytes: bytes,
@@ -267,7 +290,8 @@ def _parse_headers_footers(
             xml_path = f"word/{target}" if not target.startswith("word/") else target
             if xml_path in names:
                 hdr_bytes = zf.read(xml_path)
-                blocks.append(parse_header_xml(hdr_bytes, style_info, apply_to=apply_to))
+                part_si = _style_info_with_part_rels(zf, xml_path, style_info, names)
+                blocks.append(parse_header_xml(hdr_bytes, part_si, apply_to=apply_to))
 
     for ref_el in sect_pr.findall("w:footerReference", NS):
         rid = ref_el.get(f"{{{NS['r']}}}id", "")
@@ -278,7 +302,8 @@ def _parse_headers_footers(
             xml_path = f"word/{target}" if not target.startswith("word/") else target
             if xml_path in names:
                 ftr_bytes = zf.read(xml_path)
-                blocks.append(parse_footer_xml(ftr_bytes, style_info, apply_to=apply_to))
+                part_si = _style_info_with_part_rels(zf, xml_path, style_info, names)
+                blocks.append(parse_footer_xml(ftr_bytes, part_si, apply_to=apply_to))
 
     return blocks
 
@@ -313,6 +338,10 @@ def _parse_doc_props(zf: zipfile.ZipFile, names: set[str]) -> dict[str, str]:
     modified = root.find(f"{{{_DCTERMS}}}modified")
     if modified is not None and modified.text:
         result["modified_at"] = modified.text
+
+    language = root.find(f"{{{_DC}}}language")
+    if language is not None and language.text:
+        result["language"] = language.text
 
     return result
 

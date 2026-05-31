@@ -46,12 +46,12 @@ class TestCheckI1:
 
     def test_added_cs_passes(self, seed_docinfo):
         cs = CharShapeSpec(size_pt=18.0, bold=True)
-        new_di, _, _, _ = build_docinfo(seed_docinfo, [cs], [])
+        new_di, _, _, _, *_ = build_docinfo(seed_docinfo, [cs], [])
         assert check_i1(new_di) == []
 
     def test_broken_idmap_detected(self, seed_docinfo):
         cs = CharShapeSpec(size_pt=18.0)
-        new_di, _, _, _ = build_docinfo(seed_docinfo, [cs], [])
+        new_di, _, _, _, *_ = build_docinfo(seed_docinfo, [cs], [])
         # Replace ID_MAPPINGS with original (wrong counts)
         orig_idmap = None
         for rec in iter_records(seed_docinfo):
@@ -122,7 +122,7 @@ class TestValidateHwpIntegrity:
     def test_with_added_records(self, seed_docinfo):
         cs = CharShapeSpec(size_pt=14.0, bold=True, color_r=255)
         ps = ParaShapeSpec(alignment="center")
-        new_di, _, _, _ = build_docinfo(seed_docinfo, [cs], [ps])
+        new_di, _, _, _, *_ = build_docinfo(seed_docinfo, [cs], [ps])
         assert validate_hwp_integrity(new_di) == []
 
 

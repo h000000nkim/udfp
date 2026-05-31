@@ -31,7 +31,7 @@ Or configure manually in Claude Desktop:
 
 ## Tools
 
-The MCP server exposes 8 tools:
+The MCP server exposes 10 tools:
 
 ### read
 
@@ -102,9 +102,36 @@ Adjust page layout settings.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `path` | string | File path |
-| `paper` | string? | Paper size (A4, Letter, etc.) |
+| `paper` | string? | Paper size (A4, A3, A5, B5, Letter, Legal) |
 | `orientation` | string? | portrait or landscape |
-| `margins` | object? | Top, bottom, left, right margins |
+| `margin_top` | float? | Top margin in mm |
+| `margin_bottom` | float? | Bottom margin in mm |
+| `margin_left` | float? | Left margin in mm |
+| `margin_right` | float? | Right margin in mm |
+| `columns` | int? | Number of columns (1=single, 2=two-column, etc.) |
+| `gutter` | float? | Column gap in mm |
+
+### export_md
+
+Export a document as editable Markdown with embedded block IDs.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `path` | string | File path to the document |
+
+Returns Markdown text with `<!-- id: b_XXXX -->` comments that allow `import_md` to match edits back to original blocks.
+
+### import_md
+
+Apply edited Markdown back to the original document, preserving formatting.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `path` | string | Original document path (formatting source) |
+| `edited_md` | string | Edited Markdown text (from `export_md`) |
+| `output_path` | string? | Output path (defaults to overwrite) |
+
+Uses merge-diff to apply only the changed text while preserving the original document's styling, layout, and structure.
 
 ### describe
 

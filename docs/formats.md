@@ -8,8 +8,8 @@
 | HWPX | `.hwpx` | `application/hwp+zip` | Yes | Full | Full | Lossless |
 | DOCX | `.docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | Yes | Full | Full | Lossless |
 | PDF | `.pdf` | `application/pdf` | Yes | Full | — | Parse only |
-| Markdown | `.md` | `text/markdown` | No | Full | Full | Lossless |
-| HTML | `.html`, `.htm` | `text/html` | No | Full | Full | Lossless |
+| Markdown | `.md` | `text/markdown` | No | Full | Full | Text-level |
+| HTML | `.html`, `.htm` | `text/html` | No | Full | Full | Text-level |
 | XML | `.xml` | `application/xml` | No | Full | — | Parse only |
 
 ## HWP

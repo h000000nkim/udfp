@@ -69,16 +69,18 @@ from udf.validation import validate_hwp, validate_hwpx, validate_docx
 ```python
 report = validate_hwp(doc)
 
-report.is_valid       # bool
-report.violations     # list[RuleViolation]
+report.is_passing()       # bool — zero errors and zero warnings
+report.all_violations     # list[RuleViolation]
+report.error_count        # int
+report.warning_count      # int
 ```
 
 ### RuleViolation
 
 ```python
-for v in report.violations:
-    v.rule        # str — "R-1", "R-2", etc.
+for v in report.all_violations:
+    v.rule_id     # str — "R1", "R2", "HX1", "D1", etc.
+    v.block_id    # str — which block is affected
     v.severity    # str — "error" or "warning"
     v.message     # str — human-readable description
-    v.location    # str — where in the document
 ```

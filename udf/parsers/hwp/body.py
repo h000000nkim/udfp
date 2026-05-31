@@ -10,6 +10,7 @@ from typing import Any
 
 from udf.core.ids import make_block_id, make_verbatim_id
 from udf.schema import (
+    Block,
     BlockFormat,
     CellFormat,
     ChartBlock,
@@ -1132,13 +1133,14 @@ def _parse_shape_position(payload: bytes) -> PositionInfo | None:
 def _extract_child_shapes(
     ctrl_children: list[HwpRecord],
     block_counter: itertools.count[int],
-) -> list[DrawingBlock]:
-    """$con 컨테이너에서 기하 도형(선, 사각형 등) 자식을 추출."""
+    info: DocInfoResult | None = None,
+) -> list[Block]:
+    """$con 컨테이너에서 기하 도형 및 $pic 이미지 자식을 추출."""
     sc_indices = [
         i for i, r in enumerate(ctrl_children)
         if r.tag_id == HWPTAG_SHAPE_COMPONENT and len(r.payload) >= 4
     ]
-    results: list[DrawingBlock] = []
+    results: list[Block] = []
     for si, idx in enumerate(sc_indices):
         pay = ctrl_children[idx].payload
         st = pay[:4][::-1].decode("ascii", errors="replace")
@@ -1152,6 +1154,24 @@ def _extract_child_shapes(
         if has_lh:
             continue
         pos = _parse_shape_position(pay)
+        if st == "$pic" and info is not None:
+            bin_item_id = None
+            for k in range(idx + 1, next_sc):
+                rec = ctrl_children[k]
+                if rec.tag_id == HWPTAG_SHAPE_COMPONENT_PIC and len(rec.payload) >= 73:
+                    bin_item_id = struct.unpack_from("<H", rec.payload, 71)[0]
+                    break
+            if bin_item_id is not None:
+                src = _resolve_bin_src(bin_item_id, info)
+                results.append(ImageBlock(
+                    type="image",
+                    id=make_block_id(next(block_counter)),
+                    src=src,
+                    width=pos.width if pos and pos.width else None,
+                    height=pos.height if pos and pos.height else None,
+                    position=pos,
+                ))
+                continue
         fc, lc, lw = _parse_shape_fill_line(pay)
         results.append(DrawingBlock(
             type="drawing",
@@ -1426,7 +1446,7 @@ def _parse_gso(
             )
             content_blocks.extend(nested)
             verbatim_map.update(nv)
-            geom_children = _extract_child_shapes(ctrl_children, block_counter)
+            geom_children = _extract_child_shapes(ctrl_children, block_counter, info)
             content_blocks.extend(geom_children)
         elif lh_idx is not None:
             lh_rec = ctrl_children[lh_idx]
@@ -1474,9 +1494,14 @@ def _parse_gso(
             verbatim_ref=verb_id,
         )
     else:
-        child_shapes: list[DrawingBlock] = []
+        child_drawing: list[DrawingBlock] = []
+        child_content: list[Block] = []
         if shape_type == "$con":
-            child_shapes = _extract_child_shapes(ctrl_children, block_counter)
+            for cs in _extract_child_shapes(ctrl_children, block_counter, info):
+                if isinstance(cs, DrawingBlock):
+                    child_drawing.append(cs)
+                else:
+                    child_content.append(cs)
         block = DrawingBlock(
             type="drawing",
             id=blk_id,
@@ -1485,7 +1510,8 @@ def _parse_gso(
             background_color=fill_color,
             line_color=line_color,
             line_width=line_width_pt,
-            children=child_shapes,
+            content=child_content,
+            children=child_drawing,
             verbatim_ref=verb_id,
         )
     return block, verbatim_map
@@ -2006,7 +2032,7 @@ def extract_columns_def(stream_bytes: bytes) -> dict[str, Any] | None:
                 flags = struct.unpack_from("<H", rec.payload, 4)[0]
                 count = (flags >> 2) & 0xFF
                 if count <= 1:
-                    return None
+                    continue
                 same_widths = bool(flags & (1 << 12))
                 spacing = struct.unpack_from("<H", rec.payload, 6)[0]
                 return {
