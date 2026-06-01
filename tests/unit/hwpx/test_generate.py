@@ -752,7 +752,7 @@ class TestHwpxCharPrIDRef:
                 ]),
             ],
         )
-        section_xml = blocks_to_section_xml(doc.blocks, doc).decode("utf-8")
+        blocks_to_section_xml(doc.blocks, doc)
         header_xml = build_minimal_header_xml(doc).decode("utf-8")
         assert header_xml.count("charPr ") >= 3  # default + bold + italic + both
 
@@ -765,6 +765,6 @@ class TestHwpxCharPrIDRef:
                 ]),
             ],
         )
-        section_xml = blocks_to_section_xml(doc.blocks, doc).decode("utf-8")
+        blocks_to_section_xml(doc.blocks, doc)
         header_xml = build_minimal_header_xml(doc).decode("utf-8")
         assert "textColor" in header_xml

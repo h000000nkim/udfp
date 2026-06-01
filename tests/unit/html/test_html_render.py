@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from udf.core.schema import DocumentMetadata, UdfDocument
 from udf.renderers.html import render_html
 from udf.schema.blocks import (

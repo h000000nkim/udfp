@@ -515,7 +515,6 @@ class TestImportMd:
 
         md = _run(fn_export(path=path))
         edited_md = md.replace("첫 번째 단락입니다.", "덮어쓰기 테스트")
-        original_size = pathlib.Path(path).stat().st_size
 
         result = _run(fn_import(path=path, edited_md=edited_md))
         assert "Saved:" in result
