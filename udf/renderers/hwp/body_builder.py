@@ -865,7 +865,6 @@ def build_table(
 
             # Emit image paragraphs inside the cell
             for img_idx, img_info in enumerate(imgs):
-                is_last_img = (img_idx == len(imgs) - 1)
                 # Constrain image width to cell content area
                 cell_content_w = max(1, size_x - 2 * _DEFAULT_CELL_PADDING_H)
                 iw = img_info.img_width
@@ -1240,7 +1239,7 @@ def build_header_footer(
 _SHAPE_TYPE_PIC = b"\x63\x69\x70\x24"   # '$pic' reversed
 _SHAPE_TYPE_REC = b"\x63\x65\x72\x24"   # '$rec' reversed
 
-_GSO_CTRL_ATTR = 0x042A2311
+_GSO_CTRL_ATTR = 0x040A2311
 _GSO_INST_COUNTER = 0x70000001
 
 
@@ -1302,7 +1301,7 @@ def _build_shape_component_pic(width: int, height: int) -> bytes:
     struct.pack_into("<I", buf, 24, height)      # origHeight
     struct.pack_into("<I", buf, 28, width)       # curWidth
     struct.pack_into("<I", buf, 32, height)      # curHeight
-    struct.pack_into("<I", buf, 36, 0x24000000)  # property
+    struct.pack_into("<I", buf, 36, 0x24080000)  # property (bit 19 = inline)
     struct.pack_into("<H", buf, 40, 0)           # rotateAngle (uint16)
     struct.pack_into("<i", buf, 42, width // 2)  # rotateXCenter
     struct.pack_into("<i", buf, 46, height // 2) # rotateYCenter
@@ -1333,6 +1332,7 @@ def _build_shape_component_pic(width: int, height: int) -> bytes:
 
 def _build_shape_pic_payload(
     width: int, height: int, bin_item_id: int,
+    orig_width: int = 0, orig_height: int = 0,
 ) -> bytes:
     """SHAPE_COMPONENT_PIC 페이로드.
 
@@ -1357,11 +1357,13 @@ def _build_shape_pic_payload(
       68-70: effect + padding (3B)
       71-72: binItemId (uint16 LE)
       73:    borderTransparency (0)
-      74-77: instanceId (0)
+      74-77: instanceId (counter-based)
       78-81: imageTransparency (0)
-      82-85: brightImageWidth (width)
-      86-89: brightImageHeight (height)
+      82-85: brightImageWidth (orig pixel dims)
+      86-89: brightImageHeight (orig pixel dims)
     """
+    bw = orig_width if orig_width else width
+    bh = orig_height if orig_height else height
     buf = bytearray(90)
     struct.pack_into("<I", buf, 0, 0)              # borderColor
     struct.pack_into("<I", buf, 4, 0)              # borderThickness
@@ -1384,10 +1386,10 @@ def _build_shape_pic_payload(
     # 69-70: padding
     struct.pack_into("<H", buf, 71, bin_item_id)   # binItemId (spec offset 71)
     struct.pack_into("<B", buf, 73, 0)             # borderTransparency
-    struct.pack_into("<I", buf, 74, 0)             # instanceId
+    struct.pack_into("<I", buf, 74, _next_gso_instance_id())  # instanceId
     struct.pack_into("<I", buf, 78, 0)             # imageTransparency
-    struct.pack_into("<I", buf, 82, width)         # brightImageWidth
-    struct.pack_into("<I", buf, 86, height)        # brightImageHeight
+    struct.pack_into("<I", buf, 82, bw)            # brightImageWidth
+    struct.pack_into("<I", buf, 86, bh)            # brightImageHeight
     return bytes(buf)
 
 
@@ -1399,6 +1401,8 @@ def build_image(
     level: int = 0,
     font_size_hu: int = 1000,
     line_spacing_pct: int = 160,
+    orig_width: int = 0,
+    orig_height: int = 0,
 ) -> tuple[bytes, int]:
     """Build an image record set (host paragraph + CTRL_HEADER + SHAPE_COMPONENT + PIC).
 
@@ -1418,6 +1422,10 @@ def build_image(
         Font size in HWPUNIT.
     line_spacing_pct : int, default 160
         Line spacing percentage.
+    orig_width : int, default 0
+        Original image width in HWPUNIT (for PIC brightImageWidth).
+    orig_height : int, default 0
+        Original image height in HWPUNIT (for PIC brightImageHeight).
 
     Returns
     -------
@@ -1447,14 +1455,15 @@ def build_image(
 
     # 4. SHAPE_COMPONENT_PIC (tag=85) — child of SHAPE_COMPONENT (level+3)
     out += _pack_record(HWPTAG_SHAPE_COMPONENT_PIC, level + 3,
-                        _build_shape_pic_payload(img_width, img_height, bin_item_id))
+                        _build_shape_pic_payload(img_width, img_height, bin_item_id,
+                                                 orig_width, orig_height))
 
     line_height = font_size_hu * line_spacing_pct // 100
     return out, max(line_height, img_height)
 
 
 def _build_shape_component_rec(width: int, height: int) -> bytes:
-    """SHAPE_COMPONENT '$rec' payload for rectangle textbox (196B, same layout as $pic)."""
+    """SHAPE_COMPONENT '$rec' payload for rectangle textbox (196B base)."""
     buf = bytearray(196)
     struct.pack_into("<4s", buf, 0, _SHAPE_TYPE_REC)
     struct.pack_into("<4s", buf, 4, _SHAPE_TYPE_REC)
@@ -1466,33 +1475,45 @@ def _build_shape_component_rec(width: int, height: int) -> bytes:
     struct.pack_into("<I", buf, 24, height)
     struct.pack_into("<I", buf, 28, width)
     struct.pack_into("<I", buf, 32, height)
-    struct.pack_into("<I", buf, 36, 0x24000000)
+    struct.pack_into("<I", buf, 36, 0)            # property=0: no fill/line/shadow data
     struct.pack_into("<H", buf, 40, 0)
     struct.pack_into("<i", buf, 42, width // 2)
     struct.pack_into("<i", buf, 46, height // 2)
     struct.pack_into("<H", buf, 50, 1)
     struct.pack_into("<d", buf, 52, 1.0)
+    struct.pack_into("<d", buf, 84, 1.0)
     struct.pack_into("<d", buf, 100, 1.0)
+    struct.pack_into("<d", buf, 132, 1.0)
     struct.pack_into("<d", buf, 148, 1.0)
     struct.pack_into("<d", buf, 180, 1.0)
     return bytes(buf)
 
 
 def _build_textbox_list_header(width: int, height: int) -> bytes:
-    """LIST_HEADER for textbox content (simpler than cell LIST_HEADER)."""
-    listflags = 0x00000020
-    buf = struct.pack("<HH", 1, 0)
-    buf += struct.pack("<I", listflags)
-    buf += struct.pack("<4H", 283, 283, 283, 283)
-    buf += struct.pack("<II", width, height)
+    """LIST_HEADER for textbox content (33B, matching real HWP files)."""
+    buf = struct.pack("<I", 1)                      # nPara
+    buf += struct.pack("<I", 0x00000020)             # listFlags
+    buf += struct.pack("<4H", 283, 283, 283, 283)   # margins
+    buf += struct.pack("<I", width)                  # textWidth
+    buf += b"\x00" * 13                              # reserved/padding
     return buf
 
 
 def _build_shape_rect_payload(
     width: int, height: int, round_corner: int = 0,
 ) -> bytes:
-    """SHAPE_COMPONENT_RECT payload (4B round corner)."""
-    return struct.pack("<I", round_corner)
+    """SHAPE_COMPONENT_RECT payload (33B: round corner + 4 corner points + fill byte)."""
+    buf = bytearray(33)
+    struct.pack_into("<I", buf, 0, round_corner)
+    struct.pack_into("<i", buf, 4, 0)              # leftTopX
+    struct.pack_into("<i", buf, 8, 0)              # leftTopY
+    struct.pack_into("<i", buf, 12, width)          # rightTopX
+    struct.pack_into("<i", buf, 16, 0)              # rightTopY
+    struct.pack_into("<i", buf, 20, width)          # rightBottomX
+    struct.pack_into("<i", buf, 24, height)         # rightBottomY
+    struct.pack_into("<i", buf, 28, 0)              # leftBottomX
+    buf[32] = 0                                     # fill type (0=none)
+    return bytes(buf)
 
 
 def _css_hex_to_rgb(color: str) -> tuple[int, int, int]:
@@ -1560,14 +1581,14 @@ def build_textbox_shape(
     out += _pack_record(HWPTAG_SHAPE_COMPONENT, level + 2,
                         _build_shape_component_rec(width, height))
 
-    # LIST_HEADER for textbox content
+    # LIST_HEADER for textbox content (SHAPE+1 level)
     lh = _build_textbox_list_header(width, height)
-    out += _pack_record(HWPTAG_LIST_HEADER, level + 2, lh)
+    out += _pack_record(HWPTAG_LIST_HEADER, level + 3, lh)
 
-    # Content records are built at level=0; bump to level+2 (same as LIST_HEADER,
-    # matching the table cell pattern where cell paragraphs share the LIST_HEADER level).
-    out += _bump_record_levels(content_records, level + 2)
+    # Content records at SHAPE+1 level (same as LIST_HEADER)
+    out += _bump_record_levels(content_records, level + 3)
 
+    # RECT at SHAPE+1 level (same as LIST_HEADER)
     out += _pack_record(HWPTAG_SHAPE_COMPONENT_RECT, level + 3,
                         _build_shape_rect_payload(width, height))
 

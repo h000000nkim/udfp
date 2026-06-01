@@ -31,7 +31,6 @@ from udf.schema.blocks import (
     ParagraphBlock,
     QuoteBlock,
     TableBlock,
-    TableCell,
     TextArtBlock,
     TextBoxBlock,
     UnknownBlock,

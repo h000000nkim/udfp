@@ -9,7 +9,6 @@ that cannot be represented in Markdown.
 from __future__ import annotations
 
 import copy
-import re
 from dataclasses import dataclass, field
 from typing import Iterator, Literal
 
@@ -34,7 +33,7 @@ from udf.schema.blocks import (
     TextArtBlock,
     TextBoxBlock,
 )
-from udf.schema.inlines import TextInline
+from udf.pipeline.document import UdfDocument
 
 Block = BlockBase
 

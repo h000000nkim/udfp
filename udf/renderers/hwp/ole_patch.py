@@ -734,7 +734,7 @@ def _find_or_create_storage(
             return found
 
     new_idx = len(entries)
-    new_entry = _create_dir_entry(name, 1, _ENDOFCHAIN, 0)
+    new_entry = _create_dir_entry(name, 1, 0, 0)
     entries.append(new_entry)
 
     if child_id == _NOSTREAM or child_id >= len(entries) - 1:

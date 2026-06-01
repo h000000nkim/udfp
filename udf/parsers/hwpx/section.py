@@ -21,6 +21,7 @@ from udf.schema import (
     FootnoteRefInline,
     HeaderBlock,
     HeadingBlock,
+    ImageBlock,
     ImageInline,
     LinkInline,
     ListBlock,
@@ -237,7 +238,6 @@ def _collect_inlines(
     """
     inlines: list[Any] = []
     active_field_url: str | None = None
-    active_field_type: str | None = None
     field_text_parts: list[str] = []
 
     for run in p_el.iterfind("hp:run", NS):
@@ -283,7 +283,6 @@ def _collect_inlines(
                             url = _extract_field_param(fb, "Path")
                             if url:
                                 active_field_url = url
-                                active_field_type = "HYPERLINK"
                                 field_text_parts = []
                         elif ft == "CLICK_HERE":
                             direction = _extract_field_param(fb, "Direction") or ""
@@ -304,7 +303,6 @@ def _collect_inlines(
                             url=active_field_url,
                         ))
                         active_field_url = None
-                        active_field_type = None
                         field_text_parts = []
             elif tag == "footNote" or tag == "endNote":
                 ref_inline, note_block = _parse_note(child, tag, info)
@@ -471,6 +469,10 @@ def _parse_pic(pic_el: etree._Element) -> ImageInline | None:
     이미지 소스는 hp:img 요소의 binaryItemIDRef 속성에서 가져온다.
     """
     sz_el = pic_el.find("hp:sz", NS)
+    if sz_el is None:
+        sz_el = pic_el.find("hp:curSz", NS)
+    if sz_el is None:
+        sz_el = pic_el.find("hp:orgSz", NS)
     width: float | None = None
     height: float | None = None
     if sz_el is not None:
@@ -595,10 +597,25 @@ def _parse_textbox_from_container(
     컨테이너 내부의 모든 drawText (rect, ellipse 등 도형 내부)에서
     텍스트를 추출한다. 중첩 컨테이너도 재귀적으로 처리한다.
     컨테이너의 sz/curSz에서 크기 정보를 추출하여 설정한다.
+    컨테이너의 pos에서 위치 정보를 추출하여 자식에 전파한다.
     """
     blocks = _collect_draw_content(container_el, info)
     if not blocks:
         return None
+
+    container_bg = _extract_fill_color(container_el)
+    container_lc, container_lw = _extract_line_color(container_el)
+    if container_bg or container_lc:
+        for b in blocks:
+            if isinstance(b, TextBoxBlock):
+                if container_bg:
+                    b.background_color = b.background_color or container_bg
+                if container_lc:
+                    b.line_color = b.line_color or container_lc
+                if container_lw:
+                    b.line_width = b.line_width or container_lw
+
+    container_pos = _extract_position_info(container_el)
 
     sz = container_el.find("hp:sz", NS)
     if sz is None:
@@ -613,9 +630,38 @@ def _parse_textbox_from_container(
                 if isinstance(b, TextBoxBlock) and not b.height:
                     b.height = ch
 
+    if container_pos:
+        for b in blocks:
+            if isinstance(b, TextBoxBlock) and b.position:
+                b.position.hrelto = b.position.hrelto or container_pos.hrelto
+                b.position.vrelto = b.position.vrelto or container_pos.vrelto
+
+    _clip_overlapping_widths(blocks)
+
     if len(blocks) == 1:
         return blocks[0]
     return blocks
+
+
+def _clip_overlapping_widths(blocks: list[Block]) -> None:
+    """Clip TextBoxBlock widths to prevent horizontal overlap at same Y."""
+    positioned = [
+        b for b in blocks
+        if isinstance(b, TextBoxBlock) and b.position and b.position.x is not None and b.width
+    ]
+    if len(positioned) < 2:
+        return
+    for i, a in enumerate(positioned):
+        a_end = a.position.x + a.width
+        for b in positioned:
+            if b is a:
+                continue
+            if b.position.y is None or a.position.y is None:
+                continue
+            if abs(b.position.y - a.position.y) > 5:
+                continue
+            if b.position.x > a.position.x and b.position.x < a_end:
+                a.width = b.position.x - a.position.x
 
 
 def _extract_fill_color(shape_el: etree._Element) -> str | None:
@@ -678,6 +724,37 @@ def _extract_line_color(shape_el: etree._Element) -> tuple[str | None, float | N
 _HRELTO_MAP = {"PAPER": "paper", "PAGE": "page", "COLUMN": "column", "PARA": "paragraph"}
 _VRELTO_MAP = {"PAPER": "paper", "PAGE": "page", "PARA": "paragraph"}
 _FLOW_MAP = {"BLOCK": "block", "BACK": "back", "FRONT": "front", "TIGHT": "tight", "THROUGH": "through"}
+
+
+def _to_signed32(val: int) -> int:
+    """Convert unsigned 32-bit integer to signed."""
+    if val >= 0x80000000:
+        return val - 0x100000000
+    return val
+
+
+def _extract_offset_as_position(shape_el: etree._Element) -> PositionInfo | None:
+    """Extract offset element from a shape inside a container as position info."""
+    off = shape_el.find("hp:offset", NS)
+    if off is None:
+        off = shape_el.find("hc:offset", NS)
+    if off is None:
+        return None
+    x_val = off.get("x", "")
+    y_val = off.get("y", "")
+    if not x_val and not y_val:
+        return None
+    x = _to_signed32(int(x_val)) / _HWPUNIT_PER_PT if x_val else 0.0
+    y = _to_signed32(int(y_val)) / _HWPUNIT_PER_PT if y_val else 0.0
+    if x < 0:
+        x = 0.0
+    if y < 0:
+        y = 0.0
+    return PositionInfo(
+        x=x, y=y,
+        hrelto="paper", vrelto="paper",
+        overlap_others=True,
+    )
 
 
 def _extract_position_info(shape_el: etree._Element) -> PositionInfo | None:
@@ -756,7 +833,16 @@ def _collect_draw_content(
                             tb_content.append(block)
                 if tb_content:
                     tb_id = _next_block_id()
-                    blocks.append(TextBoxBlock(type="text_box", id=tb_id, content=tb_content))
+                    tb = TextBoxBlock(type="text_box", id=tb_id, content=tb_content)
+                    parent_bg = _extract_fill_color(el)
+                    parent_lc, parent_lw = _extract_line_color(el)
+                    if parent_bg:
+                        tb.background_color = parent_bg
+                    if parent_lc:
+                        tb.line_color = parent_lc
+                    if parent_lw:
+                        tb.line_width = parent_lw
+                    blocks.append(tb)
 
         elif tag in ("rect", "ellipse", "arc", "polygon", "curve", "connectLine"):
             shape_blocks = _collect_draw_content(child, info)
@@ -764,6 +850,8 @@ def _collect_draw_content(
             bg_img = _extract_fill_image(child)
             lc, lw = _extract_line_color(child)
             pos_info = _extract_position_info(child)
+            if pos_info is None:
+                pos_info = _extract_offset_as_position(child)
             sz = child.find("hp:curSz", NS)
             if sz is None:
                 sz = child.find("hp:orgSz", NS)
@@ -805,11 +893,18 @@ def _collect_draw_content(
         elif tag == "pic":
             img = _parse_pic(child)
             if img is not None:
-                # 독립 이미지를 단락에 래핑
+                pos_info = _extract_position_info(child)
+                if pos_info is None:
+                    pos_info = _extract_offset_as_position(child)
+                if pos_info and img.width and img.height and img.width > 400 and img.height > 600:
+                    pos_info.flow = "back"
                 p_id = _next_block_id()
-                blocks.append(ParagraphBlock(
-                    type="paragraph", id=p_id, inlines=[img]
-                ))
+                img_block = ImageBlock(
+                    type="image", id=p_id,
+                    src=img.src, width=img.width, height=img.height,
+                    position=pos_info,
+                )
+                blocks.append(img_block)
 
         elif tag == "tbl":
             blocks.append(_parse_table(child, info, dummy_verbatim))
@@ -1240,8 +1335,6 @@ def parse_masterpage_xml(
     """Parse a masterpage XML and extract drawable content (images, shapes)."""
     root = etree.fromstring(mp_bytes)
     blocks: list[Block] = []
-    dummy_verbatim: dict[str, VerbatimBlock] = {}
-
     sub_list = root.find("hp:subList", NS)
     if sub_list is None:
         return blocks

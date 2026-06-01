@@ -339,27 +339,27 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
         ph.set("checkable", "0")
 
     _STD_PP_DEFS = [
-        {"id": "0", "align": "JUSTIFY"},
-        {"id": "1", "align": "JUSTIFY"},
-        {"id": "2", "align": "JUSTIFY", "indent": "800"},
-        {"id": "3", "align": "JUSTIFY", "indent": "1600"},
-        {"id": "4", "align": "JUSTIFY", "indent": "2400"},
-        {"id": "5", "align": "JUSTIFY", "indent": "3200"},
-        {"id": "6", "align": "JUSTIFY", "indent": "4000"},
-        {"id": "7", "align": "JUSTIFY", "indent": "4800"},
-        {"id": "8", "align": "JUSTIFY", "indent": "5600"},
-        {"id": "9", "align": "JUSTIFY"},
+        {"id": "0", "align": "JUSTIFY", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "1", "align": "JUSTIFY", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "2", "align": "JUSTIFY", "indent": "800", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "3", "align": "JUSTIFY", "indent": "1600", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "4", "align": "JUSTIFY", "indent": "2400", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "5", "align": "JUSTIFY", "indent": "3200", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "6", "align": "JUSTIFY", "indent": "4000", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "7", "align": "JUSTIFY", "indent": "4800", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "8", "align": "JUSTIFY", "indent": "5600", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "9", "align": "JUSTIFY", "ls_type": "PERCENT", "ls_val": "160"},
         {"id": "10", "align": "JUSTIFY", "ls_type": "PERCENT", "ls_val": "130"},
-        {"id": "11", "align": "LEFT"},
-        {"id": "12", "align": "LEFT", "indent": "600"},
-        {"id": "13", "align": "LEFT", "indent": "900"},
-        {"id": "14", "align": "LEFT", "indent": "1200"},
-        {"id": "15", "align": "LEFT", "indent": "1500"},
-        {"id": "16", "align": "JUSTIFY"},
-        {"id": "17", "align": "JUSTIFY"},
-        {"id": "18", "align": "JUSTIFY"},
-        {"id": "19", "align": "JUSTIFY"},
-        {"id": "20", "align": "CENTER"},
+        {"id": "11", "align": "LEFT", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "12", "align": "LEFT", "indent": "600", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "13", "align": "LEFT", "indent": "900", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "14", "align": "LEFT", "indent": "1200", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "15", "align": "LEFT", "indent": "1500", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "16", "align": "JUSTIFY", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "17", "align": "JUSTIFY", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "18", "align": "JUSTIFY", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "19", "align": "JUSTIFY", "ls_type": "PERCENT", "ls_val": "160"},
+        {"id": "20", "align": "CENTER", "ls_type": "PERCENT", "ls_val": "160"},
     ]
     para_props = etree.SubElement(ref_list, f"{_HH}paraProperties")
     para_props.set("itemCnt", str(len(_STD_PP_DEFS)))
@@ -459,13 +459,18 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
     ))
 
 
-def build_content_hpf(section_count: int = 1) -> bytes:
+def build_content_hpf(
+    section_count: int = 1,
+    bindata_names: list[str] | None = None,
+) -> bytes:
     """Generate a content.hpf (OPF package file) for From Scratch mode.
 
     Parameters
     ----------
     section_count : int, default 1
         Number of section XML files to reference.
+    bindata_names : list[str] or None
+        List of BinData filenames (e.g. ["image1.jpg"]) to add to manifest.
 
     Returns
     -------
@@ -513,6 +518,18 @@ def build_content_hpf(section_count: int = 1) -> bytes:
         item.set("id", f"section{i}")
         item.set("href", f"Contents/section{i}.xml")
         item.set("media-type", "application/xml")
+
+    if bindata_names:
+        _EXT_MIME = {"jpg": "image/jpg", "jpeg": "image/jpeg", "png": "image/png",
+                     "gif": "image/gif", "bmp": "image/bmp", "tif": "image/tiff"}
+        for bname in bindata_names:
+            base = bname.rsplit(".", 1)[0]
+            ext = bname.rsplit(".", 1)[-1].lower() if "." in bname else ""
+            item = etree.SubElement(manifest, f"{{{_OPF}}}item")
+            item.set("id", base)
+            item.set("href", f"BinData/{bname}")
+            item.set("media-type", _EXT_MIME.get(ext, "application/octet-stream"))
+            item.set("isEmbeded", "1")
 
     item = etree.SubElement(manifest, f"{{{_OPF}}}item")
     item.set("id", "settings")

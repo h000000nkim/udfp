@@ -151,7 +151,10 @@ def _render_from_scratch(doc: UdfDocument, output_path: str) -> None:
     section_xml = blocks_to_section_xml(doc.blocks, doc)
     entries["Contents/header.xml"] = (_make_zipinfo("Contents/header.xml"), build_minimal_header_xml(doc))
     entries["Contents/section0.xml"] = (_make_zipinfo("Contents/section0.xml"), section_xml)
-    entries["Contents/content.hpf"] = (_make_zipinfo("Contents/content.hpf"), build_content_hpf(section_count=1))
+    bindata_names: list[str] = []
+    if doc.verbatim:
+        bindata_names = list(doc.verbatim.bindata_streams.keys())
+    entries["Contents/content.hpf"] = (_make_zipinfo("Contents/content.hpf"), build_content_hpf(section_count=1, bindata_names=bindata_names))
     entries["settings.xml"] = (_make_zipinfo("settings.xml"), build_settings_xml())
 
     prv_text = ""
