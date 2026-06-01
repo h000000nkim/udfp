@@ -18,8 +18,6 @@ from udf.core.schema import (
     FootnoteBlock,
     HeaderBlock,
     ListBlock,
-    ParagraphBlock,
-    TextInline,
     UdfDocument,
 )
 from udf.renderers.docx.serialize import (

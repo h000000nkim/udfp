@@ -245,8 +245,9 @@ def _detect_tables_pdfplumber(
             pdf.close()
             return []
         plumber_page = pdf.pages[page_num_0]
-        tables = plumber_page.extract_tables()
-        table_objs = plumber_page.find_tables()
+        ts = {"text_x_tolerance": 5, "text_y_tolerance": 5, "snap_tolerance": 5}
+        tables = plumber_page.extract_tables(table_settings=ts)
+        table_objs = plumber_page.find_tables(table_settings=ts)
         for tbl_idx, tbl_data in enumerate(tables):
             if not tbl_data or len(tbl_data) < 2:
                 continue
@@ -541,12 +542,25 @@ def _text_in_rect(
     boxes: list[LTTextBox],
     x0: float, y0: float, x1: float, y1: float,
 ) -> str:
+    tol = _SNAP
     parts: list[str] = []
     for box in boxes:
         cx = (box.x0 + box.x1) / 2
         cy = (box.y0 + box.y1) / 2
-        if x0 - _SNAP <= cx <= x1 + _SNAP and y0 - _SNAP <= cy <= y1 + _SNAP:
+        if x0 - tol <= cx <= x1 + tol and y0 - tol <= cy <= y1 + tol:
             parts.append(box.get_text().strip())
+            continue
+        # Overlap fallback: if box bbox intersects cell rect, assign to this cell
+        if box.x0 < x1 + tol and box.x1 > x0 - tol and box.y0 < y1 + tol and box.y1 > y0 - tol:
+            # Compute overlap fraction relative to the text box
+            ow = min(box.x1, x1) - max(box.x0, x0)
+            oh = min(box.y1, y1) - max(box.y0, y0)
+            bw = box.x1 - box.x0
+            bh = box.y1 - box.y0
+            if bw > 0 and bh > 0 and ow > 0 and oh > 0:
+                overlap_ratio = (ow * oh) / (bw * bh)
+                if overlap_ratio >= 0.3:
+                    parts.append(box.get_text().strip())
     return " ".join(parts)
 
 

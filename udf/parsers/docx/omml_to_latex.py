@@ -37,6 +37,9 @@ _ACCENT_CHAR_TO_LATEX: dict[str, str] = {
     "̃": r"\tilde",
     "̆": r"\breve",
     "̌": r"\check",
+}
+
+_WIDE_ACCENT_CHAR_TO_LATEX: dict[str, str] = {
     "̂": r"\widehat",
     "̃": r"\widetilde",
     "⃗": r"\overrightarrow",

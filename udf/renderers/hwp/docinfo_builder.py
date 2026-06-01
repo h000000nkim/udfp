@@ -264,7 +264,7 @@ def pack_bin_data(spec: BinDataSpec) -> bytes:
     """
     ext_utf16 = spec.extension.encode("utf-16-le")
     ext_len = len(spec.extension)
-    buf = struct.pack("<H", 0x0001)         # flags: embedded, default compression
+    buf = struct.pack("<H", 0x0021)         # flags: embedded, storage (no compress)
     buf += struct.pack("<H", spec.bin_data_id)
     buf += struct.pack("<H", ext_len)
     buf += ext_utf16

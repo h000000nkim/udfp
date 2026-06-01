@@ -35,7 +35,7 @@ from udf.renderers.hwp.body_builder import (
     CellImageInfo, TextSpan, build_equation, build_footnote, build_endnote,
     build_header_footer, build_hf_inline_anchor, build_image,
     build_paragraph, build_secd_paragraph, build_term_paragraph,
-    build_section, build_table, build_textbox_shape,
+    build_section, build_table,
     _EFFECTIVE_PARA_HEIGHT,
 )
 from udf.renderers.hwp.docinfo_builder import (
@@ -1035,7 +1035,15 @@ def _build_quote_block(block: QuoteBlock, vpos: int, ctx: _BuildCtx, is_last: bo
 
 
 def _build_textbox_block(block: TextBoxBlock, vpos: int, ctx: _BuildCtx, is_last: bool) -> BuildResult:
-    """TextBoxBlock → GSO textbox shape if has visual properties, else flat paragraphs."""
+    """TextBoxBlock → table cell with bg color if visual, else flat paragraphs."""
+    has_visual = block.background_color or block.line_color
+    if has_visual and block.content:
+        from udf.schema.blocks import TableBlock as _TblBlock, TableRow as _TblRow, TableCell as _TblCell, CellFormat as _CellFmt
+        fmt = _CellFmt(background_color=block.background_color)
+        cell = _TblCell(id=f"tb_{block.id}", content=list(block.content), format=fmt)
+        row = _TblRow(cells=[cell])
+        tbl = _TblBlock(type="table", id=f"tbl_{block.id}", rows=[row])
+        return _build_table_block(tbl, vpos, ctx, is_last)
     content_bytes = b""
     content_height = 0
     for idx, cb in enumerate(block.content):
@@ -1051,8 +1059,6 @@ def _build_textbox_block(block: TextBoxBlock, vpos: int, ctx: _BuildCtx, is_last
             content_width=ctx.content_width, font_size_hu=ctx.font_size_hu,
             line_spacing_pct=ctx.line_spacing_pct, is_last=is_last,
         )
-    # GSO textbox shape disabled — binary structure causes Hancom corruption.
-    # Render content as flat paragraphs (loses background/border visual fidelity).
     return content_bytes, content_height
 
 
@@ -1207,6 +1213,8 @@ def _build_image_block(block: ImageBlock, vpos: int, ctx: _BuildCtx, _is_last: b
     # 이미지 크기 (HWPUNIT)
     img_w = int((block.width or 200) * 100)   # pt → HWPUNIT
     img_h = int((block.height or 150) * 100)  # pt → HWPUNIT
+    orig_w = img_w
+    orig_h = img_h
     if img_w > ctx.content_width:
         ratio = ctx.content_width / img_w
         img_w = ctx.content_width
@@ -1227,6 +1235,8 @@ def _build_image_block(block: ImageBlock, vpos: int, ctx: _BuildCtx, _is_last: b
         bin_item_id, img_w, img_h, vpos,
         font_size_hu=ctx.font_size_hu,
         line_spacing_pct=ctx.line_spacing_pct,
+        orig_width=orig_w,
+        orig_height=orig_h,
     )
 
 
@@ -1750,7 +1760,7 @@ def _embed_images(
     compressed_di = _compress(new_docinfo)
     patch_hwp_stream(output_path, output_path, ["DocInfo"], compressed_di)
 
-    # OLE 스트림에 이미지 데이터 추가 (FileHeader compressed 플래그에 따라 압축)
+    # OLE 스트림에 이미지 데이터 추가 (BinData는 비압축 저장 — Hancom이 원본 바이트를 직접 읽음)
     for img_ref, data in valid_images:
         stream_name = f"BIN{img_ref.bin_data_id:04X}.{img_ref.extension}"
-        add_hwp_stream(output_path, ["BinData", stream_name], _compress(data))
+        add_hwp_stream(output_path, ["BinData", stream_name], data)

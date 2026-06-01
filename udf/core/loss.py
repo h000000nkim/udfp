@@ -116,8 +116,6 @@ def collect_render_losses(
     *,
     is_from_scratch: bool = False,
 ) -> "LossReport":
-    from udf.schema.blocks import Block
-
     lossy: list[BlockLoss] = []
     unsupported = _UNSUPPORTED_BLOCKS.get(target_fmt, set())
 
