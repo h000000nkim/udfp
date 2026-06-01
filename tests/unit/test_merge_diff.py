@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
 from udf.core.ids import max_block_index
-from udf.merge_diff import Change, MergeDiffResult, merge_diff
+from udf.merge_diff import merge_diff
 from udf.parsers.md.parse import parse_md
 from udf.pipeline.document import UdfDocument
 from udf.renderers.md import render_md
