@@ -205,7 +205,16 @@ def diff_documents(orig: UdfDocument, result: UdfDocument) -> LossReport:
     LossReport
         A report listing all detected semantic differences.
     """
-    from udf.core.schema import HeadingBlock, ParagraphBlock, TableBlock
+    from udf.core.schema import (
+        CodeBlock,
+        EquationBlock,
+        HeadingBlock,
+        ImageBlock,
+        ListBlock,
+        ParagraphBlock,
+        QuoteBlock,
+        TableBlock,
+    )
 
     lossy: list[BlockLoss] = []
 
@@ -285,5 +294,67 @@ def diff_documents(orig: UdfDocument, result: UdfDocument) -> LossReport:
                                     f"셀[{ri},{ci}] 변경: {oc!r} → {rc!r}",
                                 )
                             )
+
+        # ImageBlock
+        elif isinstance(oblk, ImageBlock) and isinstance(rblk, ImageBlock):
+            if oblk.src != rblk.src:
+                lossy.append(
+                    unintended_loss(bid, f"이미지 src 변경: {oblk.src!r} → {rblk.src!r}")
+                )
+            if oblk.alt != rblk.alt:
+                lossy.append(
+                    unintended_loss(bid, f"이미지 alt 변경: {oblk.alt!r} → {rblk.alt!r}")
+                )
+
+        # CodeBlock
+        elif isinstance(oblk, CodeBlock) and isinstance(rblk, CodeBlock):
+            if oblk.code != rblk.code:
+                lossy.append(
+                    user_edited_loss(bid, f"코드 변경: {oblk.code[:50]!r}… → {rblk.code[:50]!r}…")
+                )
+            if oblk.language != rblk.language:
+                lossy.append(
+                    unintended_loss(bid, f"코드 언어 변경: {oblk.language!r} → {rblk.language!r}")
+                )
+
+        # EquationBlock
+        elif isinstance(oblk, EquationBlock) and isinstance(rblk, EquationBlock):
+            if oblk.latex != rblk.latex:
+                lossy.append(
+                    user_edited_loss(bid, f"수식 latex 변경: {oblk.latex!r} → {rblk.latex!r}")
+                )
+            if oblk.hwp_script != rblk.hwp_script:
+                lossy.append(
+                    unintended_loss(bid, f"수식 hwp_script 변경")
+                )
+
+        # QuoteBlock
+        elif isinstance(oblk, QuoteBlock) and isinstance(rblk, QuoteBlock):
+            o_texts = [_extract_para_text(c) for c in oblk.content if isinstance(c, ParagraphBlock)]
+            r_texts = [_extract_para_text(c) for c in rblk.content if isinstance(c, ParagraphBlock)]
+            if o_texts != r_texts:
+                lossy.append(
+                    user_edited_loss(bid, f"인용 내용 변경")
+                )
+
+        # ListBlock
+        elif isinstance(oblk, ListBlock) and isinstance(rblk, ListBlock):
+            from udf.core.schema import TextInline
+            def _list_texts(items: list) -> list[str]:
+                return [
+                    "".join(i.text for i in it.inlines if isinstance(i, TextInline))
+                    for it in items
+                ]
+            o_items = _list_texts(oblk.items)
+            r_items = _list_texts(rblk.items)
+            if o_items != r_items:
+                lossy.append(
+                    user_edited_loss(bid, f"목록 항목 변경: {len(o_items)}개 → {len(r_items)}개")
+                )
+
+    # extra 블록 감지: 결과에만 있고 원본에 없는 블록
+    for bid in result_blocks:
+        if bid not in orig_blocks:
+            lossy.append(unintended_loss(bid, f"블록 {bid} 추가됨 (원본에 없음)"))
 
     return build_loss_report(result, lossy)

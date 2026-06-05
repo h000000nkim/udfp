@@ -15,7 +15,9 @@ import pytest
 
 from udf.renderers.hwp import generate_hwp
 from udf.parsers.hwp.parse import parse_hwp
+from udf.core.loss import diff_documents
 from udf.core.schema import ParagraphBlock, TableBlock
+from udf.validation.hwp.rules import validate_hwp
 
 FIXTURES = pathlib.Path(__file__).parent.parent / "fixtures" / "hwp"
 
@@ -163,3 +165,41 @@ class TestVerbatimRoundtrip:
                         all_cell_texts.append(t)
         assert any("이름" in t for t in all_cell_texts)
         assert any("홍길동" in t for t in all_cell_texts)
+
+
+class TestVerbatimValidation:
+    """Verbatim 라운드트립에 R-규칙 + 시맨틱 diff 검증 추가."""
+
+    VALIDATE_FIXTURES = [
+        "f01_plain_text.hwp",
+        "f02_char_format.hwp",
+        "f03_para_align.hwp",
+    ]
+
+    @pytest.mark.parametrize("filename", VALIDATE_FIXTURES)
+    def test_r_rules_after_roundtrip(
+        self, filename: str, tmp_path: pathlib.Path
+    ) -> None:
+        doc = parse_hwp(_fixture(filename))
+        out = str(tmp_path / filename)
+        generate_hwp(doc, out)
+        doc_rt = parse_hwp(out)
+        report = validate_hwp(doc_rt)
+        assert report.is_passing(), (
+            f"R-규칙 위반 ({filename}): "
+            + ", ".join(f"{v.rule_id}:{v.message}" for v in report.all_violations)
+        )
+
+    @pytest.mark.parametrize("filename", VALIDATE_FIXTURES)
+    def test_semantic_diff_zero(
+        self, filename: str, tmp_path: pathlib.Path
+    ) -> None:
+        doc = parse_hwp(_fixture(filename))
+        out = str(tmp_path / filename)
+        generate_hwp(doc, out)
+        doc_rt = parse_hwp(out)
+        report = diff_documents(doc, doc_rt)
+        assert not report.lossy_blocks, (
+            f"시맨틱 diff 비어있지 않음 ({filename}): "
+            + ", ".join(f"[{b.loss_type.value}] {b.description}" for b in report.lossy_blocks)
+        )

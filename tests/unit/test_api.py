@@ -35,7 +35,7 @@ class TestFormatRegistry:
         r = get_registry()
         assert r.can_parse("hwp")
         assert r.can_render("md")
-        assert not r.can_render("pdf")
+        assert r.can_render("pdf")
 
     def test_resolve_parser(self):
         from udf.formats import get_registry
@@ -48,7 +48,7 @@ class TestFormatRegistry:
         from udf.formats import get_registry
         r = get_registry()
         with pytest.raises(ValueError):
-            r.resolve_renderer("pdf")
+            r.resolve_renderer("xml")
 
 
 # ---------------------------------------------------------------------------

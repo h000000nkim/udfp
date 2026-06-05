@@ -193,7 +193,7 @@ def _init_registry() -> None:
         extensions=[".pdf"],
         mime_types=["application/pdf"],
         parser="udf.parsers.pdf.parse.parse_pdf",
-        renderer=None,
+        renderer="udf.layout.render_pdf.render_pdf",
         is_binary=True,
         roundtrip=False,
         schema_version=2,

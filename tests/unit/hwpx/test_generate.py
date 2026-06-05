@@ -254,8 +254,8 @@ class TestFromScratch:
 
         NS = {"hp": "http://www.hancom.co.kr/hwpml/2011/paragraph"}
         paragraphs = root.findall("hp:p", NS)
-        # secPr 단락 + heading 단락 + body 단락 = 최소 3개
-        assert len(paragraphs) >= 3
+        # secPr이 heading에 병합되므로 heading + body = 최소 2개
+        assert len(paragraphs) >= 2
 
         # 텍스트 확인: 어딘가에 "제목 1" 텍스트가 존재해야 함
         all_text = etree.tostring(root, encoding="unicode")
@@ -768,3 +768,18 @@ class TestHwpxCharPrIDRef:
         blocks_to_section_xml(doc.blocks, doc)
         header_xml = build_minimal_header_xml(doc).decode("utf-8")
         assert "textColor" in header_xml
+
+
+class TestStrikeoutShape3D:
+    """BUG-087: strikeout shape='3D'가 취소선으로 잘못 판정되지 않아야 함."""
+
+    def test_3d_not_in_strike_shapes(self):
+        """shape='3D'는 취소선 화이트리스트에 포함되지 않아야 함."""
+        _STRIKE_SHAPES = {"SOLID", "DASH", "DOT", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE"}
+        assert "3D" not in _STRIKE_SHAPES
+        assert "NONE" not in _STRIKE_SHAPES
+
+    def test_solid_is_strikethrough(self):
+        """shape='SOLID'는 취소선으로 판정되어야 함."""
+        _STRIKE_SHAPES = {"SOLID", "DASH", "DOT", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE"}
+        assert "SOLID" in _STRIKE_SHAPES

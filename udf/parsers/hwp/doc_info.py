@@ -182,21 +182,23 @@ def _parse_char_shape(payload: bytes) -> dict[str, Any]:
     engrave = bool(attr & (1 << 14))
     strikethrough_val = (attr >> 18) & 0x07
 
-    color_raw = 0
+    color_hex: str | None = None
     if len(payload) >= 56:
         (color_raw,) = struct.unpack_from("<I", payload, 52)
-    r = color_raw & 0xFF
-    g = (color_raw >> 8) & 0xFF
-    b = (color_raw >> 16) & 0xFF
-    color_hex = f"#{r:02x}{g:02x}{b:02x}"
+        if color_raw & 0x00FFFFFF:
+            r = color_raw & 0xFF
+            g = (color_raw >> 8) & 0xFF
+            b = (color_raw >> 16) & 0xFF
+            color_hex = f"#{r:02x}{g:02x}{b:02x}"
 
-    underline_color_raw = 0
+    underline_color_hex: str | None = None
     if len(payload) >= 60:
         (underline_color_raw,) = struct.unpack_from("<I", payload, 56)
-    ul_r = underline_color_raw & 0xFF
-    ul_g = (underline_color_raw >> 8) & 0xFF
-    ul_b = (underline_color_raw >> 16) & 0xFF
-    underline_color_hex = f"#{ul_r:02x}{ul_g:02x}{ul_b:02x}"
+        if underline_color_raw & 0x00FFFFFF:
+            ul_r = underline_color_raw & 0xFF
+            ul_g = (underline_color_raw >> 8) & 0xFF
+            ul_b = (underline_color_raw >> 16) & 0xFF
+            underline_color_hex = f"#{ul_r:02x}{ul_g:02x}{ul_b:02x}"
 
     shade_color_hex: str | None = None
     if len(payload) >= 64:
@@ -230,10 +232,10 @@ def _parse_char_shape(payload: bytes) -> dict[str, Any]:
             stk_b = (strike_raw >> 16) & 0xFF
             strike_color_hex = f"#{stk_r:02x}{stk_g:02x}{stk_b:02x}"
 
-    # Superscript/subscript: synthesized from rel_size + char_offset
+    # Superscript/subscript: attr bit 15/16 OR synthesized from rel_size + char_offset
     hangul_rel_size = rel_sizes[0]
-    superscript = hangul_rel_size < 100 and offset_hangul > 0
-    subscript = hangul_rel_size < 100 and offset_hangul < 0
+    superscript = bool(attr & (1 << 15)) or (hangul_rel_size < 100 and offset_hangul > 0)
+    subscript = bool(attr & (1 << 16)) or (hangul_rel_size < 100 and offset_hangul < 0)
 
     result: dict[str, Any] = {
         "hangul_face_id": face_ids[0],
@@ -290,7 +292,8 @@ def _parse_para_shape(payload: bytes) -> dict[str, Any]:
                bits 2-4: alignment (0=justify, 1=left, 2=right, 3=center, 4=distribute, 5=divide)
                bit 5: protect (과부/고아 제어)
                bit 6: start_new_page (강제 페이지 나눔)
-               bit 7: with_next_paragraph (keep_with_next)
+               bit 7: break_non_latin_word (0=BREAK_WORD, 1=KEEP_WORD)
+               bit 8: break_latin_word (0=BREAK_WORD, 1=KEEP_WORD)
       4-27   margins/spacing: uint32[6] (left, right, top, bot, first, line_spacing)
       28-29  tab_def_id: uint16
       30-31  numbering_bullet_id: uint16
@@ -308,20 +311,19 @@ def _parse_para_shape(payload: bytes) -> dict[str, Any]:
         "line_spacing_type": _LINE_SPACING_TYPE_MAP.get(ls_type_val, "ratio"),
         "protect": bool(attr & (1 << 5)) or None,
         "start_new_page": bool(attr & (1 << 6)) or None,
-        "with_next_paragraph": bool(attr & (1 << 7)) or None,
     }
 
     if len(payload) >= 28:
-        left_m, right_m, top_sp, bot_sp, indent, line_sp = struct.unpack_from(
-            "<6I", payload, 4
+        left_m, right_m, indent, top_sp, bot_sp, line_sp = struct.unpack_from(
+            "<iiiIII", payload, 4
         )
         result.update(
             {
                 "indent_left_hwp": left_m,
                 "indent_right_hwp": right_m,
+                "indent_first_hwp": indent,
                 "space_before_hwp": top_sp,
                 "space_after_hwp": bot_sp,
-                "indent_first_hwp": indent,
                 "line_spacing_hwp": line_sp,
             }
         )
@@ -559,14 +561,35 @@ def _parse_border_fill(payload: bytes) -> dict[str, Any]:
     if off + 4 <= len(payload):
         (fill_attr,) = struct.unpack_from("<I", payload, off)
         off += 4
-        # 단색 채우기인 경우 (bit 0)
+        # 단색 채우기 (bit 0)
         if fill_attr & 0x01:
             if off + 4 <= len(payload):
                 (fg_color,) = struct.unpack_from("<I", payload, off)
-                fc_r = fg_color & 0xFF
-                fc_g = (fg_color >> 8) & 0xFF
-                fc_b = (fg_color >> 16) & 0xFF
-                result["fill_color"] = f"#{fc_r:02x}{fc_g:02x}{fc_b:02x}"
+                fg_rgb = fg_color & 0x00FFFFFF
+                if fg_rgb != 0x00FFFFFF:
+                    fc_r = fg_rgb & 0xFF
+                    fc_g = (fg_rgb >> 8) & 0xFF
+                    fc_b = (fg_rgb >> 16) & 0xFF
+                    result["fill_color"] = f"#{fc_r:02x}{fc_g:02x}{fc_b:02x}"
+                off += 8  # fg(4B) + bg(4B)
+                if off + 4 <= len(payload):
+                    off += 4  # pattern_type
+        # 그래디언트 채우기 (bit 1) — 첫 번째 색상 추출
+        if fill_attr & 0x02 and "fill_color" not in result:
+            grad_off = off
+            # grad_type(1B) + angle(4B) + center_x(4B) + center_y(4B) + step(4B) = 17B header
+            grad_off += 17
+            if grad_off + 4 <= len(payload):
+                (n_colors,) = struct.unpack_from("<I", payload, grad_off)
+                grad_off += 4
+                if 0 < n_colors <= 16 and grad_off + 4 <= len(payload):
+                    (gc_raw,) = struct.unpack_from("<I", payload, grad_off)
+                    gc_rgb = gc_raw & 0x00FFFFFF
+                    if gc_rgb != 0x00FFFFFF:
+                        gc_r = gc_rgb & 0xFF
+                        gc_g = (gc_rgb >> 8) & 0xFF
+                        gc_b = (gc_rgb >> 16) & 0xFF
+                        result["fill_color"] = f"#{gc_r:02x}{gc_g:02x}{gc_b:02x}"
 
     return result
 
@@ -646,7 +669,7 @@ def _parse_compatible_document(payload: bytes) -> dict[str, Any]:
 def _parse_id_mappings(payload: bytes) -> list[int]:
     """ID_MAPPINGS 레코드에서 카테고리별 항목 수를 추출한다.
 
-    HWP ID_MAPPINGS: uint16 × N (카테고리 순서)
+    HWP ID_MAPPINGS: uint32 × N (카테고리 순서, 72바이트 = 18필드)
       [0] 바이너리 데이터
       [1] 한글 FaceName
       [2] 영문 FaceName
@@ -665,8 +688,8 @@ def _parse_id_mappings(payload: bytes) -> list[int]:
       ... (추가 카테고리)
     """
     counts: list[int] = []
-    for off in range(0, len(payload) - 1, 2):
-        (cnt,) = struct.unpack_from("<H", payload, off)
+    for off in range(0, len(payload) - 3, 4):
+        (cnt,) = struct.unpack_from("<I", payload, off)
         counts.append(cnt)
     return counts
 

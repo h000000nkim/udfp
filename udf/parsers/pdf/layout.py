@@ -245,9 +245,8 @@ def _detect_tables_pdfplumber(
             pdf.close()
             return []
         plumber_page = pdf.pages[page_num_0]
-        ts = {"text_x_tolerance": 5, "text_y_tolerance": 5, "snap_tolerance": 5}
-        tables = plumber_page.extract_tables(table_settings=ts)
-        table_objs = plumber_page.find_tables(table_settings=ts)
+        tables = plumber_page.extract_tables()
+        table_objs = plumber_page.find_tables()
         for tbl_idx, tbl_data in enumerate(tables):
             if not tbl_data or len(tbl_data) < 2:
                 continue
@@ -1138,8 +1137,17 @@ def extract_pages(
                     },
                 )))
 
-        # 테이블 (벡터 감지 우선, 없으면 pdfplumber 보충)
-        if table_regions:
+        # 테이블 (pdfplumber 우선, 없으면 벡터 감지 보충)
+        plumber_tables = _detect_tables_pdfplumber(
+            path, page_num - 1, page_height, block_counter,
+        )
+        if plumber_tables:
+            for y_top, eb in plumber_tables:
+                positioned.append((y_top, eb))
+                for i, box in enumerate(text_boxes):
+                    if _box_in_bbox(box, eb.bbox):
+                        table_box_indices.add(i)
+        elif table_regions:
             for region in table_regions:
                 tbl = _build_table_block(region, text_boxes, block_counter)
                 if tbl.rows:
@@ -1154,15 +1162,7 @@ def extract_pages(
                         },
                     )
                     positioned.append((region.y1, eb))
-        else:
-            plumber_tables = _detect_tables_pdfplumber(
-                path, page_num - 1, page_height, block_counter,
-            )
-            for y_top, eb in plumber_tables:
-                positioned.append((y_top, eb))
-                for i, box in enumerate(text_boxes):
-                    if _box_in_bbox(box, eb.bbox):
-                        table_box_indices.add(i)
+        # (pdfplumber fallback removed — now called first above)
 
         # 차트 (벡터 그래픽 밀집 영역)
         for cbbox in chart_bboxes:

@@ -16,26 +16,46 @@ from udf.core.ids import make_block_id
 from udf.schema import (
     Block,
     BlockFormat,
+    BookmarkBlock,
     CellFormat,
+    ChartBlock,
+    CodeBlock,
+    CodeInline,
+    CommentBlock,
     DocumentMetadata,
     DocumentSchema,
     DrawingBlock,
+    EndnoteBlock,
+    EndnoteRefInline,
     EquationBlock,
     EquationInline,
+    FieldBlock,
+    FooterBlock,
     FootnoteBlock,
+    FootnoteRefInline,
+    HeaderBlock,
     HeadingBlock,
+    HorizontalRuleBlock,
     ImageBlock,
     ImageInline,
     Inline,
     LinkInline,
+    ListBlock,
+    ListItem,
+    PageBreakBlock,
     ParagraphBlock,
     PositionInfo,
+    QuoteBlock,
     Ratio,
+    RubyInline,
     TableBlock,
     TableCell,
+    TableColumnDef,
     TableRow,
+    TextArtBlock,
     TextBoxBlock,
     TextInline,
+    UnknownBlock,
 )
 from udf.pipeline import UdfDocument, VerbatimLayer
 
@@ -98,7 +118,7 @@ class _TreeBuilder(HTMLParser):
         node.parent = self._stack[-1]
         self._stack[-1].children.append(node)
         self._last_closed = None
-        if tag not in ("br", "img", "hr", "meta", "link"):
+        if tag not in ("br", "img", "hr", "meta", "link", "input", "col", "source", "track", "wbr", "embed", "area", "base", "param"):
             self._stack.append(node)
         else:
             self._last_closed = node
@@ -204,6 +224,89 @@ def _extract_inlines(node: _Node, *, bold: bool = False, italic: bool = False,
                 nfn = raw_ff.split(",")[0].strip().strip("'\"")
             if "color" in sty:
                 nc = sty["color"]
+            cls = child.get("class", "")
+            if "field" in cls:
+                ft = child.get("data-field-type", "")
+                ft_text = _collect_text(child).strip()
+                result.append(TextInline(text=ft_text, font_name=font_name,
+                                         font_size=_parse_pt(font_size) if font_size else None,
+                                         color=color))
+                if child.tail:
+                    _append_text_parts(result, child.tail, bold, italic, underline, strike,
+                                       font_name, font_size, color)
+                continue
+            text_extras = _extract_text_extras(sty, cls)
+            if text_extras:
+                child_inlines = _extract_inlines(
+                    child, bold=nb, italic=ni, underline=nu, strike=ns,
+                    font_name=nfn, font_size=nfs, color=nc,
+                )
+                result.extend(
+                    _apply_text_extras(il, text_extras) if isinstance(il, TextInline) else il
+                    for il in child_inlines
+                )
+                if child.tail:
+                    _append_text_parts(result, child.tail, bold, italic, underline, strike,
+                                       font_name, font_size, color)
+                continue
+        elif tag == "code":
+            code_text = _collect_text(child)
+            result.append(CodeInline(code=code_text))
+            if child.tail:
+                _append_text_parts(result, child.tail, bold, italic, underline, strike,
+                                   font_name, font_size, color)
+            continue
+        elif tag == "ruby":
+            base = ""
+            rt_text = ""
+            for rc in child.children:
+                if rc.tag.lower() == "rt":
+                    rt_text = _collect_text(rc)
+                elif rc.tag.lower() not in ("rp",):
+                    base += _collect_text(rc)
+            if not base:
+                base = child.text or ""
+            result.append(RubyInline(base_text=base, ruby_text=rt_text))
+            if child.tail:
+                _append_text_parts(result, child.tail, bold, italic, underline, strike,
+                                   font_name, font_size, color)
+            continue
+        elif tag == "sub":
+            sub_inlines = _extract_inlines(
+                child, bold=nb, italic=ni, underline=nu, strike=ns,
+                font_name=nfn, font_size=nfs, color=nc,
+            )
+            for si in sub_inlines:
+                if isinstance(si, TextInline):
+                    si = TextInline(
+                        text=si.text, bold=si.bold, italic=si.italic,
+                        underline=si.underline, strikethrough=si.strikethrough,
+                        subscript=True, font_name=si.font_name,
+                        font_size=si.font_size, color=si.color,
+                    )
+                result.append(si)
+            if child.tail:
+                _append_text_parts(result, child.tail, bold, italic, underline, strike,
+                                   font_name, font_size, color)
+            continue
+        elif tag == "mark":
+            mark_inlines = _extract_inlines(
+                child, bold=nb, italic=ni, underline=nu, strike=ns,
+                font_name=nfn, font_size=nfs, color=nc,
+            )
+            for mi in mark_inlines:
+                if isinstance(mi, TextInline):
+                    mi = TextInline(
+                        text=mi.text, bold=mi.bold, italic=mi.italic,
+                        underline=mi.underline, strikethrough=mi.strikethrough,
+                        font_name=mi.font_name, font_size=mi.font_size,
+                        color=mi.color, highlight_color="#ffff00",
+                    )
+                result.append(mi)
+            if child.tail:
+                _append_text_parts(result, child.tail, bold, italic, underline, strike,
+                                   font_name, font_size, color)
+            continue
         elif tag == "a":
             href = child.get("href")
             link_text = _collect_text(child)
@@ -224,10 +327,40 @@ def _extract_inlines(node: _Node, *, bold: bool = False, italic: bool = False,
                                    font_name, font_size, color)
             continue
         elif tag == "sup":
-            result.extend(_extract_inlines(
+            ref_link = _find_ref_link(child)
+            if ref_link:
+                ref_cls = ref_link.get("class", "")
+                href = ref_link.get("href", "")
+                link_text = _collect_text(ref_link).strip()
+                if "footnote-ref" in ref_cls or href.startswith("#fn-") or href.startswith("#footnote-"):
+                    ref_id = href.lstrip("#").replace("fn-", "").replace("footnote-", "")
+                    num = _try_int(link_text)
+                    result.append(FootnoteRefInline(ref_id=ref_id, number=num))
+                    if child.tail:
+                        _append_text_parts(result, child.tail, bold, italic, underline, strike,
+                                           font_name, font_size, color)
+                    continue
+                if "endnote-ref" in ref_cls or href.startswith("#en-") or href.startswith("#endnote-"):
+                    ref_id = href.lstrip("#").replace("en-", "").replace("endnote-", "")
+                    num = _try_int(link_text)
+                    result.append(EndnoteRefInline(ref_id=ref_id, number=num))
+                    if child.tail:
+                        _append_text_parts(result, child.tail, bold, italic, underline, strike,
+                                           font_name, font_size, color)
+                    continue
+            sup_inlines = _extract_inlines(
                 child, bold=nb, italic=ni, underline=nu, strike=ns,
                 font_name=nfn, font_size=nfs, color=nc,
-            ))
+            )
+            for si in sup_inlines:
+                if isinstance(si, TextInline):
+                    si = TextInline(
+                        text=si.text, bold=si.bold, italic=si.italic,
+                        underline=si.underline, strikethrough=si.strikethrough,
+                        superscript=True, font_name=si.font_name,
+                        font_size=si.font_size, color=si.color,
+                    )
+                result.append(si)
             if child.tail:
                 _append_text_parts(result, child.tail, bold, italic, underline, strike,
                                    font_name, font_size, color)
@@ -249,6 +382,87 @@ def _extract_inlines(node: _Node, *, bold: bool = False, italic: bool = False,
                                font_name, font_size, color)
 
     return result
+
+
+def _extract_text_extras(sty: dict[str, str], cls: str) -> dict[str, Any]:
+    """Extract additional TextInline properties from CSS that aren't covered by
+    the standard bold/italic/font_name/font_size/color parameters."""
+    extras: dict[str, Any] = {}
+    if "background-color" in sty:
+        extras["highlight_color"] = sty["background-color"]
+    if "letter-spacing" in sty:
+        v = sty["letter-spacing"]
+        if v.endswith("em"):
+            try:
+                extras["letter_spacing"] = float(v[:-2]) * 100
+            except ValueError:
+                pass
+    if "font-variant" in sty and "small-caps" in sty["font-variant"]:
+        extras["small_caps"] = True
+    if "text-transform" in sty and sty["text-transform"] == "uppercase":
+        extras["all_caps"] = True
+    if "direction" in sty and sty["direction"] == "rtl":
+        extras["rtl"] = True
+    if "-webkit-text-stroke" in sty:
+        extras["outline"] = True
+    if "text-shadow" in sty:
+        shadow_val = sty["text-shadow"]
+        if "#fff" in shadow_val and "#888" in shadow_val:
+            if shadow_val.startswith("1px 1px"):
+                extras["emboss"] = True
+            else:
+                extras["engrave"] = True
+        else:
+            extras["shadow"] = True
+    if "text-emphasis" in sty:
+        te = sty["text-emphasis"]
+        mark_map = {"dot": "dot", "circle": "circle"}
+        extras["emphasis_mark"] = mark_map.get(te, te)
+    if "transform" in sty:
+        m = re.match(r"scaleX\(([0-9.]+)\)", sty["transform"])
+        if m:
+            extras["char_scale"] = Ratio(float(m.group(1)) * 100)
+    va = sty.get("vertical-align", "")
+    if va.endswith("em") and va != "middle":
+        try:
+            extras["char_offset"] = float(va[:-2]) * 100
+        except ValueError:
+            pass
+    if "text-decoration-style" in sty:
+        extras["underline_type"] = sty["text-decoration-style"]
+    if "text-decoration-color" in sty:
+        extras["underline_color"] = sty["text-decoration-color"]
+    if "display" in sty and sty["display"] == "none":
+        extras["hidden"] = True
+    if "hidden" in cls:
+        extras["hidden"] = True
+    return extras
+
+
+def _apply_text_extras(il: TextInline, extras: dict[str, Any]) -> TextInline:
+    """Apply extra CSS-derived properties to a TextInline."""
+    d = il.model_dump(exclude_none=True)
+    d.pop("type", None)
+    d.update(extras)
+    return TextInline(**d)
+
+
+def _try_int(s: str) -> int | None:
+    try:
+        return int(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _find_ref_link(node: _Node) -> _Node | None:
+    """Find a footnote/endnote reference link inside a sup element."""
+    for c in node.children:
+        if c.tag.lower() == "a":
+            return c
+        found = _find_ref_link(c)
+        if found:
+            return found
+    return None
 
 
 def _append_text_parts(
@@ -354,9 +568,13 @@ def _parse_block_format(sty: dict[str, str]) -> BlockFormat | None:
         parts["space_before"] = _parse_pt(sty["margin-top"])
     if "margin-bottom" in sty:
         parts["space_after"] = _parse_pt(sty["margin-bottom"])
-    if "padding-left" in sty:
+    if "margin-left" in sty:
+        parts["indent_left"] = _parse_pt(sty["margin-left"])
+    elif "padding-left" in sty:
         parts["indent_left"] = _parse_pt(sty["padding-left"])
-    if "padding-right" in sty:
+    if "margin-right" in sty:
+        parts["indent_right"] = _parse_pt(sty["margin-right"])
+    elif "padding-right" in sty:
         parts["indent_right"] = _parse_pt(sty["padding-right"])
     if "text-indent" in sty:
         parts["indent_first"] = _parse_pt(sty["text-indent"])
@@ -402,6 +620,10 @@ def _parse_cell_format(sty: dict[str, str]) -> CellFormat | None:
         for i, s in enumerate(sides):
             if i < len(pad_parts):
                 parts[f"padding_{s}"] = _parse_pt(pad_parts[i])
+    for side in ("top", "right", "bottom", "left"):
+        key = f"padding-{side}"
+        if key in sty:
+            parts[f"padding_{side}"] = _parse_pt(sty[key])
     return CellFormat(**parts) if parts else None
 
 
@@ -453,14 +675,75 @@ def _node_to_block(
     if tag == "img":
         return _parse_image_node(node, bid)
 
+    # --- Figure (image with optional caption) ---
+    if tag == "figure":
+        return _parse_figure_node(node, bid, counter)
+
+    # --- List ---
+    if tag in ("ul", "ol"):
+        return _parse_list_node(node, bid, tag == "ol", counter)
+
+    # --- Code block ---
+    if tag == "pre":
+        return _parse_pre_node(node, bid)
+
+    # --- Quote ---
+    if tag == "blockquote":
+        inner = _extract_content_blocks(node, counter)
+        return QuoteBlock(type="quote", id=bid, content=inner)
+
+    # --- Horizontal rule ---
+    if tag == "hr":
+        return HorizontalRuleBlock(type="horizontal_rule", id=bid)
+
+    # --- Aside (footnote, endnote, comment, or generic) ---
+    if tag == "aside":
+        return _parse_aside_node(node, bid, counter)
+
+    # --- Header / Footer (document-level, not site chrome) ---
+    if tag == "header":
+        role = node.get("role", "")
+        if role == "banner" or "doc-header" in node.get("class", ""):
+            inner = _extract_content_blocks(node, counter)
+            return HeaderBlock(type="header", id=bid, content=inner)
+    if tag == "footer":
+        role = node.get("role", "")
+        if role == "contentinfo" or "doc-footer" in node.get("class", ""):
+            inner = _extract_content_blocks(node, counter)
+            return FooterBlock(type="footer", id=bid, content=inner)
+
     # --- Div containers ---
     if tag == "div":
         if _is_skip_div(node):
             return None
 
         cls = node.get("class", "")
+
+        # UDF renderer patterns (class-based detection)
+        if "page-break" in cls:
+            return PageBreakBlock(type="page_break", id=bid)
+        if "text-art" in cls:
+            text = _collect_text(node).strip()
+            return TextArtBlock(type="text_art", id=bid, text=text)
+        if "equation" in cls:
+            text = _collect_text(node).strip()
+            if text.startswith("$$") and text.endswith("$$"):
+                text = text[2:-2].strip()
+            return EquationBlock(type="equation", id=bid, latex=text)
+        if "drawing" in cls:
+            pos = _parse_position_info(sty)
+            inner = _extract_content_blocks(node, counter) if node.children else []
+            return DrawingBlock(
+                type="drawing", id=bid, position=pos,
+                background_color=sty.get("background-color") or sty.get("background"),
+                content=inner or None,
+            )
+        if "unknown" in cls:
+            desc = node.get("data-description", "")
+            return UnknownBlock(type="unknown", id=bid, description=desc)
+
         # Footnote
-        if "fn" in cls:
+        if "fn" in cls or "footnote" in cls:
             return _parse_footnote_node(node, bid, counter)
 
         # Check for image wrapper: <div style="text-align:center"><img></div>
@@ -469,14 +752,14 @@ def _node_to_block(
             if imgs:
                 return _parse_image_node(imgs[0], bid)
 
-        # TextBoxBlock: padding/border pattern with inner content
-        if _is_textbox_div(sty):
+        # TextBoxBlock: padding/border pattern or class-based
+        if "text-box" in cls or _is_textbox_div(sty):
             inner = _extract_content_blocks(node, counter)
             pos = _parse_position_info(sty)
             return TextBoxBlock(
                 type="text_box", id=bid, content=inner,
                 position=pos,
-                background_color=sty.get("background"),
+                background_color=sty.get("background-color") or sty.get("background"),
             )
 
         # DrawingBlock: position:absolute
@@ -484,14 +767,22 @@ def _node_to_block(
             pos = _parse_position_info(sty)
             return DrawingBlock(
                 type="drawing", id=bid, position=pos,
-                background_color=sty.get("background"),
+                background_color=sty.get("background-color") or sty.get("background"),
             )
 
+        # Generic div: unwrap children
         inner_blocks = _extract_content_blocks(node, counter)
         if inner_blocks:
             if len(inner_blocks) == 1:
                 return inner_blocks[0]
         return None
+
+    # --- Anchor (bookmark) ---
+    if tag == "a":
+        cls = node.get("class", "")
+        if "bookmark" in cls:
+            name = node.get("id", "").replace("bm-", "")
+            return BookmarkBlock(type="bookmark", id=bid, name=name)
 
     return None
 
@@ -504,9 +795,16 @@ def _parse_table_node(
     _parse_style(node.get("style"))
     rows: list[TableRow] = []
 
-    for tr in node.children:
-        if tr.tag.lower() != "tr":
-            continue
+    tr_nodes: list[_Node] = []
+    for child in node.children:
+        if child.tag.lower() in ("thead", "tbody", "tfoot"):
+            for sub in child.children:
+                if sub.tag.lower() == "tr":
+                    tr_nodes.append(sub)
+        elif child.tag.lower() == "tr":
+            tr_nodes.append(child)
+
+    for tr in tr_nodes:
         cells: list[TableCell] = []
         for td in tr.children:
             if td.tag.lower() not in ("td", "th"):
@@ -553,7 +851,26 @@ def _parse_table_node(
         if cells:
             rows.append(TableRow(cells=cells))
 
-    return TableBlock(type="table", id=bid, rows=rows)
+    tbl_sty = _parse_style(node.get("style"))
+    tbl_width = _parse_pt(tbl_sty.get("width")) or None
+    col_widths_list: list[TableColumnDef] = []
+    for child in node.children:
+        if child.tag.lower() == "colgroup":
+            for col_node in child.children:
+                if col_node.tag.lower() == "col":
+                    col_sty = _parse_style(col_node.get("style"))
+                    cw = _parse_pt(col_sty.get("width"))
+                    if cw:
+                        col_widths_list.append(TableColumnDef(width=cw))
+    tbl = TableBlock(type="table", id=bid, rows=rows, width=tbl_width, col_widths=col_widths_list)
+    split_id = node.get("data-udf-split-id")
+    if split_id:
+        tbl._split_source_id = split_id  # type: ignore[attr-defined]
+        try:
+            tbl._split_index = int(node.get("data-udf-split-index", "0"))  # type: ignore[attr-defined]
+        except ValueError:
+            tbl._split_index = 0  # type: ignore[attr-defined]
+    return tbl
 
 
 def _extract_cell_content(
@@ -568,7 +885,8 @@ def _extract_cell_content(
     blocks: list[Block] = []
 
     # 자식이 블록 레벨 요소인지 확인
-    block_tags = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "table", "div"}
+    block_tags = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "table", "div",
+                  "ul", "ol", "pre", "blockquote", "hr", "figure", "aside"}
     has_block_children = any(c.tag.lower() in block_tags for c in td.children)
 
     if has_block_children:
@@ -582,12 +900,23 @@ def _extract_cell_content(
                 if blk:
                     blocks.append(blk)
     else:
+        td_sty = _parse_style(td.get("style"))
+        td_fmt = _parse_block_format(td_sty)
         inlines = _extract_inlines(td)
+        if "font-style" in td_sty and td_sty["font-style"] == "italic":
+            inlines = [
+                TextInline(text=il.text, italic=True, **{
+                    k: v for k, v in il.model_dump(exclude_none=True).items()
+                    if k not in ("text", "type", "italic")
+                }) if isinstance(il, TextInline) else il
+                for il in inlines
+            ]
         if inlines or td.text.strip():
             blocks.append(ParagraphBlock(
                 type="paragraph",
                 id=make_block_id(next(counter)),
                 inlines=inlines if inlines else [],
+                format=td_fmt,
             ))
 
     if not blocks:
@@ -610,9 +939,165 @@ def _parse_image_node(node: _Node, bid: str) -> ImageBlock | None:
     w = _parse_pt(sty.get("width")) if "width" in sty else None
     h = _parse_pt(sty.get("height")) if "height" in sty else None
 
-    pos = PositionInfo(width=w, height=h) if w or h else None
+    has_positioning = any(k in sty for k in ("position", "left", "top"))
+    if has_positioning:
+        pos = _parse_position_info(sty)
+        return ImageBlock(type="image", id=bid, src=src, alt=alt, position=pos)
 
-    return ImageBlock(type="image", id=bid, src=src, alt=alt, position=pos)
+    return ImageBlock(type="image", id=bid, src=src, alt=alt, width=w, height=h)
+
+
+def _parse_figure_node(
+    node: _Node,
+    bid: str,
+    counter: itertools.count[int],
+) -> Block | None:
+    """Parse <figure> containing <img> and optional <figcaption>."""
+    cls = node.get("class", "")
+    if "chart" in cls:
+        desc = node.get("aria-label", "chart")
+        return ChartBlock(type="chart", id=bid, description=desc)
+
+    img = None
+    caption_inlines: list[Inline] | None = None
+    for child in node.children:
+        tag = child.tag.lower()
+        if tag == "img" and img is None:
+            img = child
+        elif tag == "figcaption":
+            caption_inlines = _extract_inlines(child)
+
+    if img:
+        blk = _parse_image_node(img, bid)
+        if blk and caption_inlines:
+            blk = ImageBlock(
+                type="image", id=blk.id, src=blk.src, alt=blk.alt,
+                width=blk.width, height=blk.height,
+                position=blk.position, caption=caption_inlines,
+            )
+        return blk
+
+    inner = _extract_content_blocks(node, counter)
+    if inner:
+        return inner[0]
+    return None
+
+
+def _parse_list_node(
+    node: _Node,
+    bid: str,
+    ordered: bool,
+    counter: itertools.count[int],
+) -> ListBlock:
+    """Parse <ul>/<ol> into ListBlock."""
+    start = 1
+    if ordered and node.get("start"):
+        try:
+            start = int(node.get("start"))
+        except ValueError:
+            pass
+
+    items: list[ListItem] = []
+    for child in node.children:
+        if child.tag.lower() != "li":
+            continue
+        items.append(_parse_list_item(child, counter))
+
+    return ListBlock(type="list", id=bid, ordered=ordered, start=start, items=items)
+
+
+def _parse_list_item(node: _Node, counter: itertools.count[int]) -> ListItem:
+    """Parse a single <li> into ListItem."""
+    checked: bool | None = None
+
+    for child in node.children:
+        if child.tag.lower() == "input" and child.get("type") == "checkbox":
+            checked = child.get("checked") is not None
+            break
+
+    virtual = _Node("li", {})
+    virtual.text = node.text
+    for child in node.children:
+        tag = child.tag.lower()
+        if tag in ("ul", "ol") or (tag == "input" and child.get("type") == "checkbox"):
+            if child.tail:
+                if virtual.children:
+                    virtual.children[-1].tail += child.tail
+                else:
+                    virtual.text = (virtual.text or "") + child.tail
+        else:
+            virtual.children.append(child)
+
+    inlines: list[Inline] = _extract_inlines(virtual)
+    inlines = [il for il in inlines
+               if not (isinstance(il, TextInline) and not il.text.strip())]
+
+    children: list[ListItem] = []
+    for child in node.children:
+        if child.tag.lower() in ("ul", "ol"):
+            for li in child.children:
+                if li.tag.lower() == "li":
+                    children.append(_parse_list_item(li, counter))
+
+    return ListItem(
+        id=make_block_id(next(counter)),
+        inlines=inlines, children=children, checked=checked,
+    )
+
+
+def _parse_pre_node(node: _Node, bid: str) -> CodeBlock:
+    """Parse <pre><code>...</code></pre> into CodeBlock."""
+    code_node = None
+    for child in node.children:
+        if child.tag.lower() == "code":
+            code_node = child
+            break
+
+    if code_node:
+        code = _collect_text(code_node)
+        cls = code_node.get("class", "")
+        lang = None
+        if cls.startswith("language-"):
+            lang = cls[len("language-"):]
+    else:
+        code = _collect_text(node)
+        lang = None
+
+    return CodeBlock(type="code", id=bid, code=code, language=lang)
+
+
+def _parse_aside_node(
+    node: _Node,
+    bid: str,
+    counter: itertools.count[int],
+) -> Block | None:
+    """Parse <aside> — footnote, endnote, comment, or skip."""
+    cls = node.get("class", "")
+    role = node.get("role", "")
+
+    if "footnote" in cls or role == "doc-footnote":
+        return _parse_footnote_node(node, bid, counter)
+
+    if "endnote" in cls or role == "doc-endnotes":
+        node_id = node.get("id", "")
+        ref = node_id.replace("en-", "") if node_id.startswith("en-") else node_id
+        content: list[Block] = []
+        for child in node.children:
+            blk = _node_to_block(child, counter)
+            if blk:
+                content.append(blk)
+        return EndnoteBlock(type="endnote", id=bid, ref=ref, content=content)
+
+    if "comment" in cls or role == "note":
+        author = node.get("data-author", "")
+        content_blocks: list[Block] = []
+        for child in node.children:
+            blk = _node_to_block(child, counter)
+            if blk:
+                content_blocks.append(blk)
+        return CommentBlock(type="comment", id=bid, author=author or None, content=content_blocks)
+
+    return None
 
 
 def _parse_footnote_node(
@@ -645,16 +1130,52 @@ def _parse_footnote_node(
     return FootnoteBlock(type="footnote", id=bid, ref=ref, content=content)
 
 
+_CONTAINER_TAGS = frozenset(("section", "article", "main", "details"))
+
+
+def _merge_split_tables(blocks: list[Block]) -> list[Block]:
+    """Merge consecutive TableBlocks that were split by the HTML renderer.
+
+    Tables with matching ``_split_source_id`` are reunited into a single
+    TableBlock with all rows concatenated.
+    """
+    merged: list[Block] = []
+    i = 0
+    while i < len(blocks):
+        b = blocks[i]
+        split_id = getattr(b, "_split_source_id", None)
+        if not isinstance(b, TableBlock) or split_id is None:
+            merged.append(b)
+            i += 1
+            continue
+        combined_rows = list(b.rows)
+        j = i + 1
+        while j < len(blocks):
+            nxt = blocks[j]
+            if (isinstance(nxt, TableBlock)
+                    and getattr(nxt, "_split_source_id", None) == split_id):
+                combined_rows.extend(nxt.rows)
+                j += 1
+            else:
+                break
+        merged.append(b.model_copy(update={"rows": combined_rows}))
+        i = j
+    return merged
+
+
 def _extract_content_blocks(
     parent: _Node,
     counter: itertools.count[int],
 ) -> list[Block]:
-    """페이지/콘텐츠 div에서 블록을 추출."""
+    """페이지/콘텐츠 div에서 블록을 추출. 컨테이너 태그는 투명하게 통과."""
     blocks: list[Block] = []
     for child in parent.children:
-        blk = _node_to_block(child, counter)
-        if blk:
-            blocks.append(blk)
+        if child.tag.lower() in _CONTAINER_TAGS:
+            blocks.extend(_extract_content_blocks(child, counter))
+        else:
+            blk = _node_to_block(child, counter)
+            if blk:
+                blocks.append(blk)
     return blocks
 
 
@@ -691,21 +1212,27 @@ def parse_html(html: str) -> UdfDocument:
     for body in body_nodes:
         page_divs = [
             c for c in body.children
-            if c.tag == "div" and "page" in (c.get("class", ""))
+            if c.tag in ("div", "section") and "page" in (c.get("class", ""))
         ]
         if not page_divs:
-            page_divs = [body]
+            articles = [c for c in body.children if c.tag == "article"]
+            page_divs = articles if articles else [body]
 
         for page in page_divs:
             content_divs = [
                 c for c in page.children
-                if c.tag == "div" and "content" in (c.get("class", ""))
+                if c.tag == "div" and (
+                    "content" in (c.get("class", ""))
+                    or "page-flow" in (c.get("class", ""))
+                )
             ]
             if not content_divs:
                 content_divs = [page]
 
             for content in content_divs:
                 blocks.extend(_extract_content_blocks(content, counter))
+
+    blocks = _merge_split_tables(blocks)
 
     return UdfDocument(
         source_format="html",

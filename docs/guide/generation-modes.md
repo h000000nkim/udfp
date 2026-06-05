@@ -25,21 +25,26 @@ Original HWP ──▶ [Patch modified streams] ──▶ Output HWP
 | Text addition to empty paragraphs | Yes |
 | Table cell text modification | Yes |
 | Equation script replacement | Yes |
-| Adding new blocks | No |
+| Template fill (`fill_template()`) | Yes |
+| Text color/style override | Yes |
+| Adding new blocks (image, paragraph) | No (From Scratch fallback) |
 | Removing blocks | No |
-| Format/style changes | No |
 
-### Example
+### Example: Template Fill
 
 ```python
 import udf
 
-doc = udf.parse("template.hwp")  # original container preserved
-doc.replace_text("{{NAME}}", "Kim")
-doc.replace_text("{{DATE}}", "2026-01-15")
+# HWP 양식에 {{이름}}, {{학번}} 등을 미리 입력해두고:
+doc = udf.parse("template.hwp")
+doc.fill_template({
+    "이름": "김훈",
+    "학번": "30217",
+    "희망진로": "AI 엔지니어",
+})
 
-# Seed Patch is auto-selected: original exists + text-only changes
-udf.render(doc, "hwp", output_path="filled.hwp")
+# Seed Patch auto-selected: text-only changes → 양식 100% 보존
+doc.to("hwp", "filled.hwp")
 ```
 
 ## From Scratch Mode
@@ -92,7 +97,27 @@ Has original container?
 A block without `verbatim_ref` was programmatically created, which means the document structure has changed and Seed Patch cannot be used.
 
 !!! tip "Keep Seed Patch active"
-    For form-filling and template workflows, use only text-level operations (`replace_text`, `set_inline_text`). These keep all `verbatim_ref` intact, so Seed Patch stays active.
+    For form-filling and template workflows, use `fill_template()` or `replace_text()`. These keep all `verbatim_ref` intact, so Seed Patch stays active and the original layout is preserved bit-perfectly.
 
-!!! warning "Avoid mixing modes"
-    If you add a new block to a parsed document, ALL blocks will be regenerated via From Scratch — not just the new one. Plan your edits accordingly.
+!!! warning "Adding images triggers From Scratch"
+    Adding an `ImageBlock` creates a block without `verbatim_ref`, which triggers From Scratch mode. Use `tbl.freeze_labels()` or `layout_type="fixed"` to preserve table layouts in this case.
+
+## Table Layout Preservation
+
+When From Scratch generates a table, it auto-calculates cell sizes based on text content by default. To preserve original form layouts:
+
+```python
+doc = udf.parse("form.hwp")
+tbl = doc.tables[0]
+
+# Option 1: Default behavior — cell sizes are automatically preserved
+# (layout_type=None defaults to freeze since 2026-06-05)
+
+# Option 2: Selective freeze
+tbl.freeze_labels(label_col=0)      # fix label column only
+for row in tbl.rows:
+    row.cells[1].fixed_width = True  # fix input column width, auto height
+
+# Option 3: Explicit auto-sizing
+tbl.layout_type = "auto"            # text-based size calculation
+```

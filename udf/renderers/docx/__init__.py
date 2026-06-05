@@ -53,6 +53,7 @@ def render_docx(
     output_path: str,
     *,
     seed_path: str | None = None,
+    validate: bool = True,
 ) -> None:
     """Render a UdfDocument to a DOCX (Office Open XML) file.
 
@@ -103,6 +104,18 @@ def render_docx(
     doc.loss_report = collect_render_losses(
         doc, "docx", is_from_scratch=is_from_scratch,
     )
+
+    if validate:
+        from udf.validation.docx.rules import validate_docx as _validate_docx
+
+        report = _validate_docx(output_path)
+        doc._validation_report = report
+        if not report.is_passing():
+            import warnings
+            violations = ", ".join(
+                f"{v.rule_id}:{v.message}" for v in report.all_violations
+            )
+            warnings.warn(f"DOCX D-규칙 위반: {violations}", stacklevel=2)
 
 generate_docx = render_docx
 
