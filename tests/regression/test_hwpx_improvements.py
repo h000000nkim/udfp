@@ -6,8 +6,14 @@ import os
 HWPX_DIR = "dev/fixtures/external/polaris_hwp2hwpx"
 HWP_DIR = "tests/fixtures/external/downloads"
 
+pytestmark = pytest.mark.skipif(
+    not os.path.isdir(HWPX_DIR), reason="dev/fixtures not available (public repo)"
+)
+
 
 def _common_pairs():
+    if not os.path.isdir(HWPX_DIR) or not os.path.isdir(HWP_DIR):
+        return []
     hwpx = {os.path.splitext(f)[0] for f in os.listdir(HWPX_DIR) if f.endswith(".hwpx")}
     hwp = {os.path.splitext(f)[0] for f in os.listdir(HWP_DIR) if f.endswith(".hwp")}
     return sorted(hwpx & hwp)
