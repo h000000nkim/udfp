@@ -650,8 +650,9 @@ def _parse_table(
                            "top": "margin_top", "bottom": "margin_bottom"}
             for side in ("top", "bottom", "left", "right"):
                 pad_val = lh.get(f"padding_{side}", 0)
-                if not pad_val and locals().get('tbl_props'):
-                    pad_val = tbl_props.get(_tbl_pad_map[side], 0)
+                _local_tbl_props = locals().get('tbl_props')
+                if not pad_val and _local_tbl_props:
+                    pad_val = _local_tbl_props.get(_tbl_pad_map[side], 0)
                 if pad_val:
                     setattr(cfmt, f"padding_{side}", hwpunit_to_pt(pad_val))
             bf_id = lh.get("border_fill_id")
