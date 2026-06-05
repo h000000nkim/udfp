@@ -44,7 +44,7 @@ from udf.core.schema import (
 )
 from udf.parsers.hwp.records import extract_plain_text
 from udf.renderers.hwp.body_writer import (
-    apply_paragraph_patches,
+    apply_paragraph_patches as apply_paragraph_patches,
     apply_section_patches,
     inject_image_gso,
 )
@@ -53,7 +53,7 @@ from udf.renderers.hwp.docinfo_patch import (
     find_or_add_charshape,
     get_charshape_color,
 )
-from udf.renderers.hwp.ole_patch import add_hwp_stream, patch_hwp_stream, patch_hwp_streams
+from udf.renderers.hwp.ole_patch import add_hwp_stream, patch_hwp_stream as patch_hwp_stream, patch_hwp_streams
 
 _FILE_HEADER_STREAM = "FileHeader"
 _FLAGS_OFFSET = 36
@@ -936,9 +936,6 @@ def patch_hwp_from_html(
     return _patch_hwp_from_parsed(
         original_path, parse_html(html_content), output_path, "HTML"
     )
-
-    render_hwp(original_doc, output_path)
-    return build_loss_report(original_doc, lossy)
 
 
 def _read_compress_flag(path: str) -> bool:
