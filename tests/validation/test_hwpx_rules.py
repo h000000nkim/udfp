@@ -6,7 +6,6 @@ HX1-HX4 양성(정상 fixture 통과) + 음성(corruption 주입 → 감지) 테
 from __future__ import annotations
 
 import pathlib
-import shutil
 import zipfile
 
 import pytest

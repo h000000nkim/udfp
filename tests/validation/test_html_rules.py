@@ -5,7 +5,6 @@ H1-H4 양성(정상 입력 통과) + 음성(문제 입력 감지) 테스트.
 
 from __future__ import annotations
 
-import pytest
 
 from udf.validation.html.rules import (
     check_h1,

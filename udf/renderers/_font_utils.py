@@ -1,8 +1,7 @@
-"""Font metrics measurement using freetype-py.
+"""Font metrics utilities for renderers.
 
-Loads font files, measures individual glyph advance widths, and caches
-results for fast repeated lookups. Provides the foundation for accurate
-line-breaking in the layout engine.
+Provides CSS line-height correction based on font ascender/descender ratios.
+Uses freetype-py when available, falls back to safe defaults.
 """
 
 from __future__ import annotations
@@ -10,7 +9,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 _FONT_DIRS: list[str] = []
@@ -64,7 +62,6 @@ class FontInfo:
 
 
 _font_path_cache: dict[str, str | None] = {}
-_glyph_cache: dict[tuple[str, int, str], float] = {}
 
 
 def find_font_path(font_name: str) -> str | None:
@@ -119,39 +116,6 @@ def _load_face(font_path: str, face_index: int = 0) -> Any:
     return face
 
 
-def measure_glyph(font_name: str, font_size: float, char: str) -> float:
-    cache_key = (font_name, int(font_size * 10), char)
-    if cache_key in _glyph_cache:
-        return _glyph_cache[cache_key]
-
-    path = find_font_path(font_name)
-    if not path:
-        width = font_size * (1.0 if ord(char) > 0x2E80 else 0.5)
-        _glyph_cache[cache_key] = width
-        return width
-
-    try:
-        face = _load_face(path)
-        face.set_char_size(int(font_size * 64))
-        face.load_char(char)
-        width = face.glyph.advance.x / 64.0
-    except Exception:
-        width = font_size * (1.0 if ord(char) > 0x2E80 else 0.5)
-
-    _glyph_cache[cache_key] = width
-    return width
-
-
-def measure_string(font_name: str, font_size: float, text: str,
-                   letter_spacing: float = 0.0) -> float:
-    total = 0.0
-    for ch in text:
-        total += measure_glyph(font_name, font_size, ch) + letter_spacing
-    if text and letter_spacing:
-        total -= letter_spacing
-    return total
-
-
 def get_font_info(font_name: str) -> FontInfo:
     path = find_font_path(font_name)
     if not path:
@@ -186,10 +150,3 @@ def compute_css_line_height_correction(font_name: str) -> float:
     asymmetry = descent_ratio - (1 - ascent_ratio)
     correction = 1 - asymmetry * 0.15
     return max(0.90, min(1.0, correction))
-
-
-def clear_cache() -> None:
-    _font_path_cache.clear()
-    _glyph_cache.clear()
-    _load_face.cache_clear()
-    compute_css_line_height_correction.cache_clear()

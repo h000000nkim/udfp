@@ -1067,7 +1067,7 @@ def _build_cell_content(
     n_blocks = len(cell_blocks)
 
     for bi, cb in enumerate(cell_blocks):
-        is_final = (bi == n_blocks - 1)
+        (bi == n_blocks - 1)
 
         if isinstance(cb, ParagraphBlock):
             has_eq = any(isinstance(il, EquationInline) for il in cb.inlines)
@@ -1544,7 +1544,8 @@ def _sample_bg_image_color(doc: UdfDocument | None, x: float, y: float, w: float
         page_w = meta.sections[0].page_width or page_w
         page_h = meta.sections[0].page_height or page_h
     try:
-        import io, base64
+        import io
+        import base64
         from PIL import Image
         for bv in vl.bindata_streams.values():
             raw = base64.b64decode(bv)
@@ -2506,7 +2507,6 @@ def generate_hwp_scratch(
 
     # 3. 페이지 배경 이미지 감지 (flow=back + A4 크기)
     page_bg_image: ImageBlock | None = None
-    page_bg_bin_item_id: int | None = None
     _meta = getattr(doc, "metadata", None) if hasattr(doc, "metadata") else None
     _sec = (_meta.sections[0] if _meta and _meta.sections else None) if _meta else None
     _page_w = _sec.page_width if _sec and _sec.page_width else 595

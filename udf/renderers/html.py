@@ -37,7 +37,7 @@ from udf.schema.blocks import (
     TextBoxBlock,
     UnknownBlock,
 )
-from udf.renderers.font_map import lookup as _font_lookup, collect_google_fonts
+from udf.renderers.font_map import lookup as _font_lookup
 from udf.schema.formats import BlockFormat, CellFormat, PositionInfo
 from udf.schema.inlines import (
     CodeInline,
@@ -154,7 +154,6 @@ def _parse_spacing_pt(val: Any) -> float:
 def _build_pls_line_counts(doc: UdfDocument) -> dict[str, int]:
     """Extract exact line counts from PLS data for paragraph blocks."""
     import base64
-    import struct as _st
 
     if not doc.verbatim or not doc.verbatim.blocks:
         return {}
@@ -1107,7 +1106,7 @@ def _render_paragraph(b: ParagraphBlock, ctx: _Ctx) -> str:
             inferred_bg = True
     style = _block_format_css(fmt)
     if inferred_bg and fmt and getattr(fmt, "background_color", None):
-        style = style.rstrip('"') + ';padding:2pt 7pt"' if style.endswith('"') else f' style="padding:2pt 7pt"'
+        style = style.rstrip('"') + ';padding:2pt 7pt"' if style.endswith('"') else ' style="padding:2pt 7pt"'
     if not content.strip():
         return f"<p{bid}{style}>&nbsp;</p>"
     return f"<p{bid}{style}>{content}</p>"
@@ -1648,8 +1647,8 @@ def _block_format_css(fmt: BlockFormat | None) -> str:
     if fmt.drop_cap_lines and fmt.drop_cap_lines > 1:
         parts.append(f"initial-letter:{fmt.drop_cap_lines}")
     if fmt.tab_stops:
-        stops = " ".join(f"{ts.position}pt" for ts in fmt.tab_stops)
-        parts.append(f"tab-size:8ch")
+        " ".join(f"{ts.position}pt" for ts in fmt.tab_stops)
+        parts.append("tab-size:8ch")
 
     if not parts:
         return ""
@@ -1818,7 +1817,7 @@ def _parse_line_spacing(
     else:
         raw = 1.6
     if for_css and raw > 1.0:
-        from udf.layout.font_metrics import compute_css_line_height_correction
+        from udf.renderers._font_utils import compute_css_line_height_correction
         correction = compute_css_line_height_correction(font_name or "")
         return raw * correction
     return raw

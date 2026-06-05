@@ -4,7 +4,6 @@ import base64
 import pathlib
 import struct
 
-import pytest
 
 from udf.parsers.hwp.parse import parse_hwp
 from udf.parsers.hwp.records import (

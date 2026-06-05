@@ -37,7 +37,11 @@ from udf.pipeline.container import ConversionTrace
 from udf.pipeline.verbatim import VerbatimBlock
 from udf.pipeline.loss import BlockLoss, LossCategory, LossReport
 from udf.parsers.pdf.layout import _ExtractedBlock, extract_pages
-from udf.parsers.pdf.ocr import ocr_available, ocr_page
+try:
+    from udf.parsers.pdf.ocr import ocr_available, ocr_page
+except ImportError:
+    def ocr_available() -> bool: return False
+    def ocr_page(*a, **kw) -> list: return []
 
 
 # ---------------------------------------------------------------------------
