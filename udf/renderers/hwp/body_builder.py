@@ -1569,29 +1569,52 @@ def _build_shape_component_con(
     total = base + 2 + 4 * n_children + 4
     buf = bytearray(total)
     o = 0
-    buf[o:o+4] = _SHAPE_TYPE_CON; o += 4
-    buf[o:o+4] = _SHAPE_TYPE_CON; o += 4
-    struct.pack_into("<i", buf, o, 0); o += 4        # OffsetX
-    struct.pack_into("<i", buf, o, 0); o += 4        # OffsetY
-    struct.pack_into("<H", buf, o, 0); o += 2        # GroupingCount
-    struct.pack_into("<H", buf, o, 1); o += 2        # LocalFileVersion
-    struct.pack_into("<I", buf, o, width); o += 4
-    struct.pack_into("<I", buf, o, height); o += 4
-    struct.pack_into("<I", buf, o, width); o += 4
-    struct.pack_into("<I", buf, o, height); o += 4
-    struct.pack_into("<I", buf, o, 0x00080000); o += 4
+    buf[o:o+4] = _SHAPE_TYPE_CON
+    o += 4
+    buf[o:o+4] = _SHAPE_TYPE_CON
+    o += 4
+    struct.pack_into("<i", buf, o, 0)
+    o += 4        # OffsetX
+    struct.pack_into("<i", buf, o, 0)
+    o += 4        # OffsetY
+    struct.pack_into("<H", buf, o, 0)
+    o += 2        # GroupingCount
+    struct.pack_into("<H", buf, o, 1)
+    o += 2        # LocalFileVersion
+    struct.pack_into("<I", buf, o, width)
+    o += 4
+    struct.pack_into("<I", buf, o, height)
+    o += 4
+    struct.pack_into("<I", buf, o, width)
+    o += 4
+    struct.pack_into("<I", buf, o, height)
+    o += 4
+    struct.pack_into("<I", buf, o, 0x00080000)
+    o += 4
     rot_angle = round(rotation * 10) if rotation else 0
-    struct.pack_into("<H", buf, o, rot_angle & 0xFFFF); o += 2  # RotAngle
-    struct.pack_into("<i", buf, o, width // 2); o += 4
-    struct.pack_into("<i", buf, o, height // 2); o += 4
-    struct.pack_into("<H", buf, o, 1); o += 2        # RenderingInfo count=1
-    struct.pack_into("<d", buf, o, 1.0); struct.pack_into("<d", buf, o + 32, 1.0); o += 48
-    struct.pack_into("<d", buf, o, 1.0); struct.pack_into("<d", buf, o + 32, 1.0); o += 48
-    struct.pack_into("<d", buf, o, 1.0); struct.pack_into("<d", buf, o + 32, 1.0); o += 48
+    struct.pack_into("<H", buf, o, rot_angle & 0xFFFF)
+    o += 2  # RotAngle
+    struct.pack_into("<i", buf, o, width // 2)
+    o += 4
+    struct.pack_into("<i", buf, o, height // 2)
+    o += 4
+    struct.pack_into("<H", buf, o, 1)
+    o += 2        # RenderingInfo count=1
+    struct.pack_into("<d", buf, o, 1.0)
+    struct.pack_into("<d", buf, o + 32, 1.0)
+    o += 48
+    struct.pack_into("<d", buf, o, 1.0)
+    struct.pack_into("<d", buf, o + 32, 1.0)
+    o += 48
+    struct.pack_into("<d", buf, o, 1.0)
+    struct.pack_into("<d", buf, o + 32, 1.0)
+    o += 48
     assert o == base
-    struct.pack_into("<H", buf, o, n_children); o += 2
+    struct.pack_into("<H", buf, o, n_children)
+    o += 2
     for ct in child_types:
-        buf[o:o+4] = ct; o += 4
+        buf[o:o+4] = ct
+        o += 4
     if inst_id is None:
         inst_id = _next_gso_instance_id()
     struct.pack_into("<I", buf, o, inst_id)
@@ -1611,22 +1634,37 @@ def _build_shape_component_pic(width: int, height: int, child: bool = False) -> 
     size = base + mat_bytes
     buf = bytearray(size)
     o = 0
-    struct.pack_into("<4s", buf, o, _SHAPE_TYPE_PIC); o += 4
+    struct.pack_into("<4s", buf, o, _SHAPE_TYPE_PIC)
+    o += 4
     if not child:
-        struct.pack_into("<4s", buf, o, _SHAPE_TYPE_PIC); o += 4
-    struct.pack_into("<i", buf, o, 0); o += 4        # OffsetX
-    struct.pack_into("<i", buf, o, 0); o += 4        # OffsetY
-    struct.pack_into("<H", buf, o, grp_cnt); o += 2  # GroupingCount
-    struct.pack_into("<H", buf, o, 1); o += 2        # LocalFileVersion
-    struct.pack_into("<I", buf, o, width); o += 4    # WidthAtCreate
-    struct.pack_into("<I", buf, o, height); o += 4   # HeightAtCreate
-    struct.pack_into("<I", buf, o, width); o += 4    # WidthAtCurrent
-    struct.pack_into("<I", buf, o, height); o += 4   # HeightAtCurrent
-    struct.pack_into("<I", buf, o, 0x00080000 if child else 0x24080000); o += 4  # Property
-    struct.pack_into("<H", buf, o, 0); o += 2        # RotateAngle
-    struct.pack_into("<i", buf, o, width // 2); o += 4   # RotateXCenter
-    struct.pack_into("<i", buf, o, height // 2); o += 4  # RotateYCenter
-    struct.pack_into("<H", buf, o, n_pairs); o += 2
+        struct.pack_into("<4s", buf, o, _SHAPE_TYPE_PIC)
+        o += 4
+    struct.pack_into("<i", buf, o, 0)
+    o += 4        # OffsetX
+    struct.pack_into("<i", buf, o, 0)
+    o += 4        # OffsetY
+    struct.pack_into("<H", buf, o, grp_cnt)
+    o += 2  # GroupingCount
+    struct.pack_into("<H", buf, o, 1)
+    o += 2        # LocalFileVersion
+    struct.pack_into("<I", buf, o, width)
+    o += 4    # WidthAtCreate
+    struct.pack_into("<I", buf, o, height)
+    o += 4   # HeightAtCreate
+    struct.pack_into("<I", buf, o, width)
+    o += 4    # WidthAtCurrent
+    struct.pack_into("<I", buf, o, height)
+    o += 4   # HeightAtCurrent
+    struct.pack_into("<I", buf, o, 0x00080000 if child else 0x24080000)
+    o += 4  # Property
+    struct.pack_into("<H", buf, o, 0)
+    o += 2        # RotateAngle
+    struct.pack_into("<i", buf, o, width // 2)
+    o += 4   # RotateXCenter
+    struct.pack_into("<i", buf, o, height // 2)
+    o += 4  # RotateYCenter
+    struct.pack_into("<H", buf, o, n_pairs)
+    o += 2
     for _ in range(1 + 2 * n_pairs):
         struct.pack_into("<d", buf, o, 1.0)
         struct.pack_into("<d", buf, o + 32, 1.0)
