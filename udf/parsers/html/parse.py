@@ -29,7 +29,6 @@ from udf.schema import (
     EndnoteRefInline,
     EquationBlock,
     EquationInline,
-    FieldBlock,
     FooterBlock,
     FootnoteBlock,
     FootnoteRefInline,
@@ -226,7 +225,7 @@ def _extract_inlines(node: _Node, *, bold: bool = False, italic: bool = False,
                 nc = sty["color"]
             cls = child.get("class", "")
             if "field" in cls:
-                ft = child.get("data-field-type", "")
+                child.get("data-field-type", "")
                 ft_text = _collect_text(child).strip()
                 result.append(TextInline(text=ft_text, font_name=font_name,
                                          font_size=_parse_pt(font_size) if font_size else None,

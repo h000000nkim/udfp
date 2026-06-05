@@ -16,6 +16,9 @@ htmlcov/
 venv/
 env/
 
+# Layout engine (unused, see BUG-246)
+udf/layout/
+
 # Rust
 target/
 Cargo.lock

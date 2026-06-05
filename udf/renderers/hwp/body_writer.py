@@ -28,8 +28,6 @@ from udf.parsers.hwp.records import (
     HWPTAG_PARA_HEADER,
     HWPTAG_PARA_LINE_SEG,
     HWPTAG_PARA_TEXT,
-    HWPTAG_SHAPE_COMPONENT,
-    HWPTAG_SHAPE_COMPONENT_PIC,
     HwpRecord,
     iter_records,
 )

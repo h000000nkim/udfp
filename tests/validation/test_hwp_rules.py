@@ -497,7 +497,7 @@ class TestI8BorderFillRef:
             if rec.tag_id == HWPTAG_ID_MAPPINGS:
                 struct.pack_into("<I", mutated, rec.offset + 4 + 32, 0)
                 break
-        violations = check_i8_border_fill_ref(bytes(mutated), section)
+        check_i8_border_fill_ref(bytes(mutated), section)
         # May or may not have violations depending on whether the fixture has tables
         # with LIST_HEADERs referencing BF; the key is no crash
 

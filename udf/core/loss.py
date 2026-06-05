@@ -325,7 +325,7 @@ def diff_documents(orig: UdfDocument, result: UdfDocument) -> LossReport:
                 )
             if oblk.hwp_script != rblk.hwp_script:
                 lossy.append(
-                    unintended_loss(bid, f"수식 hwp_script 변경")
+                    unintended_loss(bid, "수식 hwp_script 변경")
                 )
 
         # QuoteBlock
@@ -334,7 +334,7 @@ def diff_documents(orig: UdfDocument, result: UdfDocument) -> LossReport:
             r_texts = [_extract_para_text(c) for c in rblk.content if isinstance(c, ParagraphBlock)]
             if o_texts != r_texts:
                 lossy.append(
-                    user_edited_loss(bid, f"인용 내용 변경")
+                    user_edited_loss(bid, "인용 내용 변경")
                 )
 
         # ListBlock

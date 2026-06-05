@@ -35,7 +35,7 @@ class TestFormatRegistry:
         r = get_registry()
         assert r.can_parse("hwp")
         assert r.can_render("md")
-        assert r.can_render("pdf")
+        assert not r.can_render("pdf")  # PDF renderer removed (BUG-246)
 
     def test_resolve_parser(self):
         from udf.formats import get_registry

@@ -2,7 +2,6 @@
 import pytest
 import udf
 import os
-from collections import Counter
 
 HWPX_DIR = "dev/fixtures/external/polaris_hwp2hwpx"
 HWP_DIR = "tests/fixtures/external/downloads"
