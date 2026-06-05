@@ -155,15 +155,17 @@ def _parse_single_char_pr(el: etree._Element) -> dict[str, Any]:
         if ul_type_str != "NONE":
             underline = True
             underline_type = _UNDERLINE_TYPE_MAP.get(ul_type_str, "solid")
-            underline_color = underline_el.get("color", "#000000")
+            ul_color = underline_el.get("color", "")
+            underline_color = ul_color if ul_color and ul_color.lower() != "#000000" else None
 
     strikeout_el = el.find("hh:strikeout", NS)
     strikethrough = False
     strikeout_type: str | None = None
     strikeout_color: str | None = None
+    _STRIKE_SHAPES = {"SOLID", "DASH", "DOT", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE"}
     if strikeout_el is not None:
         st_shape = strikeout_el.get("shape", "NONE")
-        if st_shape != "NONE":
+        if st_shape in _STRIKE_SHAPES:
             strikethrough = True
             strikeout_type = "solid"
             strikeout_color = strikeout_el.get("color")
@@ -180,6 +182,8 @@ def _parse_single_char_pr(el: etree._Element) -> dict[str, Any]:
 
     emboss = el.find("hh:emboss", NS) is not None
     engrave = el.find("hh:engrave", NS) is not None
+    superscript = el.find("hh:supscript", NS) is not None
+    subscript = el.find("hh:subscript", NS) is not None
 
     font_ref = el.find("hh:fontRef", NS)
     face_ids: dict[str, int] = {}
@@ -217,6 +221,8 @@ def _parse_single_char_pr(el: etree._Element) -> dict[str, Any]:
         "shadow": shadow or None,
         "emboss": emboss or None,
         "engrave": engrave or None,
+        "superscript": superscript or None,
+        "subscript": subscript or None,
         "font_size_pt": font_size_pt,
         "color": color,
         "shade_color": shade_hex,
@@ -303,7 +309,8 @@ def _find_margin_and_linespacing(
     """paraPr 내에서 margin과 lineSpacing 요소를 찾는다.
 
     직접 자식이거나 <hp:switch><hp:case>/<hp:default> 안에 있을 수 있다.
-    hp:case를 우선 사용하고, 없으면 hp:default.
+    hp:case의 intent(indent_first)와 hp:default의 left/right/prev/next를
+    병합하여 HWP 바이너리와 최대한 일치시킨다.
     """
     # 직접 자식에서 찾기
     margin = para_pr.find("hh:margin", NS)
@@ -316,19 +323,20 @@ def _find_margin_and_linespacing(
     if switch is None:
         return None, None
 
-    # hp:case 우선
+    default = switch.find("hp:default", NS)
     case = switch.find("hp:case", NS)
+
+    # 기본: default 사용
+    margin = default.find("hh:margin", NS) if default is not None else None
+    ls = default.find("hh:lineSpacing", NS) if default is not None else None
+
+    if margin is not None or ls is not None:
+        return margin, ls
+
+    # case fallback
     if case is not None:
         margin = case.find("hh:margin", NS)
         ls = case.find("hh:lineSpacing", NS)
-        if margin is not None or ls is not None:
-            return margin, ls
-
-    # hp:default fallback
-    default = switch.find("hp:default", NS)
-    if default is not None:
-        margin = default.find("hh:margin", NS)
-        ls = default.find("hh:lineSpacing", NS)
         return margin, ls
 
     return None, None
@@ -442,6 +450,14 @@ def _parse_border_fills(ref_list: etree._Element) -> dict[str, BorderFillDef]:
                 fc = win_brush.get("faceColor", "none")
                 if fc and fc.lower() != "none":
                     fill_color = fc if fc.startswith("#") else f"#{fc}"
+            if fill_color is None:
+                grad = fill_brush.find("hc:gradation", NS)
+                if grad is not None:
+                    colors = grad.findall("hc:color", NS)
+                    if colors:
+                        gc = colors[-1].get("value", "")
+                        if gc and gc.startswith("#"):
+                            fill_color = gc
 
         result[idx] = BorderFillDef(
             id=idx,

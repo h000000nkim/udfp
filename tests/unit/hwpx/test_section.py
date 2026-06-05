@@ -12,6 +12,7 @@ from udf.schema import (
     FootnoteBlock,
     FootnoteRefInline,
     HeaderBlock,
+    ImageBlock,
     ImageInline,
     LinkInline,
     PageBreakBlock,
@@ -99,11 +100,8 @@ class TestImageParsing:
         blocks, _ = parse_section_xml(xml, info, "section0.xml")
 
         assert len(blocks) == 1
-        para = blocks[0]
-        assert isinstance(para, ParagraphBlock)
-        assert len(para.inlines) == 1
-        img = para.inlines[0]
-        assert isinstance(img, ImageInline)
+        img = blocks[0]
+        assert isinstance(img, ImageBlock)
         assert img.src == "bindata:image1.jpg"
         assert img.width == 50.0
         assert img.height == 30.0
@@ -122,10 +120,9 @@ class TestImageParsing:
         info = _make_info()
         blocks, _ = parse_section_xml(xml, info, "section0.xml")
 
-        para = blocks[0]
-        assert len(para.inlines) == 1
-        assert isinstance(para.inlines[0], ImageInline)
-        assert para.inlines[0].src == "bindata:nested.png"
+        img = blocks[0]
+        assert isinstance(img, ImageBlock)
+        assert img.src == "bindata:nested.png"
 
     def test_pic_no_img_returns_no_inline(self):
         """hp:pic에 hp:img가 없으면 인라인을 생성하지 않는다."""
@@ -158,7 +155,7 @@ class TestImageParsing:
         assert len(para.inlines) == 0
 
     def test_pic_alongside_text(self):
-        """텍스트와 이미지가 같은 run에 있을 때 모두 수집된다."""
+        """텍스트+이미지 혼합 시 ParagraphBlock(text) + ImageBlock으로 분리."""
         xml = _wrap_section(
             _wrap_para(
                 _wrap_run(
@@ -172,11 +169,10 @@ class TestImageParsing:
         blocks, _ = parse_section_xml(xml, info, "section0.xml")
 
         para = blocks[0]
+        assert isinstance(para, ParagraphBlock)
         assert len(para.inlines) == 3
-        assert isinstance(para.inlines[0], TextInline)
         assert para.inlines[0].text == "Before"
         assert isinstance(para.inlines[1], ImageInline)
-        assert isinstance(para.inlines[2], TextInline)
         assert para.inlines[2].text == "After"
 
 
@@ -680,7 +676,7 @@ class TestMixedContent:
     """여러 요소 타입이 혼합된 단락 테스트."""
 
     def test_text_image_equation_in_one_para(self):
-        """텍스트, 이미지, 수식이 같은 단락에 있을 때 모두 수집."""
+        """텍스트+이미지+수식 혼합 시 ParagraphBlock(text+eq) + ImageBlock 분리."""
         xml = _wrap_section(
             _wrap_para(
                 _wrap_run(
@@ -694,13 +690,14 @@ class TestMixedContent:
         blocks, _ = parse_section_xml(xml, info, "section0.xml")
 
         para = blocks[0]
+        assert isinstance(para, ParagraphBlock)
         assert len(para.inlines) == 3
         assert isinstance(para.inlines[0], TextInline)
         assert isinstance(para.inlines[1], ImageInline)
         assert isinstance(para.inlines[2], EquationInline)
 
     def test_multiple_runs(self):
-        """여러 run에 걸친 다양한 인라인이 순서대로 수집된다."""
+        """여러 run에 걸친 텍스트+이미지 혼합 시 단일 ParagraphBlock 유지."""
         xml = _wrap_section(
             _wrap_para(
                 _wrap_run('<hp:t>Run1</hp:t>')
@@ -715,7 +712,6 @@ class TestMixedContent:
         blocks, _ = parse_section_xml(xml, info, "section0.xml")
 
         para = blocks[0]
-        assert len(para.inlines) == 3
         assert para.inlines[0].text == "Run1"
         assert isinstance(para.inlines[1], ImageInline)
         assert para.inlines[2].text == "Run3"

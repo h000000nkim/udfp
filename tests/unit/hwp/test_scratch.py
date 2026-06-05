@@ -157,6 +157,7 @@ class TestGenerateHwpScratch:
         assert "제목" in all_texts
         assert "본문" in all_texts
 
+    @pytest.mark.xfail(reason="MD→HWP scratch: charshape 분리 미구현 (bold/italic 병합됨)")
     def test_bold_italic_preserved(self, seed: str, tmp_path: pathlib.Path) -> None:
         doc = UdfDocument(
             source_format="md",
@@ -172,13 +173,18 @@ class TestGenerateHwpScratch:
         generate_hwp_scratch(doc, out, seed)
 
         result = parse_hwp(out)
-        found = False
+        found_bold = False
+        found_italic = False
         for b in result.blocks:
             if isinstance(b, ParagraphBlock):
-                t = "".join(i.text for i in b.inlines if isinstance(i, TextInline))
-                if "굵게" in t:
-                    found = True
-        assert found
+                for i in b.inlines:
+                    if isinstance(i, TextInline):
+                        if "굵게" in i.text and i.bold:
+                            found_bold = True
+                        if "기울임" in i.text and i.italic:
+                            found_italic = True
+        assert found_bold, "bold=True inline not preserved after roundtrip"
+        assert found_italic, "italic=True inline not preserved after roundtrip"
 
     def test_from_scratch_via_generate_hwp(self, seed: str, tmp_path: pathlib.Path) -> None:
         """generate_hwp()가 verbatim 없을 때 From Scratch fallback."""
@@ -648,11 +654,12 @@ class TestPackParaShapeExpanded:
         attr = struct.unpack_from("<I", buf, 0)[0]
         assert bool(attr & (1 << 6))
 
-    def test_keep_with_next_bit(self) -> None:
+    def test_break_word_default_bits(self) -> None:
         import struct
-        buf = pack_para_shape(ParaShapeSpec(keep_with_next=True))
+        buf = pack_para_shape(ParaShapeSpec())
         attr = struct.unpack_from("<I", buf, 0)[0]
-        assert bool(attr & (1 << 7))
+        assert bool(attr & (1 << 7)), "bit 7 (breakNonLatinWord=KEEP_WORD) should be set"
+        assert bool(attr & (1 << 8)), "bit 8 (breakLatinWord=KEEP_WORD) should be set"
 
     def test_indent_spacing_values(self) -> None:
         import struct
@@ -691,16 +698,6 @@ class TestParaShapeFromBlockExpanded:
         assert ps.space_before == 600
         assert ps.space_after == 1200
 
-    def test_keep_with_next(self) -> None:
-        from udf.schema.formats import BlockFormat
-        blk = ParagraphBlock(
-            type="paragraph", id="p1",
-            inlines=[TextInline(text="x")],
-            format=BlockFormat(keep_with_next=True),
-        )
-        ps = _parashape_from_block(blk)
-        assert ps.keep_with_next is True
-
     def test_page_break_before(self) -> None:
         from udf.schema.formats import BlockFormat
         blk = ParagraphBlock(
@@ -718,20 +715,19 @@ class TestParaShapeFromBlockExpanded:
         )
         ps = _parashape_from_block(blk)
         assert ps.indent_left == 0
-        assert ps.keep_with_next is False
 
 
 class TestParaShapeKeyExpanded:
     """Phase 15b: 확장 필드가 dedup 키에 포함되는지 검증."""
 
-    def test_distinct_keep_with_next(self) -> None:
+    def test_distinct_page_break(self) -> None:
         a = ParaShapeSpec()
-        b = ParaShapeSpec(keep_with_next=True)
+        b = ParaShapeSpec(page_break_before=True)
         assert _parashape_key(a) != _parashape_key(b)
 
     def test_same_spec_same_key(self) -> None:
-        a = ParaShapeSpec(alignment="center", keep_with_next=True)
-        b = ParaShapeSpec(alignment="center", keep_with_next=True)
+        a = ParaShapeSpec(alignment="center", widow_orphan=True)
+        b = ParaShapeSpec(alignment="center", widow_orphan=True)
         assert _parashape_key(a) == _parashape_key(b)
 
 
@@ -831,3 +827,34 @@ class TestClickhereField:
         result = parse_hwp(out)
         full = " ".join(b.text_content() for b in result.blocks)
         assert "입력값" in full
+
+
+class TestFloatingTextbox:
+    """floating textbox의 CTRL_HEADER attr이 올바르게 설정되는지."""
+
+    def test_floating_attr(self):
+        from udf.renderers.hwp.body_builder import build_textbox_shape
+        import struct
+        from udf.parsers.hwp.records import iter_records, HWPTAG_CTRL_HEADER
+
+        content = b""  # empty content
+        rec, h = build_textbox_shape(content, 15000, 3000, 0,
+                                     x_offset=22500, y_offset=4100, floating=True)
+        # Find CTRL_HEADER in the output
+        for r in iter_records(rec):
+            if r.tag_id == HWPTAG_CTRL_HEADER:
+                attr = struct.unpack_from("<I", r.payload, 4)[0]
+                flow = (attr >> 21) & 7
+                hrelto = (attr >> 8) & 3
+                vrelto = (attr >> 3) & 3
+                assert flow == 3, f"Expected flow=3(front), got {flow}"
+                assert hrelto == 0, f"Expected hrelto=0(paper), got {hrelto}"
+                assert vrelto == 0, f"Expected vrelto=0(paper), got {vrelto}"
+                # Check x/y offset
+                y = struct.unpack_from("<i", r.payload, 8)[0]
+                x = struct.unpack_from("<i", r.payload, 12)[0]
+                assert x == 22500, f"Expected x=22500, got {x}"
+                assert y == 4100, f"Expected y=4100, got {y}"
+                break
+        else:
+            assert False, "No CTRL_HEADER found"

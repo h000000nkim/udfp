@@ -57,10 +57,10 @@ HWPTAG_EQEDIT = 88  # BEGIN + 72
 # ---------------------------------------------------------------------------
 
 # 2바이트 단순 제어 (코드 2바이트만 소비)
-_PT_CTRL_2BYTE: frozenset[int] = frozenset({0x0000, 0x0009, 0x000A, 0x000D})
+_PT_CTRL_2BYTE: frozenset[int] = frozenset({0x0000, 0x0009, 0x000A, 0x000D, 0x001F})
 
 # hwp.md §5.2: 위 집합 외 모든 제어 코드(≤0x001F)는 인라인 오브젝트 (2+14=16바이트 소비)
-# _PT_CTRL_8BYTE는 더 이상 사용하지 않음 (16바이트가 올바른 크기임)
+# 0x001F: 전수분석(28건) 결과 항상 2바이트 소비. 다음 코드 유닛이 한글 텍스트.
 
 
 @dataclass
@@ -96,6 +96,47 @@ def iter_records(stream: bytes) -> Iterator[HwpRecord]:
             offset=record_start,
         )
         off += size
+
+
+def extract_plain_text(pt_payload: bytes) -> str:
+    """Extract plain-text characters from a PARA_TEXT payload.
+
+    Handles surrogate pairs, tab (0x0009→\\t), newline (0x000A→\\n),
+    and inline object control codes (16-byte skip). Stops at CR (0x000D).
+    """
+    chars: list[str] = []
+    off = 0
+    n = len(pt_payload)
+    while off + 2 <= n:
+        (code,) = struct.unpack_from("<H", pt_payload, off)
+        if code == 0x000D:
+            break
+        if code > 0x001F:
+            if code != 0xFFFF:
+                if 0xD800 <= code <= 0xDBFF and off + 4 <= n:
+                    (lo,) = struct.unpack_from("<H", pt_payload, off + 2)
+                    if 0xDC00 <= lo <= 0xDFFF:
+                        cp = 0x10000 + ((code - 0xD800) << 10) + (lo - 0xDC00)
+                        chars.append(chr(cp))
+                        off += 4
+                        continue
+                chars.append(chr(code))
+            off += 2
+        elif code in _PT_CTRL_2BYTE:
+            if code == 0x0009:
+                chars.append('\t')
+                if off + 14 <= n:
+                    w1 = struct.unpack_from("<H", pt_payload, off + 4)[0]
+                    w2 = struct.unpack_from("<H", pt_payload, off + 6)[0]
+                    if w1 == 0 and w2 == 0x0203:
+                        off += 14
+                        continue
+            elif code == 0x000A:
+                chars.append('\n')
+            off += 2
+        else:
+            off += 16
+    return "".join(chars)
 
 
 def ctrl_id_from_payload(payload: bytes) -> str:

@@ -4,6 +4,9 @@ HX1: mimetype 엔트리가 ZIP 첫 번째 + 비압축(STORED) + 정확한 내용
 HX2: 필수 파트 존재 — 한글이 파일을 열려면 반드시 있어야 하는 ZIP 엔트리
 HX3: manifest(content.hpf) ↔ 실제 ZIP 엔트리 일관성
 HX4: header.xml 필수 구조 — fontfaces, charPr, paraPr, style 최소 1개씩
+HX5: OWPML 네임스페이스 URI + 루트 요소 정확성
+HX6: BinData 참조 무결성 — XML에서 참조하는 BinData가 ZIP에 존재
+HX7: section XML well-formedness
 
 각 함수는 RuleViolation 리스트를 반환한다. 빈 리스트 = 통과.
 """
@@ -38,7 +41,15 @@ _REQUIRED_PARTS = [
 _OPF_NS = "http://www.idpf.org/2007/opf/"
 _HH_NS = "http://www.hancom.co.kr/hwpml/2011/head"
 
-_REQUIRED_FONTFACE_LANGS = {"hangul", "latin", "hanja", "japanese", "other", "symbol", "user"}
+_REQUIRED_FONTFACE_LANGS = {
+    "hangul",
+    "latin",
+    "hanja",
+    "japanese",
+    "other",
+    "symbol",
+    "user",
+}
 
 
 def check_hx1(path: str) -> list[RuleViolation]:
@@ -73,7 +84,8 @@ def check_hx1(path: str) -> list[RuleViolation]:
         if first.filename != "mimetype":
             violations.append(
                 RuleViolation(
-                    "HX1", "",
+                    "HX1",
+                    "",
                     f"첫 번째 엔트리가 mimetype이 아님: {first.filename}",
                 )
             )
@@ -91,7 +103,8 @@ def check_hx1(path: str) -> list[RuleViolation]:
         if mi.compress_type != zipfile.ZIP_STORED:
             violations.append(
                 RuleViolation(
-                    "HX1", "",
+                    "HX1",
+                    "",
                     f"mimetype이 비압축(STORED)이 아님: compress_type={mi.compress_type}",
                 )
             )
@@ -100,7 +113,8 @@ def check_hx1(path: str) -> list[RuleViolation]:
         if content != _MIMETYPE_CONTENT:
             violations.append(
                 RuleViolation(
-                    "HX1", "",
+                    "HX1",
+                    "",
                     f"mimetype 내용 불일치: {content!r} (expected {_MIMETYPE_CONTENT!r})",
                 )
             )
@@ -135,13 +149,10 @@ def check_hx2(path: str) -> list[RuleViolation]:
         names = set(zf.namelist())
         for part in _REQUIRED_PARTS:
             if part not in names:
-                violations.append(
-                    RuleViolation("HX2", "", f"필수 파트 누락: {part}")
-                )
+                violations.append(RuleViolation("HX2", "", f"필수 파트 누락: {part}"))
 
         has_section = any(
-            n.startswith("Contents/section") and n.endswith(".xml")
-            for n in names
+            n.startswith("Contents/section") and n.endswith(".xml") for n in names
         )
         if not has_section:
             violations.append(
@@ -192,7 +203,8 @@ def check_hx3(path: str) -> list[RuleViolation]:
                 if href not in names:
                     violations.append(
                         RuleViolation(
-                            "HX3", "",
+                            "HX3",
+                            "",
                             f"manifest 항목이 ZIP에 없음: {href}",
                         )
                     )
@@ -202,7 +214,8 @@ def check_hx3(path: str) -> list[RuleViolation]:
                 if name not in manifest_hrefs:
                     violations.append(
                         RuleViolation(
-                            "HX3", "",
+                            "HX3",
+                            "",
                             f"section 파일이 manifest에 없음: {name}",
                             severity="warning",
                         )
@@ -249,13 +262,14 @@ def check_hx4(path: str) -> list[RuleViolation]:
         for ff in fontfaces:
             lang = ff.get("lang", "")
             if lang:
-                found_langs.add(lang)
+                found_langs.add(lang.lower())
 
         missing_langs = _REQUIRED_FONTFACE_LANGS - found_langs
         if missing_langs:
             violations.append(
                 RuleViolation(
-                    "HX4", "",
+                    "HX4",
+                    "",
                     f"fontface 언어 슬롯 누락: {sorted(missing_langs)}",
                 )
             )
@@ -281,18 +295,146 @@ def check_hx4(path: str) -> list[RuleViolation]:
     return violations
 
 
+_HWPX_EXPECTED_NS: dict[str, tuple[str, str | None]] = {
+    "Contents/header.xml": ("http://www.hancom.co.kr/hwpml/2011/head", "head"),
+}
+_SECTION_NS = "http://www.hancom.co.kr/hwpml/2011/section"
+
+
+def check_hx5(path: str) -> list[RuleViolation]:
+    """HX-5: OWPML namespace URI and root element correctness."""
+    violations: list[RuleViolation] = []
+    try:
+        zf = zipfile.ZipFile(path, "r")
+    except (zipfile.BadZipFile, OSError):
+        return []
+
+    with zf:
+        names = set(zf.namelist())
+        for part, (expected_ns, expected_tag) in _HWPX_EXPECTED_NS.items():
+            if part not in names:
+                continue
+            try:
+                tree = etree.parse(zf.open(part))
+            except etree.XMLSyntaxError:
+                continue
+            root = tree.getroot()
+            actual_ns = etree.QName(root).namespace or ""
+            if actual_ns != expected_ns:
+                violations.append(
+                    RuleViolation(
+                        "HX5", "", f"{part}: ns={actual_ns}, expected={expected_ns}"
+                    )
+                )
+            if expected_tag and etree.QName(root).localname != expected_tag:
+                violations.append(
+                    RuleViolation(
+                        "HX5",
+                        "",
+                        f"{part}: root=<{etree.QName(root).localname}>, expected=<{expected_tag}>",
+                    )
+                )
+        for name in names:
+            if name.startswith("Contents/section") and name.endswith(".xml"):
+                try:
+                    tree = etree.parse(zf.open(name))
+                except etree.XMLSyntaxError:
+                    continue
+                ns = etree.QName(tree.getroot()).namespace or ""
+                if ns != _SECTION_NS:
+                    violations.append(
+                        RuleViolation(
+                            "HX5", "", f"{name}: ns={ns}, expected={_SECTION_NS}"
+                        )
+                    )
+    return violations
+
+
+def check_hx6(path: str) -> list[RuleViolation]:
+    """HX-6: BinData reference integrity — referenced BinData IDs must exist in ZIP."""
+    violations: list[RuleViolation] = []
+    try:
+        zf = zipfile.ZipFile(path, "r")
+    except (zipfile.BadZipFile, OSError):
+        return []
+
+    with zf:
+        names = set(zf.namelist())
+        bin_files = {n for n in names if n.startswith("BinData/")}
+        if not bin_files:
+            return []
+
+        for name in names:
+            if not name.startswith("Contents/section") or not name.endswith(".xml"):
+                continue
+            try:
+                tree = etree.parse(zf.open(name))
+            except etree.XMLSyntaxError:
+                continue
+            for elem in tree.iter():
+                bin_ref = elem.get("binaryItemIDRef") or elem.get("binItem")
+                if not bin_ref:
+                    continue
+                candidates = [
+                    f"BinData/{bin_ref}",
+                    f"BinData/{bin_ref}.png",
+                    f"BinData/{bin_ref}.jpg",
+                    f"BinData/{bin_ref}.jpeg",
+                    f"BinData/{bin_ref}.bmp",
+                    f"BinData/{bin_ref}.gif",
+                    f"BinData/{bin_ref}.wmf",
+                    f"BinData/{bin_ref}.emf",
+                ]
+                if not any(c in bin_files for c in candidates):
+                    found = any(n.startswith(f"BinData/{bin_ref}") for n in bin_files)
+                    if not found:
+                        violations.append(
+                            RuleViolation(
+                                "HX6",
+                                "",
+                                f"{name}: BinData 참조 '{bin_ref}' 없음",
+                                "warning",
+                            )
+                        )
+    return violations
+
+
+def check_hx7(path: str) -> list[RuleViolation]:
+    """HX-7: all XML files in the ZIP must be well-formed."""
+    violations: list[RuleViolation] = []
+    try:
+        zf = zipfile.ZipFile(path, "r")
+    except (zipfile.BadZipFile, OSError):
+        return []
+
+    with zf:
+        for name in zf.namelist():
+            if not name.endswith(".xml"):
+                continue
+            try:
+                etree.parse(zf.open(name))
+            except etree.XMLSyntaxError as e:
+                violations.append(RuleViolation("HX7", "", f"{name}: {e}"))
+    return violations
+
+
 @dataclass
 class HwpxValidationReport:
-    """Aggregated result of HX1-HX4 validation checks."""
+    """Aggregated result of HX1-HX7 validation checks."""
 
     hx1: list[RuleViolation] = field(default_factory=list)
     hx2: list[RuleViolation] = field(default_factory=list)
     hx3: list[RuleViolation] = field(default_factory=list)
     hx4: list[RuleViolation] = field(default_factory=list)
+    hx5: list[RuleViolation] = field(default_factory=list)
+    hx6: list[RuleViolation] = field(default_factory=list)
+    hx7: list[RuleViolation] = field(default_factory=list)
 
     @property
     def all_violations(self) -> list[RuleViolation]:
-        return self.hx1 + self.hx2 + self.hx3 + self.hx4
+        return (
+            self.hx1 + self.hx2 + self.hx3 + self.hx4 + self.hx5 + self.hx6 + self.hx7
+        )
 
     @property
     def error_count(self) -> int:
@@ -307,7 +449,7 @@ class HwpxValidationReport:
 
 
 def validate_hwpx(path: str) -> HwpxValidationReport:
-    """Run all HWPX HX-rules (HX1-HX4) and return a consolidated report.
+    """Run all HWPX HX-rules (HX1-HX7) and return a consolidated report.
 
     Parameters
     ----------
@@ -324,4 +466,7 @@ def validate_hwpx(path: str) -> HwpxValidationReport:
         hx2=check_hx2(path),
         hx3=check_hx3(path),
         hx4=check_hx4(path),
+        hx5=check_hx5(path),
+        hx6=check_hx6(path),
+        hx7=check_hx7(path),
     )

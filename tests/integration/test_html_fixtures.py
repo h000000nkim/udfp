@@ -44,7 +44,7 @@ class TestFixtureRender:
         html = render_html(doc)
         assert "<!DOCTYPE html>" in html
         assert "<html" in html
-        assert "<article>" in html or '<section class="page"' in html
+        assert "<article>" in html or '<section class="page' in html
 
     def test_text_preserved(self, fixture):
         doc = udf.parse(str(fixture))

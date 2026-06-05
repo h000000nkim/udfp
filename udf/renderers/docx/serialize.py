@@ -179,7 +179,7 @@ def blocks_to_document_xml(
         pw = sect.page_width or 595.28
         ml = sect.margins.left if sect.margins and sect.margins.left else 56.69
         mr = sect.margins.right if sect.margins and sect.margins.right else 56.69
-        _page_content_width_twips = int((pw - ml - mr) * 20)
+        _page_content_width_twips = round((pw - ml - mr) * 20)
 
     root = etree.Element(f"{{{_W}}}document", nsmap=_NSMAP_DOC)
     root.set(f"{{{_MC}}}Ignorable", "w14 wp14 wps")
@@ -823,7 +823,7 @@ def _serialize_table(block: TableBlock) -> etree._Element:
     if has_model_widths and first_row:
         col_widths_twips = [0] * col_count
         for gc_idx, cell in cell_col[0]:
-            w_twips = int((cell.width or 0) * 20)
+            w_twips = round((cell.width or 0) * 20)
             span = cell.col_span
             per_col = w_twips // span if span else w_twips
             for c in range(span):
@@ -870,7 +870,7 @@ def _serialize_table(block: TableBlock) -> etree._Element:
         if row.height:
             trpr = etree.SubElement(tr, f"{{{_W}}}trPr")
             trh = etree.SubElement(trpr, f"{{{_W}}}trHeight")
-            trh.set(f"{{{_W}}}val", str(int(row.height * 20)))
+            trh.set(f"{{{_W}}}val", str(round(row.height * 20)))
             trh.set(f"{{{_W}}}hRule", "atLeast")
 
         real_cells = {gc: c for gc, c in cell_col[ri]}
@@ -1014,14 +1014,20 @@ def _serialize_image_block(block: ImageBlock) -> etree._Element:
         _RELTO_H = {"paper": "page", "page": "page", "column": "column", "paragraph": "column"}
         posH = etree.SubElement(wrap_el, f"{{{_WP}}}positionH")
         posH.set("relativeFrom", _RELTO_H.get(pos.hrelto or "page", "page"))
-        posH_off = etree.SubElement(posH, f"{{{_WP}}}posOffset")
-        posH_off.text = str(int(_clip_x(pos.x, getattr(block, 'width', None) or 0) * pt_to_emu))
+        if pos.halign and pos.halign in ("left", "center", "right"):
+            etree.SubElement(posH, f"{{{_WP}}}align").text = pos.halign
+        else:
+            posH_off = etree.SubElement(posH, f"{{{_WP}}}posOffset")
+            posH_off.text = str(round(_clip_x(pos.x, getattr(block, 'width', None) or 0) * pt_to_emu))
 
         _RELTO_V = {"paper": "page", "page": "page", "paragraph": "paragraph"}
         posV = etree.SubElement(wrap_el, f"{{{_WP}}}positionV")
         posV.set("relativeFrom", _RELTO_V.get(pos.vrelto or "page", "page"))
-        posV_off = etree.SubElement(posV, f"{{{_WP}}}posOffset")
-        posV_off.text = str(int(pos.y * pt_to_emu))
+        if pos.valign and pos.valign in ("top", "center", "bottom"):
+            etree.SubElement(posV, f"{{{_WP}}}align").text = pos.valign
+        else:
+            posV_off = etree.SubElement(posV, f"{{{_WP}}}posOffset")
+            posV_off.text = str(round(pos.y * pt_to_emu))
     else:
         wrap_el = etree.SubElement(drawing, f"{{{_WP}}}inline")
         wrap_el.set("distT", "0")
@@ -1234,8 +1240,8 @@ def _serialize_drawing_block(block: DrawingBlock) -> list[etree._Element]:
     pt_to_emu = 12700
 
     pos = block.position
-    w_emu = int((pos.width * pt_to_emu)) if pos and pos.width else int(200 * pt_to_emu)
-    h_emu = int((pos.height * pt_to_emu)) if pos and pos.height else int(100 * pt_to_emu)
+    w_emu = round((pos.width * pt_to_emu)) if pos and pos.width else round(200 * pt_to_emu)
+    h_emu = round((pos.height * pt_to_emu)) if pos and pos.height else round(100 * pt_to_emu)
 
     use_anchor = pos is not None and pos.x is not None and pos.y is not None and not pos.like_char
 
@@ -1270,13 +1276,13 @@ def _serialize_drawing_block(block: DrawingBlock) -> list[etree._Element]:
         posH = etree.SubElement(wrap_el, f"{{{_WP}}}positionH")
         posH.set("relativeFrom", _RELTO_H_MAP.get(pos.hrelto or "page", "page"))
         posH_off = etree.SubElement(posH, f"{{{_WP}}}posOffset")
-        posH_off.text = str(int(_clip_x(pos.x, getattr(block, 'width', None) or 0) * pt_to_emu))
+        posH_off.text = str(round(_clip_x(pos.x, getattr(block, 'width', None) or 0) * pt_to_emu))
 
         posV = etree.SubElement(wrap_el, f"{{{_WP}}}positionV")
         _RELTO_V_MAP = {"paper": "page", "page": "page", "column": "page", "paragraph": "paragraph"}
         posV.set("relativeFrom", _RELTO_V_MAP.get(pos.vrelto or "page", "page"))
         posV_off = etree.SubElement(posV, f"{{{_WP}}}posOffset")
-        posV_off.text = str(int(pos.y * pt_to_emu))
+        posV_off.text = str(round(pos.y * pt_to_emu))
     else:
         wrap_el = etree.SubElement(drawing, f"{{{_WP}}}inline")
         wrap_el.set("distT", "0")
@@ -1334,7 +1340,7 @@ def _serialize_drawing_block(block: DrawingBlock) -> list[etree._Element]:
         sc = etree.SubElement(solid, f"{{{_A}}}srgbClr")
         sc.set("val", _strip_hash(block.line_color))
         if block.line_width:
-            ln.set("w", str(int(block.line_width * pt_to_emu)))
+            ln.set("w", str(round(block.line_width * pt_to_emu)))
     else:
         etree.SubElement(ln, f"{{{_A}}}noFill")
 
@@ -1347,10 +1353,10 @@ def _serialize_drawing_block(block: DrawingBlock) -> list[etree._Element]:
     body_pr.set("rot", "0")
     body_pr.set("vert", "horz")
     body_pr.set("wrap", "square")
-    body_pr.set("lIns", str(int(4.52 * pt_to_emu)))
-    body_pr.set("tIns", str(int(4.52 * pt_to_emu)))
-    body_pr.set("rIns", str(int(4.52 * pt_to_emu)))
-    body_pr.set("bIns", str(int(4.52 * pt_to_emu)))
+    body_pr.set("lIns", str(round(4.52 * pt_to_emu)))
+    body_pr.set("tIns", str(round(4.52 * pt_to_emu)))
+    body_pr.set("rIns", str(round(4.52 * pt_to_emu)))
+    body_pr.set("bIns", str(round(4.52 * pt_to_emu)))
     body_pr.set("anchor", "t")
 
     etree.SubElement(alt, f"{{{_MC}}}Fallback")
@@ -1402,9 +1408,9 @@ def _serialize_textbox_block(block: TextBoxBlock) -> list[etree._Element]:
 
     pt_to_emu = 12700
     fallback_w = _page_content_width_twips / 20
-    w_emu = int((block.width or fallback_w) * pt_to_emu)
+    w_emu = round((block.width or fallback_w) * pt_to_emu)
     auto_height = block.height is None
-    h_emu = int((block.height or 100) * pt_to_emu)
+    h_emu = round((block.height or 100) * pt_to_emu)
 
     use_anchor = has_position and not pos.like_char
 
@@ -1439,13 +1445,13 @@ def _serialize_textbox_block(block: TextBoxBlock) -> list[etree._Element]:
         posH = etree.SubElement(wrap_el, f"{{{_WP}}}positionH")
         posH.set("relativeFrom", _RELTO_H_MAP.get(pos.hrelto or "page", "page"))
         posH_off = etree.SubElement(posH, f"{{{_WP}}}posOffset")
-        posH_off.text = str(int(_clip_x(pos.x, getattr(block, 'width', None) or 0) * pt_to_emu))
+        posH_off.text = str(round(_clip_x(pos.x, getattr(block, 'width', None) or 0) * pt_to_emu))
 
         posV = etree.SubElement(wrap_el, f"{{{_WP}}}positionV")
         _RELTO_V_MAP = {"paper": "page", "page": "page", "column": "page", "paragraph": "paragraph"}
         posV.set("relativeFrom", _RELTO_V_MAP.get(pos.vrelto or "page", "page"))
         posV_off = etree.SubElement(posV, f"{{{_WP}}}posOffset")
-        posV_off.text = str(int(pos.y * pt_to_emu))
+        posV_off.text = str(round(pos.y * pt_to_emu))
     else:
         wrap_el = etree.SubElement(drawing, f"{{{_WP}}}inline")
         wrap_el.set("distT", "0")
@@ -1504,7 +1510,7 @@ def _serialize_textbox_block(block: TextBoxBlock) -> list[etree._Element]:
         sc = etree.SubElement(solid, f"{{{_A}}}srgbClr")
         sc.set("val", _strip_hash(block.line_color))
         if block.line_width:
-            ln.set("w", str(int(block.line_width * pt_to_emu)))
+            ln.set("w", str(round(block.line_width * pt_to_emu)))
     else:
         etree.SubElement(ln, f"{{{_A}}}noFill")
 
@@ -1517,13 +1523,13 @@ def _serialize_textbox_block(block: TextBoxBlock) -> list[etree._Element]:
     body_pr.set("rot", "0")
     body_pr.set("vert", "horz")
     body_pr.set("wrap", "square")
-    pad_emu = int((block.padding_left or 4.52) * pt_to_emu)
+    pad_emu = round((block.padding_left or 4.52) * pt_to_emu)
     body_pr.set("lIns", str(pad_emu))
-    pad_emu = int((block.padding_top or 4.52) * pt_to_emu)
+    pad_emu = round((block.padding_top or 4.52) * pt_to_emu)
     body_pr.set("tIns", str(pad_emu))
-    pad_emu = int((block.padding_right or 4.52) * pt_to_emu)
+    pad_emu = round((block.padding_right or 4.52) * pt_to_emu)
     body_pr.set("rIns", str(pad_emu))
-    pad_emu = int((block.padding_bottom or 4.52) * pt_to_emu)
+    pad_emu = round((block.padding_bottom or 4.52) * pt_to_emu)
     body_pr.set("bIns", str(pad_emu))
 
     va_map = {"top": "t", "middle": "ctr", "bottom": "b"}
@@ -1731,7 +1737,7 @@ def _build_rpr(inline: TextInline) -> etree._Element | None:
     if inline.font_size:
         pt_val = _parse_pt(inline.font_size)
         if pt_val is not None:
-            half_pt = str(int(pt_val * 2))
+            half_pt = str(round(pt_val * 2))
             sz = etree.Element(f"{{{_W}}}sz")
             sz.set(f"{{{_W}}}val", half_pt)
             parts.append(sz)
@@ -1776,7 +1782,7 @@ def _build_rpr(inline: TextInline) -> etree._Element | None:
         sp = etree.Element(f"{{{_W}}}spacing")
         font_pt = inline.font_size or 10.0
         pt_val = inline.letter_spacing * font_pt / 100.0
-        sp.set(f"{{{_W}}}val", str(int(pt_val * 20)))
+        sp.set(f"{{{_W}}}val", str(round(pt_val * 20)))
         parts.append(sp)
 
     if inline.outline:
@@ -1796,13 +1802,13 @@ def _build_rpr(inline: TextInline) -> etree._Element | None:
     if inline.char_scale is not None:
         w_el = etree.Element(f"{{{_W}}}w")
         pct = inline.char_scale
-        w_el.set(f"{{{_W}}}val", str(int(pct.percent if hasattr(pct, "percent") else pct)))
+        w_el.set(f"{{{_W}}}val", str(round(pct.percent if hasattr(pct, "percent") else pct)))
         parts.append(w_el)
     if inline.char_offset is not None:
         pt_val = _parse_pt(inline.char_offset)
         if pt_val is not None:
             pos = etree.Element(f"{{{_W}}}position")
-            pos.set(f"{{{_W}}}val", str(int(pt_val * 2)))
+            pos.set(f"{{{_W}}}val", str(round(pt_val * 2)))
             parts.append(pos)
     if inline.rtl:
         parts.append(etree.Element(f"{{{_W}}}rtl"))
@@ -1840,30 +1846,30 @@ def _apply_ppr_format(
         if fmt.space_before:
             pt = _parse_pt(fmt.space_before)
             if pt is not None:
-                spacing.set(f"{{{_W}}}before", str(int(pt * 20)))
+                spacing.set(f"{{{_W}}}before", str(round(pt * 20)))
         if fmt.space_after:
             pt = _parse_pt(fmt.space_after)
             if pt is not None:
-                spacing.set(f"{{{_W}}}after", str(int(pt * 20)))
+                spacing.set(f"{{{_W}}}after", str(round(pt * 20)))
         if fmt.line_spacing:
             ls = fmt.line_spacing
             if hasattr(ls, "percent"):
                 # Ratio object: percentage (e.g. Ratio(160) = 160%)
-                spacing.set(f"{{{_W}}}line", str(int(ls.percent / 100 * 240)))
+                spacing.set(f"{{{_W}}}line", str(round(ls.percent / 100 * 240)))
             elif isinstance(ls, (int, float)):
                 # numeric float: fixed pt
-                spacing.set(f"{{{_W}}}line", str(int(ls * 20)))
+                spacing.set(f"{{{_W}}}line", str(round(ls * 20)))
                 spacing.set(f"{{{_W}}}lineRule", "exact")
             elif isinstance(ls, str) and ls.endswith("%"):
                 try:
                     ratio = float(ls[:-1])
-                    spacing.set(f"{{{_W}}}line", str(int(ratio / 100 * 240)))
+                    spacing.set(f"{{{_W}}}line", str(round(ratio / 100 * 240)))
                 except ValueError:
                     pass
             else:
                 pt = _parse_pt(ls)
                 if pt is not None:
-                    spacing.set(f"{{{_W}}}line", str(int(pt * 20)))
+                    spacing.set(f"{{{_W}}}line", str(round(pt * 20)))
                     spacing.set(f"{{{_W}}}lineRule", "exact")
 
     has_indent = fmt.indent_left or fmt.indent_right or fmt.indent_first
@@ -1872,18 +1878,18 @@ def _apply_ppr_format(
         if fmt.indent_left:
             pt = _parse_pt(fmt.indent_left)
             if pt is not None:
-                ind.set(f"{{{_W}}}left", str(int(pt * 20)))
+                ind.set(f"{{{_W}}}left", str(round(pt * 20)))
         if fmt.indent_right:
             pt = _parse_pt(fmt.indent_right)
             if pt is not None:
-                ind.set(f"{{{_W}}}right", str(int(pt * 20)))
+                ind.set(f"{{{_W}}}right", str(round(pt * 20)))
         if fmt.indent_first:
             pt = _parse_pt(fmt.indent_first)
             if pt is not None:
                 if pt >= 0:
-                    ind.set(f"{{{_W}}}firstLine", str(int(pt * 20)))
+                    ind.set(f"{{{_W}}}firstLine", str(round(pt * 20)))
                 else:
-                    ind.set(f"{{{_W}}}hanging", str(int(abs(pt) * 20)))
+                    ind.set(f"{{{_W}}}hanging", str(round(abs(pt) * 20)))
 
     if fmt.keep_with_next and not suppress_keep_next:
         etree.SubElement(ppr, f"{{{_W}}}keepNext")
@@ -1916,7 +1922,7 @@ def _apply_ppr_format(
         for ts in fmt.tab_stops:
             tab = etree.SubElement(tabs, f"{{{_W}}}tab")
             tab.set(f"{{{_W}}}val", ts.align or "left")
-            tab.set(f"{{{_W}}}pos", str(int(ts.position * 20)))
+            tab.set(f"{{{_W}}}pos", str(round(ts.position * 20)))
             if ts.leader and ts.leader != "none":
                 tab.set(f"{{{_W}}}leader", ts.leader)
 
@@ -1959,7 +1965,7 @@ def _apply_cell_format(tcpr: etree._Element, fmt: object) -> None:
                 pt_val = _to_pt_value(pv)
                 if pt_val is not None:
                     m = etree.SubElement(tc_mar, f"{{{_W}}}{side_name}")
-                    m.set(f"{{{_W}}}w", str(int(pt_val * 20)))
+                    m.set(f"{{{_W}}}w", str(round(pt_val * 20)))
                     m.set(f"{{{_W}}}type", "dxa")
 
     if fmt.vertical_align:
@@ -2120,7 +2126,7 @@ def _apply_border_side(parent: etree._Element, side: str, spec: str) -> None:
     val_map = {"solid": "single", "dashed": "dashed", "dotted": "dotted", "double": "double", "none": "none"}
     el = etree.SubElement(parent, f"{{{_W}}}{side}")
     el.set(f"{{{_W}}}val", val_map.get(style, "single"))
-    el.set(f"{{{_W}}}sz", str(max(1, int(width_pt * 8))))
+    el.set(f"{{{_W}}}sz", str(max(1, round(width_pt * 8))))
     el.set(f"{{{_W}}}space", "0")
     el.set(f"{{{_W}}}color", color)
 
@@ -2158,7 +2164,7 @@ def _pt_to_emu(pt_val) -> int:
     pt = _parse_pt(pt_val)
     if pt is None:
         return 914400  # 1 inch fallback
-    return int(pt * 12700)
+    return round(pt * 12700)
 
 
 def _add_default(root: etree._Element, ext: str, content_type: str) -> None:
@@ -2197,11 +2203,11 @@ def _serialize_section_def(sect: SectionDef) -> etree._Element:
         if sect.page_width:
             pt = _parse_pt(sect.page_width)
             if pt is not None:
-                pg_sz.set(f"{{{_W}}}w", str(int(pt * 20)))
+                pg_sz.set(f"{{{_W}}}w", str(round(pt * 20)))
         if sect.page_height:
             pt = _parse_pt(sect.page_height)
             if pt is not None:
-                pg_sz.set(f"{{{_W}}}h", str(int(pt * 20)))
+                pg_sz.set(f"{{{_W}}}h", str(round(pt * 20)))
         if sect.orientation == "landscape":
             pg_sz.set(f"{{{_W}}}orient", "landscape")
 
@@ -2212,19 +2218,19 @@ def _serialize_section_def(sect: SectionDef) -> etree._Element:
             if val:
                 pt = _parse_pt(val)
                 if pt is not None:
-                    pg_mar.set(f"{{{_W}}}{attr}", str(int(pt * 20)))
+                    pg_mar.set(f"{{{_W}}}{attr}", str(round(pt * 20)))
         if sect.header_margin:
             pt = _parse_pt(sect.header_margin)
             if pt is not None:
-                pg_mar.set(f"{{{_W}}}header", str(int(pt * 20)))
+                pg_mar.set(f"{{{_W}}}header", str(round(pt * 20)))
         if sect.footer_margin:
             pt = _parse_pt(sect.footer_margin)
             if pt is not None:
-                pg_mar.set(f"{{{_W}}}footer", str(int(pt * 20)))
+                pg_mar.set(f"{{{_W}}}footer", str(round(pt * 20)))
         if sect.gutter:
             pt = _parse_pt(sect.gutter)
             if pt is not None:
-                pg_mar.set(f"{{{_W}}}gutter", str(int(pt * 20)))
+                pg_mar.set(f"{{{_W}}}gutter", str(round(pt * 20)))
 
     if sect.break_type and sect.break_type in _BREAK_TYPE_MAP:
         type_el = etree.SubElement(sect_pr, f"{{{_W}}}type")
@@ -2250,7 +2256,7 @@ def _serialize_column_def(parent: etree._Element, col: ColumnDef) -> None:
     if col.gap:
         pt = _parse_pt(col.gap)
         if pt is not None:
-            cols.set(f"{{{_W}}}space", str(int(pt * 20)))
+            cols.set(f"{{{_W}}}space", str(round(pt * 20)))
     if col.separator:
         cols.set(f"{{{_W}}}sep", "true")
     if not col.same_width:
@@ -2259,7 +2265,7 @@ def _serialize_column_def(parent: etree._Element, col: ColumnDef) -> None:
             c = etree.SubElement(cols, f"{{{_W}}}col")
             pt = _parse_pt(w)
             if pt is not None:
-                c.set(f"{{{_W}}}w", str(int(pt * 20)))
+                c.set(f"{{{_W}}}w", str(round(pt * 20)))
 
 
 # ---------------------------------------------------------------------------

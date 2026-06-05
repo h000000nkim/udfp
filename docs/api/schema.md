@@ -49,6 +49,26 @@ All blocks inherit from `BlockBase` and have at minimum `type: str` and `id: str
       show_source: false
       members: false
 
+#### TableCell Layout Properties
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `fixed_width` | `bool` | `False` | Fix this cell's width (skip auto-calculation) |
+| `fixed_height` | `bool` | `False` | Fix this cell's height (skip auto-expansion) |
+| `width` | `float` | `None` | Cell width in points |
+| `height` | `float` | `None` | Cell height in points |
+
+#### TableBlock Layout Methods
+
+| Method | Description |
+|--------|-------------|
+| `freeze_columns()` | Fix all cell widths |
+| `freeze_rows(indices)` | Fix specific (or all) row heights |
+| `freeze_cell(row, col)` | Fix a specific cell's width and height |
+| `freeze_labels(col=0)` | Fix label column width and height |
+
+`layout_type`: `None` (default, freeze) / `"fixed"` (explicit freeze) / `"auto"` (text-based sizing)
+
 ### Content Blocks
 
 ::: udf.schema.ImageBlock
