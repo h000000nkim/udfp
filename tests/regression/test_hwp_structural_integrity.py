@@ -110,8 +110,12 @@ class TestImageColorSampling:
 
     def test_no_crash_without_pil(self):
         """PIL 없어도 변환이 성공해야 함 (fallback to #4a2040)."""
+        import os
         import udf
-        doc = udf.parse("dev/fixtures/external/hwpx/11차시_자기_나의 약점과 강점 알기.hwpx")
+        fixture = "dev/fixtures/external/hwpx/11차시_자기_나의 약점과 강점 알기.hwpx"
+        if not os.path.exists(fixture):
+            pytest.skip("dev fixture not available")
+        doc = udf.parse(fixture)
         import tempfile
         import shutil
         import os
