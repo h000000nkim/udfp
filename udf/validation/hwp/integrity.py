@@ -238,6 +238,45 @@ def validate_hwp_integrity(docinfo_bytes: bytes) -> list[IntegrityViolation]:
     return check_i1(docinfo_bytes) + check_i2(docinfo_bytes)
 
 
+def check_i4_con_children(section_bytes: bytes) -> list[IntegrityViolation]:
+    """I4: $con nChildren 선언과 실제 SHCOMP 자식 수 일치 확인.
+
+    $con SHCOMP가 nChildren=N으로 선언했으나 실제 자식 SHCOMP가 N개가 아니면
+    Hancom이 "파일 손상" 판정.
+    """
+    from udf.parsers.hwp.records import iter_records, HWPTAG_SHAPE_COMPONENT
+    violations: list[IntegrityViolation] = []
+    recs = list(iter_records(section_bytes))
+    for i, r in enumerate(recs):
+        if r.tag_id != HWPTAG_SHAPE_COMPONENT or len(r.payload) < 10:
+            continue
+        st = r.payload[:4][::-1].decode("ascii", errors="replace")
+        if st != "$con":
+            continue
+        is_child = r.level > 2
+        np_off = 46 if is_child else 50
+        if np_off + 2 > len(r.payload):
+            continue
+        n_pairs = struct.unpack_from("<H", r.payload, np_off)[0]
+        mat_end = np_off + 2 + 48 * (1 + 2 * n_pairs)
+        if mat_end + 2 > len(r.payload):
+            continue
+        n_children = struct.unpack_from("<H", r.payload, mat_end)[0]
+        actual_children = 0
+        for j in range(i + 1, len(recs)):
+            if recs[j].level <= r.level:
+                break
+            if recs[j].level == r.level + 1 and recs[j].tag_id == HWPTAG_SHAPE_COMPONENT:
+                actual_children += 1
+        if actual_children != n_children:
+            violations.append(IntegrityViolation(
+                rule="I4",
+                severity="error",
+                message=f"$con at L{r.level} declares nChildren={n_children} but has {actual_children} SHCOMP children",
+            ))
+    return violations
+
+
 def validate_hwp_full(
     docinfo_bytes: bytes,
     section_bytes: bytes | None = None,
@@ -260,4 +299,5 @@ def validate_hwp_full(
     if section_bytes is not None:
         cs, ps, _ = check_i3_docinfo(docinfo_bytes)
         violations += check_i3_body(section_bytes, cs, ps)
+        violations += check_i4_con_children(section_bytes)
     return violations

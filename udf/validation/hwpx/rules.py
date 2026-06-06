@@ -249,7 +249,7 @@ def check_hx4(path: str) -> list[RuleViolation]:
         for ff in fontfaces:
             lang = ff.get("lang", "")
             if lang:
-                found_langs.add(lang)
+                found_langs.add(lang.lower())
 
         missing_langs = _REQUIRED_FONTFACE_LANGS - found_langs
         if missing_langs:

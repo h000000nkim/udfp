@@ -6,6 +6,7 @@ TextInline (27 fields), BlockFormat (31 fields), and CellFormat (13 fields).
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 from udf.core.schema import UdfDocument
@@ -31,11 +32,13 @@ from udf.schema.blocks import (
     ParagraphBlock,
     QuoteBlock,
     TableBlock,
+    TableCell,
     TextArtBlock,
     TextBoxBlock,
     UnknownBlock,
 )
-from udf.schema.formats import BlockFormat, CellFormat
+from udf.renderers.font_map import lookup as _font_lookup, collect_google_fonts
+from udf.schema.formats import BlockFormat, CellFormat, PositionInfo
 from udf.schema.inlines import (
     CodeInline,
     EndnoteRefInline,
@@ -205,6 +208,7 @@ def _estimate_block_height(
 
     if isinstance(b, TableBlock):
         total = 0.0
+        css_cell_pad = 6.0
         for row in (b.rows or []):
             max_h = 0.0
             for cell in row.cells:
@@ -215,7 +219,7 @@ def _estimate_block_height(
                         _estimate_block_height(cb, cw, pls_map) for cb in cell.content
                     ) if cell.content else 16.0
                 max_h = max(max_h, ch)
-            total += max(max_h, 16.0)
+            total += max(max_h, 16.0) + css_cell_pad
         return max(total, 16.0)
 
     if isinstance(b, HeadingBlock):
@@ -231,40 +235,78 @@ def _estimate_block_height(
         if not b.inlines:
             return 16.0 + spacing
         text = "".join(il.text for il in b.inlines if hasattr(il, "text"))
-        if not text.strip():
+        if not text.strip() and not any(isinstance(il, (ImageInline, EquationInline)) for il in b.inlines):
             return 16.0 + spacing
         fs = 10.0
         has_cjk = any(ord(c) > 0x2E80 for c in text[:100])
+        max_inline_h = 0.0
         for il in b.inlines:
             if hasattr(il, "font_size") and il.font_size:
                 fs = _to_float(il.font_size)
                 break
+        for il in b.inlines:
+            if isinstance(il, ImageInline):
+                ih = _to_float(il.height) if il.height else 0.0
+                max_inline_h = max(max_inline_h, ih)
+            elif isinstance(il, EquationInline):
+                expr = il.latex or getattr(il, "hwp_script", "") or ""
+                has_frac = any(k in expr for k in ("\\frac", "\\int", "\\sum", "over"))
+                max_inline_h = max(max_inline_h, 60.0 if has_frac else 30.0)
         ls = 1.6
         if fmt and fmt.line_spacing:
             try:
                 ls = _parse_line_spacing(fmt.line_spacing)
             except (ValueError, TypeError):
                 pass
-        char_width_factor = 0.85 if has_cjk else 0.55
+        char_width_factor = 1.2 if has_cjk else 0.55
         chars_per_line = max(10, cw / (fs * char_width_factor))
         lines = max(1, len(text) / chars_per_line)
         line_height = fs * ls
-        return lines * line_height + spacing
+        text_h = lines * line_height
+        return max(text_h, max_inline_h) + spacing
 
     if isinstance(b, ImageBlock):
+        if b.position and not getattr(b.position, "like_char", False):
+            flow = getattr(b.position, "flow", None)
+            if flow in ("front", "back"):
+                return 0.0
         if b.position and b.position.height:
             return b.position.height + spacing
+        if b.height:
+            return b.height + spacing
         return 200.0 + spacing
 
     if isinstance(b, (DrawingBlock, TextBoxBlock)):
-        if b.position and getattr(b.position, "like_char", False) is False:
-            return 0.0
+        if b.position and not getattr(b.position, "like_char", False):
+            flow = getattr(b.position, "flow", None)
+            if flow in ("front", "back"):
+                return 0.0
         if b.position and b.position.height:
             return b.position.height + spacing
         return 40.0 + spacing
 
     if isinstance(b, PageBreakBlock):
         return 0.0
+
+    if isinstance(b, EquationBlock):
+        expr = b.latex or b.hwp_script or ""
+        has_frac = any(k in expr for k in ("\\frac", "\\int", "\\sum", "\\prod", "over"))
+        return (60.0 if has_frac else 30.0) + spacing
+
+    if isinstance(b, CodeBlock):
+        lines = (b.code or "").count("\n") + 1
+        return max(lines * 16.0, 32.0) + spacing
+
+    if isinstance(b, QuoteBlock):
+        inner = sum(_estimate_block_height(cb, cw, pls_map) for cb in (b.content or []))
+        return max(inner, 20.0) + 16.0 + spacing
+
+    if isinstance(b, (ListBlock,)):
+        item_h = sum(20.0 for _ in (b.items or []))
+        return max(item_h, 20.0) + spacing
+
+    if isinstance(b, HorizontalRuleBlock):
+        return 24.0 + spacing
 
     return 20.0 + spacing
 
@@ -299,7 +341,13 @@ def _split_table_across_pages(
                     rowspan_end[k] = max(rowspan_end[k], span_end)
 
     def _can_split_before(ri: int) -> bool:
-        return ri > 0 and rowspan_end[ri - 1] < ri
+        if ri <= 0:
+            return False
+        if rowspan_end[ri - 1] < ri:
+            return True
+        if ri >= 3 and all(rowspan_end[k] >= ri for k in range(max(0, ri - 3), ri)):
+            return True
+        return False
 
     parts: list[TableBlock] = []
     current_rows: list[TableRow] = []
@@ -323,7 +371,53 @@ def _split_table_across_pages(
         parts.append(TableBlock(
             type="table", id=table.id, rows=current_rows,
         ))
+    if len(parts) > 1:
+        for i, part in enumerate(parts):
+            part._split_source_id = table.id  # type: ignore[attr-defined]
+            part._split_index = i  # type: ignore[attr-defined]
     return parts if parts else [table]
+
+
+def _reassign_positioned_blocks(
+    pages: list[list[Block]], page_height: float, margin_top: float,
+) -> list[list[Block]]:
+    """Adjust y coordinates for absolutely-positioned blocks within their page.
+
+    Objects with vrelto=paper/page have y relative to their anchor page, not
+    document-absolute. They stay on the page assigned by _split_into_pages
+    (which tracks their anchor paragraph's flow position).
+
+    Only objects with y > page_height are reassigned — this handles rare cases
+    where the y value exceeds a single page height.
+    """
+    if len(pages) <= 1:
+        return pages
+
+    positioned: list[tuple[Block, int, int]] = []
+    new_pages: list[list[Block]] = [[] for _ in pages]
+
+    for pi, page in enumerate(pages):
+        for b in page:
+            pos = getattr(b, "position", None)
+            if (pos and not getattr(pos, "like_char", False)
+                    and pos.y is not None
+                    and getattr(pos, "vrelto", None) in ("paper", "page", None)):
+                if pos.y > page_height and page_height > 0:
+                    target_page = int(pos.y / page_height)
+                    target_page = max(0, min(target_page, len(pages) - 1))
+                    page_y = pos.y - target_page * page_height
+                    adjusted = pos.model_copy(update={"y": page_y})
+                    b_copy = b.model_copy(update={"position": adjusted})
+                    positioned.append((b_copy, target_page, pi))
+                else:
+                    new_pages[pi].append(b)
+            else:
+                new_pages[pi].append(b)
+
+    for b, target, _orig in positioned:
+        new_pages[target].append(b)
+
+    return [p for p in new_pages if p] or [[]]
 
 
 def _split_into_pages(
@@ -332,6 +426,8 @@ def _split_into_pages(
 ) -> list[list[Block]]:
     if not blocks or content_h <= 0:
         return [blocks] if blocks else []
+
+    safe_h = content_h * 0.97
 
     pages: list[list[Block]] = [[]]
     cursor = 0.0
@@ -345,9 +441,9 @@ def _split_into_pages(
 
         h = _estimate_block_height(b, cw, pls_map)
 
-        if isinstance(b, TableBlock) and len(b.rows) > 1 and cursor + h > content_h:
-            remaining = content_h - cursor
-            parts = _split_table_across_pages(b, remaining, content_h, cw, pls_map)
+        if isinstance(b, TableBlock) and len(b.rows) > 1 and cursor + h > safe_h:
+            remaining = safe_h - cursor
+            parts = _split_table_across_pages(b, remaining, safe_h, cw, pls_map)
             for j, part in enumerate(parts):
                 if j > 0:
                     pages.append([])
@@ -356,8 +452,8 @@ def _split_into_pages(
                 cursor += _estimate_block_height(part, cw, pls_map)
             continue
 
-        if cursor > 0 and cursor + h > content_h:
-            if cursor >= content_h * 0.15:
+        if cursor > 0 and cursor + h > safe_h:
+            if cursor >= safe_h * 0.15:
                 pages.append([])
                 cursor = 0.0
 
@@ -383,7 +479,7 @@ def render_html(
     *,
     mode: str | None = None,
     image_dir: str = "images",
-    embed_images: bool = False,
+    embed_images: bool = True,
     embed_ids: bool = False,
     title: str = "",
 ) -> str:
@@ -468,45 +564,94 @@ def render_html(
 
     if use_pages:
         pw, ph, mt, mb, ml, mr = _extract_page_dims(doc)
+        ctx.page_margins = (mt, mr, mb, ml)
+        ctx.paginated = True
         cw = pw - ml - mr
-        content_h = ph - mt - mb
-        pls_map = _build_pls_height_map(doc)
+        real_content_h = ph - mt - mb
+        content_h = real_content_h * 0.90
+        pls_map: dict[str, float] = {}
         pages = _split_into_pages(body_blocks, content_h, cw, pls_map)
+        pages = _reassign_positioned_blocks(pages, ph, mt)
 
-        header_html = ""
-        if headers:
-            hparts = []
-            for h in headers:
-                hparts.append(_render_blocks(h.content, ctx))
-            header_html = "\n".join(hparts)
+        def _pick_hf(hf_list, page_idx):
+            for hf in hf_list:
+                at = getattr(hf, "apply_to", "all") or "all"
+                if at == "all":
+                    return hf
+                if at == "first" and page_idx == 0:
+                    return hf
+                if at == "odd" and page_idx % 2 == 0:
+                    return hf
+                if at == "even" and page_idx % 2 == 1:
+                    return hf
+            return hf_list[0] if hf_list else None
 
-        footer_html = ""
-        if footers:
-            fparts = []
-            for f in footers:
-                fparts.append(_render_blocks(f.content, ctx))
-            footer_html = "\n".join(fparts)
+        all_headers = headers
+        all_footers = footers
 
         def _px(pt: float) -> str:
             return f"{pt * 1.333:.2f}"
+
+        col_css = ""
+        sec_bg_css = ""
+        if doc.metadata and doc.metadata.sections:
+            sec0 = doc.metadata.sections[0]
+            col = sec0.columns
+            if col and col.count > 1:
+                col_css = f";column-count:{col.count}"
+                if col.gap:
+                    col_css += f";column-gap:{_px(col.gap)}px"
+            bg = getattr(sec0, "background_color", None)
+            if bg:
+                sec_bg_css = f";background-color:{bg}"
 
         parts: list[str] = []
         for page_idx, page_blocks in enumerate(pages):
             parts.append(
                 f'<section class="page" style="'
                 f"width:{_px(pw)}px;"
-                f"min-height:{_px(ph)}px;"
+                f"height:{_px(ph)}px;"
                 f"padding:{_px(mt)}px {_px(mr)}px {_px(mb)}px {_px(ml)}px"
+                f"{col_css}{sec_bg_css}"
                 f'">'
             )
-            if header_html:
-                parts.append(f'<div class="page-header">{header_html}</div>')
+            hdr = _pick_hf(all_headers, page_idx)
+            if hdr:
+                parts.append(f'<div class="page-header">{_render_blocks(hdr.content, ctx)}</div>')
+            positioned_parts: list[str] = []
+            flow_parts: list[str] = []
+            anchor_y = 0.0
             for block in page_blocks:
-                html = _render_block(block, ctx)
-                if html:
-                    parts.append(html)
-            if footer_html:
-                parts.append(f'<div class="page-footer">{footer_html}</div>')
+                pos = getattr(block, "position", None)
+                if pos and pos.flow in ("front", "back") and not getattr(pos, "like_char", False):
+                    if pos.vrelto == "paper":
+                        adj_y = pos.y or 0.0
+                        adj_x = pos.x or 0.0
+                    else:
+                        adj_y = (pos.y or 0.0) + anchor_y + mt
+                        adj_x = (pos.x or 0.0) + ml
+                    old_pos = block.position
+                    block = block.model_copy(update={
+                        "position": old_pos.model_copy(update={"x": adj_x, "y": adj_y, "hrelto": "paper", "vrelto": "paper"})
+                    })
+                    html = _render_block(block, ctx)
+                    if html:
+                        positioned_parts.append(html)
+                else:
+                    h = _estimate_block_height(block, cw, pls_map)
+                    anchor_y += h
+                    html = _render_block(block, ctx)
+                    if html:
+                        flow_parts.append(html)
+            parts.append(
+                f'<div class="page-flow" style="max-height:{_px(content_h)}px;overflow:hidden">'
+            )
+            parts.extend(flow_parts)
+            parts.append("</div>")
+            parts.extend(positioned_parts)
+            ftr = _pick_hf(all_footers, page_idx)
+            if ftr:
+                parts.append(f'<div class="page-footer">{_render_blocks(ftr.content, ctx)}</div>')
             parts.append("</section>")
 
         if endnotes:
@@ -528,9 +673,12 @@ def render_html(
         body = "\n".join(parts)
         return _TEMPLATE_PAGINATED.format(
             title=_esc(doc_title), lang=lang, body=body,
+            meta_tags=_meta_tags(doc),
         )
 
     # --- flow mode ---
+    pw_f, _ph_f, mt_f, _mb_f, ml_f, mr_f = _extract_page_dims(doc)
+    ctx.page_margins = (mt_f, mr_f, _mb_f, ml_f)
     parts_f: list[str] = []
 
     if headers:
@@ -561,7 +709,7 @@ def render_html(
         parts_f.append("</footer>")
 
     body = "\n".join(parts_f)
-    return _TEMPLATE.format(title=_esc(doc_title), lang=lang, body=body)
+    return _TEMPLATE.format(title=_esc(doc_title), lang=lang, body=body, meta_tags=_meta_tags(doc))
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +719,7 @@ def render_html(
 
 class _Ctx:
     __slots__ = ("embed_ids", "embed_images", "image_dir", "bindata",
-                 "in_heading", "default_font_size", "numbering")
+                 "numbering", "page_margins", "paginated")
 
     def __init__(
         self,
@@ -580,14 +728,182 @@ class _Ctx:
         image_dir: str,
         bindata: dict[str, str],
         numbering: _NumberingState | None = None,
+        page_margins: tuple[float, float, float, float] | None = None,
+        paginated: bool = False,
     ) -> None:
         self.embed_ids = embed_ids
         self.embed_images = embed_images
         self.image_dir = image_dir
         self.bindata = bindata
-        self.in_heading = False
-        self.default_font_size = 10.0
         self.numbering = numbering
+        self.page_margins = page_margins
+        self.paginated = paginated
+
+
+# ---------------------------------------------------------------------------
+# Position helpers
+# ---------------------------------------------------------------------------
+
+
+_MAX_COORD_PT = 5000.0
+
+
+def _like_char_align_wrap(html: str, pos: PositionInfo | None) -> str:
+    if not pos or not pos.like_char or not pos.halign:
+        return html
+    align = pos.halign
+    if align in ("inside", "outside"):
+        align = "left"
+    if align == "left":
+        return html
+    return f'<div style="text-align:{align}">{html}</div>'
+
+
+@dataclass
+class PositionStrategy:
+    mode: str  # "inline" | "block" | "float" | "anchored"
+    wrapper_style: str | None = None
+    element_parts: list[str] = field(default_factory=list)
+    use_span: bool = False
+
+
+def _apply_size_extras(
+    parts: list[str], pos: PositionInfo,
+    page_margins: tuple[float, float, float, float] | None,
+) -> None:
+    w = pos.width
+    h = pos.height
+    if (w is not None and page_margins
+            and (pos.restrict_in_page or pos.hrelto == "paper"
+                 or pos.flow == "back")):
+        page_pw = 595.0
+        page_cw = page_pw - page_margins[1] - page_margins[3]
+        limit = page_pw if pos.hrelto == "paper" else page_cw
+        if w > limit:
+            if h is not None and w > 0:
+                h = h * (limit / w)
+            w = limit
+    if w is not None:
+        parts.append(f"width:{w}pt")
+    if h is not None:
+        parts.append(f"height:{h}pt")
+    if pos.rotation:
+        parts.append(f"transform:rotate({pos.rotation}deg)")
+    if pos.opacity is not None and pos.opacity < 1.0:
+        parts.append(f"opacity:{pos.opacity}")
+
+
+def _apply_non_float_margins(parts: list[str], pos: PositionInfo) -> None:
+    if pos.margin_top is not None or pos.margin_right is not None:
+        mt = f"{pos.margin_top}pt" if pos.margin_top else "0"
+        mr = f"{pos.margin_right}pt" if pos.margin_right else "0"
+        mb = f"{pos.margin_bottom}pt" if pos.margin_bottom else "0"
+        ml = f"{pos.margin_left}pt" if pos.margin_left else "0"
+        parts.append(f"margin:{mt} {mr} {mb} {ml}")
+
+
+def _position_strategy(
+    pos: PositionInfo | None,
+    page_margins: tuple[float, float, float, float] | None = None,
+    paginated: bool = False,
+) -> PositionStrategy:
+    if not pos:
+        return PositionStrategy(mode="block")
+
+    parts: list[str] = []
+
+    if pos.like_char:
+        parts.append("display:inline-block")
+        va = pos.valign or "middle"
+        parts.append(f"vertical-align:{va}")
+        _apply_size_extras(parts, pos, page_margins)
+        _apply_non_float_margins(parts, pos)
+        return PositionStrategy(mode="inline", element_parts=parts, use_span=True)
+
+    if pos.flow in ("float", "tight", "through"):
+        align = pos.halign or "left"
+        if align in ("right", "outside"):
+            parts.append("float:right")
+        else:
+            parts.append("float:left")
+        side = pos.text_side or "both"
+        if side == "left":
+            parts.append("clear:right")
+        elif side == "right":
+            parts.append("clear:left")
+        mt = f"{pos.margin_top}pt" if pos.margin_top else "4pt"
+        mr = f"{pos.margin_right}pt" if pos.margin_right else "8pt"
+        mb = f"{pos.margin_bottom}pt" if pos.margin_bottom else "4pt"
+        ml = f"{pos.margin_left}pt" if pos.margin_left else "8pt"
+        parts.append(f"margin:{mt} {mr} {mb} {ml}")
+        _apply_size_extras(parts, pos, page_margins)
+        return PositionStrategy(mode="float", element_parts=parts)
+
+    is_block_flow = (
+        pos.flow == "block"
+        and pos.vrelto == "paragraph"
+        and (pos.x is None or pos.x == 0)
+        and (pos.y is None or pos.y == 0)
+    )
+    if is_block_flow:
+        halign = pos.halign
+        if halign == "center":
+            parts.append("margin-left:auto")
+            parts.append("margin-right:auto")
+        elif halign == "right":
+            parts.append("margin-left:auto")
+            parts.append("margin-right:0")
+        _apply_size_extras(parts, pos, page_margins)
+        _apply_non_float_margins(parts, pos)
+        return PositionStrategy(mode="block", element_parts=parts)
+
+    # anchored: back/front, paper-relative, or any object with coordinates
+    if pos.content_x is not None:
+        x = pos.content_x
+    else:
+        x = pos.x
+    if pos.content_y is not None:
+        y = pos.content_y
+    else:
+        y = pos.y
+    if x is not None and abs(x) > _MAX_COORD_PT:
+        x = None
+    if y is not None and abs(y) > _MAX_COORD_PT:
+        y = None
+
+    if not paginated and pos.content_x is None and pos.content_y is None:
+        if page_margins and pos.hrelto == "paper" and x is not None:
+            x -= page_margins[3]
+        if page_margins and pos.vrelto == "paper" and y is not None:
+            y -= page_margins[0]
+
+    parts.append("position:absolute")
+    if x is not None:
+        parts.append(f"left:{x}pt")
+    if y is not None:
+        parts.append(f"top:{y}pt")
+
+    z: int | None = None
+    if pos.flow == "back":
+        z = -1
+        parts.append("pointer-events:none")
+    elif pos.flow == "front":
+        z = 10
+    elif pos.z_order is not None:
+        z = pos.z_order
+
+    _apply_size_extras(parts, pos, page_margins)
+
+    wrapper_style: str | None = None
+    if not paginated:
+        wrapper_style = f"z-index:{z}" if z is not None else ""
+    else:
+        if z is not None:
+            parts.append(f"z-index:{z}")
+
+    return PositionStrategy(
+        mode="anchored", wrapper_style=wrapper_style, element_parts=parts,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -656,9 +972,7 @@ def _render_heading(b: HeadingBlock, ctx: _Ctx) -> str:
     lvl = max(1, min(6, b.level))
     bid = _bid(b.id, ctx)
     style = _block_format_css(b.format)
-    ctx.in_heading = True
     content = _render_inlines(b.inlines, ctx) if b.inlines else _esc(b.text)
-    ctx.in_heading = False
     prefix = ""
     if ctx.numbering and content.strip():
         pfx = ctx.numbering.advance(lvl)
@@ -671,10 +985,10 @@ def _render_heading(b: HeadingBlock, ctx: _Ctx) -> str:
 
 def _render_paragraph(b: ParagraphBlock, ctx: _Ctx) -> str:
     content = _render_inlines(b.inlines, ctx)
-    if not content.strip():
-        return ""
     bid = _bid(b.id, ctx)
     style = _block_format_css(b.format)
+    if not content.strip():
+        return f"<p{bid}{style}>&nbsp;</p>"
     return f"<p{bid}{style}>{content}</p>"
 
 
@@ -684,12 +998,17 @@ def _render_table(b: TableBlock, ctx: _Ctx) -> str:
     if not b.rows:
         return ""
     bid = _bid(b.id, ctx)
+    split_attr = ""
+    split_src = getattr(b, "_split_source_id", None)
+    if split_src is not None:
+        split_idx = getattr(b, "_split_index", 0)
+        split_attr = f' data-udf-split-id="{_esc_attr(split_src)}" data-udf-split-index="{split_idx}"'
     style_parts: list[str] = []
     if b.width:
         style_parts.append(f"width:{b.width}pt")
     tbl_style = f' style="{";".join(style_parts)}"' if style_parts else ""
 
-    lines: list[str] = [f"<table{bid}{tbl_style}>"]
+    lines: list[str] = [f"<table{bid}{split_attr}{tbl_style}>"]
     if b.caption:
         lines.append(f"<caption>{_render_inlines(b.caption, ctx)}</caption>")
 
@@ -704,12 +1023,13 @@ def _render_table(b: TableBlock, ctx: _Ctx) -> str:
                 attrs += f' colspan="{cell.col_span}"'
             if tag == "th":
                 attrs += f' scope="{"col" if ri == 0 else "row"}"'
-            cs = _cell_format_css(cell.format)
+            cs = _cell_style_css(cell)
             cell_html = _render_blocks(cell.content, ctx)
             lines.append(f"<{tag}{attrs}{cs}>{cell_html}</{tag}>")
         lines.append("</tr>")
     lines.append("</table>")
-    return "\n".join(lines)
+    html = "\n".join(lines)
+    return _like_char_align_wrap(html, b.position)
 
 
 # -- List -------------------------------------------------------------------
@@ -718,8 +1038,10 @@ def _render_list(b: ListBlock, ctx: _Ctx) -> str:
     tag = "ol" if b.ordered else "ul"
     bid = _bid(b.id, ctx)
     start = f' start="{b.start}"' if b.start and b.start != 1 else ""
+    lst = getattr(b, "list_style", None)
+    style = f' style="list-style-type:{lst}"' if lst else ""
     items = "\n".join(_render_list_item(it, ctx) for it in b.items)
-    return f"<{tag}{bid}{start}>\n{items}\n</{tag}>"
+    return f"<{tag}{bid}{start}{style}>\n{items}\n</{tag}>"
 
 
 def _render_list_item(item: ListItem, ctx: _Ctx) -> str:
@@ -743,14 +1065,38 @@ def _render_image(b: ImageBlock, ctx: _Ctx) -> str:
         return ""
     alt = _esc_attr(b.alt or "")
     bid = _bid(b.id, ctx)
-    style_parts: list[str] = ["max-width:100%"]
-    if b.width:
-        style_parts.append(f"width:{b.width}pt")
-    if b.height:
-        style_parts.append(f"height:{b.height}pt")
-    style = f' style="{";".join(style_parts)}"'
+    strategy = _position_strategy(b.position, ctx.page_margins, ctx.paginated)
+    fig_style_parts = list(strategy.element_parts)
+    if b.position and not strategy.use_span:
+        fig_style_parts.append("max-width:100%")
+    fig_style = f' style="{";".join(fig_style_parts)}"' if fig_style_parts else ""
+    img_style_parts: list[str] = ["max-width:100%"]
+    has_pos_size = b.position and (b.position.width is not None or b.position.height is not None)
+    if b.width and not has_pos_size:
+        img_style_parts.append(f"width:{b.width}pt")
+    if b.height and not has_pos_size:
+        img_style_parts.append(f"height:{b.height}pt")
+    if any(getattr(b, f"crop_{s}", None) for s in ("top", "right", "bottom", "left")):
+        ct = b.crop_top or 0
+        cr = b.crop_right or 0
+        cb = b.crop_bottom or 0
+        cl = b.crop_left or 0
+        img_style_parts.append(f"clip-path:inset({ct}% {cr}% {cb}% {cl}%)")
+    if b.brightness and b.brightness != 0:
+        img_style_parts.append(f"filter:brightness({100 + b.brightness}%)")
+    if b.contrast and b.contrast != 0:
+        c = 100 + b.contrast
+        img_style_parts.append(f"filter:contrast({c}%)")
+    img_style = f' style="{";".join(img_style_parts)}"'
     cap = f"<figcaption>{_render_inlines(b.caption, ctx)}</figcaption>" if b.caption else ""
-    return f'<figure{bid}><img src="{_esc_attr(src)}" alt="{alt}"{style}>{cap}</figure>'
+    if strategy.use_span:
+        html = f'<span class="inline-image"{bid}{fig_style}><img src="{_esc_attr(src)}" alt="{alt}"{img_style}>{cap}</span>'
+        return _like_char_align_wrap(html, b.position)
+    inner = f'<figure{bid}{fig_style}><img src="{_esc_attr(src)}" alt="{alt}"{img_style}>{cap}</figure>'
+    if strategy.wrapper_style is not None:
+        wrap_attr = f' style="{strategy.wrapper_style}"' if strategy.wrapper_style else ""
+        return f'<div class="anchor-wrap"{wrap_attr}>{inner}</div>'
+    return _like_char_align_wrap(inner, b.position)
 
 
 # -- Code -------------------------------------------------------------------
@@ -809,10 +1155,12 @@ def _render_field(b: FieldBlock, ctx: _Ctx) -> str:
 
 def _render_textbox(b: TextBoxBlock, ctx: _Ctx) -> str:
     bid = _bid(b.id, ctx)
-    style_parts: list[str] = []
-    if b.width:
+    strategy = _position_strategy(b.position, ctx.page_margins, ctx.paginated)
+    style_parts = list(strategy.element_parts)
+    has_pos_size = b.position and (b.position.width is not None or b.position.height is not None)
+    if b.width and not has_pos_size:
         style_parts.append(f"width:{b.width}pt")
-    if b.height:
+    if b.height and not has_pos_size:
         style_parts.append(f"height:{b.height}pt")
     if b.background_color:
         style_parts.append(f"background-color:{b.background_color}")
@@ -823,10 +1171,21 @@ def _render_textbox(b: TextBoxBlock, ctx: _Ctx) -> str:
         style_parts.append("border-style:solid")
     if b.border_radius:
         style_parts.append(f"border-radius:{b.border_radius}pt")
+    if b.vertical_align:
+        style_parts.append(f"vertical-align:{b.vertical_align}")
     _add_padding(style_parts, b.padding_top, b.padding_right, b.padding_bottom, b.padding_left)
+    style_parts.append("overflow:hidden")
+    style_parts.append("box-sizing:border-box")
     style = f' style="{";".join(style_parts)}"' if style_parts else ""
     content = _render_blocks(b.content, ctx)
-    return f'<aside class="text-box"{bid}{style}>{content}</aside>'
+    if strategy.use_span:
+        html = f'<span class="text-box"{bid}{style}>{content}</span>'
+        return _like_char_align_wrap(html, b.position)
+    inner = f'<aside class="text-box"{bid}{style}>{content}</aside>'
+    if strategy.wrapper_style is not None:
+        wrap_attr = f' style="{strategy.wrapper_style}"' if strategy.wrapper_style else ""
+        return f'<div class="anchor-wrap"{wrap_attr}>{inner}</div>'
+    return _like_char_align_wrap(inner, b.position)
 
 
 # -- Drawing ----------------------------------------------------------------
@@ -834,19 +1193,36 @@ def _render_textbox(b: TextBoxBlock, ctx: _Ctx) -> str:
 def _render_drawing(b: DrawingBlock, ctx: _Ctx) -> str:
     bid = _bid(b.id, ctx)
     label = _esc(b.shape_type or "drawing")
-    style_parts: list[str] = []
-    if b.position:
-        if b.position.width:
-            style_parts.append(f"width:{b.position.width}pt")
-        if b.position.height:
-            style_parts.append(f"height:{b.position.height}pt")
+    strategy = _position_strategy(b.position, ctx.page_margins, ctx.paginated)
+    style_parts = list(strategy.element_parts)
     if b.background_color:
         style_parts.append(f"background-color:{b.background_color}")
+    if b.line_color:
+        style_parts.append(f"border-color:{b.line_color}")
+    if b.line_width:
+        style_parts.append(f"border-width:{b.line_width}pt")
+        style_parts.append("border-style:solid")
     style = f' style="{";".join(style_parts)}"' if style_parts else ""
+    svg = ""
+    if b.vertices and len(b.vertices) >= 3:
+        w = b.position.width if b.position and b.position.width else 100
+        h = b.position.height if b.position and b.position.height else 100
+        pts = " ".join(f"{v.x},{v.y}" for v in b.vertices)
+        fill = b.background_color or "none"
+        stroke = b.line_color or "#000"
+        sw = b.line_width or 1
+        svg = f'<svg viewBox="0 0 {w} {h}" style="width:{w}pt;height:{h}pt"><polygon points="{pts}" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/></svg>'
     if b.content:
-        inner = _render_blocks(b.content, ctx)
-        return f'<div class="drawing" aria-label="{label}"{bid}{style}>{inner}</div>'
-    return f'<div class="drawing" aria-label="{label}"{bid}{style}>[{label}]</div>'
+        inner_content = _render_blocks(b.content, ctx)
+        inner = f'<div class="drawing" aria-label="{label}"{bid}{style}>{svg}{inner_content}</div>'
+    elif svg:
+        inner = f'<div class="drawing" aria-label="{label}"{bid}{style}>{svg}</div>'
+    else:
+        inner = f'<div class="drawing" aria-label="{label}"{bid}{style}>[{label}]</div>'
+    if strategy.wrapper_style is not None:
+        wrap_attr = f' style="{strategy.wrapper_style}"' if strategy.wrapper_style else ""
+        return f'<div class="anchor-wrap"{wrap_attr}>{inner}</div>'
+    return _like_char_align_wrap(inner, b.position)
 
 
 # -- Chart ------------------------------------------------------------------
@@ -950,6 +1326,13 @@ def _render_text_inline(il: TextInline, ctx: _Ctx) -> str:
         text = f"<sub>{text}</sub>"
     if il.hidden:
         text = f'<span class="hidden" style="display:none">{text}</span>'
+    rev = getattr(il, "revision", None)
+    if rev:
+        rt = rev.revision_type
+        if rt == "insert":
+            text = f"<ins>{text}</ins>"
+        elif rt == "delete":
+            text = f"<del>{text}</del>"
     return text
 
 
@@ -1017,11 +1400,12 @@ def _text_inline_css(il: TextInline, ctx: _Ctx | None = None) -> str:
     if il.font_name:
         fb = _font_fallback(il.font_name)
         parts.append(f"font-family:'{il.font_name}'{fb}")
+        if not il.letter_spacing:
+            ls_em = _font_letter_spacing(il.font_name)
+            if ls_em > 0.001:
+                parts.append(f"letter-spacing:{ls_em}em")
     if il.font_size:
-        skip = (ctx is not None and ctx.in_heading
-                and abs(il.font_size - ctx.default_font_size) < 0.1)
-        if not skip:
-            parts.append(f"font-size:{il.font_size}pt")
+        parts.append(f"font-size:{il.font_size}pt")
     if il.letter_spacing:
         parts.append(f"letter-spacing:{il.letter_spacing / 100}em")
     if il.char_scale:
@@ -1100,10 +1484,14 @@ def _block_format_css(fmt: BlockFormat | None) -> str:
     if fmt.line_spacing is not None:
         ratio = _parse_line_spacing(fmt.line_spacing)
         parts.append(f"line-height:{ratio:.2f}")
-    if fmt.space_before:
+    if fmt.space_before is not None:
         parts.append(f"margin-top:{fmt.space_before}pt")
-    if fmt.space_after:
+    else:
+        parts.append("margin-top:0")
+    if fmt.space_after is not None:
         parts.append(f"margin-bottom:{fmt.space_after}pt")
+    else:
+        parts.append("margin-bottom:0")
     if fmt.indent_left:
         parts.append(f"margin-left:{fmt.indent_left}pt")
     if fmt.indent_right:
@@ -1131,6 +1519,9 @@ def _block_format_css(fmt: BlockFormat | None) -> str:
         parts.append("break-before:column")
     if fmt.drop_cap_lines and fmt.drop_cap_lines > 1:
         parts.append(f"initial-letter:{fmt.drop_cap_lines}")
+    if fmt.tab_stops:
+        stops = " ".join(f"{ts.position}pt" for ts in fmt.tab_stops)
+        parts.append(f"tab-size:8ch")
 
     if not parts:
         return ""
@@ -1140,6 +1531,35 @@ def _block_format_css(fmt: BlockFormat | None) -> str:
 # ---------------------------------------------------------------------------
 # CSS generation — CellFormat (13 fields)
 # ---------------------------------------------------------------------------
+
+
+def _cell_style_css(cell: TableCell) -> str:
+    parts: list[str] = []
+    if cell.width:
+        parts.append(f"width:{cell.width:.2f}pt")
+    if cell.height:
+        h = cell.height / max(cell.row_span, 1)
+        parts.append(f"height:{h:.2f}pt")
+    fmt = cell.format
+    if fmt:
+        if fmt.background_color:
+            parts.append(f"background-color:{_color_css(fmt.background_color)}")
+        for side in ("top", "bottom", "left", "right"):
+            val = getattr(fmt, f"border_{side}", None)
+            if val:
+                parts.append(f"border-{side}:{val}")
+        _add_padding(parts, fmt.padding_top, fmt.padding_right, fmt.padding_bottom, fmt.padding_left)
+        if fmt.padding and not any(getattr(fmt, f"padding_{s}", None) for s in ("top", "right", "bottom", "left")):
+            parts.append(f"padding:{fmt.padding}pt")
+        if fmt.vertical_align:
+            parts.append(f"vertical-align:{fmt.vertical_align}")
+        if fmt.text_direction == "vertical":
+            parts.append("writing-mode:vertical-rl")
+        if fmt.no_wrap:
+            parts.append("white-space:nowrap")
+    if not parts:
+        return ""
+    return f' style="{";".join(parts)}"'
 
 
 def _cell_format_css(fmt: CellFormat | None) -> str:
@@ -1179,6 +1599,27 @@ def _meta_title(doc: UdfDocument) -> str | None:
     return None
 
 
+def _meta_tags(doc: UdfDocument) -> str:
+    if not doc.metadata:
+        return ""
+    m = doc.metadata
+    parts: list[str] = []
+    author = getattr(m, "author", None)
+    if author:
+        parts.append(f'<meta name="author" content="{_esc_attr(str(author))}">')
+    subject = getattr(m, "subject", None)
+    if subject:
+        parts.append(f'<meta name="description" content="{_esc_attr(str(subject))}">')
+    keywords = getattr(m, "keywords", None)
+    if keywords:
+        kw = ", ".join(keywords) if isinstance(keywords, list) else str(keywords)
+        parts.append(f'<meta name="keywords" content="{_esc_attr(kw)}">')
+    created = getattr(m, "created", None) or getattr(m, "creation_date", None)
+    if created:
+        parts.append(f'<meta name="dcterms.created" content="{created}">')
+    return "\n".join(parts)
+
+
 def _color_css(c: Any) -> str:
     if hasattr(c, "to_hex"):
         return c.to_hex()
@@ -1186,7 +1627,10 @@ def _color_css(c: Any) -> str:
 
 
 def _esc(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    s = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    if "  " in s:
+        s = _re.sub(r"  ", " &nbsp;", s)
+    return s
 
 
 def _esc_attr(text: str) -> str:
@@ -1214,13 +1658,18 @@ def _resolve_src(src: str, ctx: _Ctx) -> str:
 
 
 def _font_fallback(name: str) -> str:
-    for kw in _SERIF_FONTS:
-        if kw in name:
-            return ",'Noto Serif KR',serif"
-    for kw in _MONO_FONTS:
-        if kw in name:
-            return ",monospace"
-    return ",'Noto Sans KR',sans-serif"
+    m = _font_lookup(name)
+    if m.category == "western":
+        return ",sans-serif"
+    if m.category == "mono":
+        return f",'{m.fallback}',monospace"
+    if m.category == "serif":
+        return f",'{m.fallback}',serif"
+    return f",'{m.fallback}',sans-serif"
+
+
+def _font_letter_spacing(name: str) -> float:
+    return _font_lookup(name).letter_spacing_em
 
 
 def _parse_line_spacing(ls: Any) -> float:
@@ -1260,8 +1709,9 @@ _TEMPLATE = """\
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
+{meta_tags}
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&family=Noto+Serif+KR:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@400;700&family=Nanum+Myeongjo:wght@400;700&family=Nanum+Gothic+Coding&family=Noto+Sans+KR:wght@400;700&family=Noto+Serif+KR:wght@400;700&display=swap" rel="stylesheet">
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 <style>
   *, *::before, *::after {{ box-sizing: border-box; }}
@@ -1282,6 +1732,7 @@ _TEMPLATE = """\
     padding: 56px 72px;
     box-shadow: 0 4px 24px rgba(0,0,0,.10);
     border-radius: 6px;
+    position: relative;
   }}
 
   h1 {{ font-size: 1.9em; margin: 1.6em 0 0.4em; }}
@@ -1322,6 +1773,16 @@ _TEMPLATE = """\
     margin-top: 6px;
     font-size: 0.82em;
     color: #666;
+  }}
+
+  .anchor-wrap {{
+    position: relative;
+    height: 0;
+    overflow: visible;
+    pointer-events: none;
+  }}
+  .anchor-wrap > * {{
+    pointer-events: auto;
   }}
 
   blockquote {{
@@ -1383,11 +1844,27 @@ _TEMPLATE = """\
     color: #0066cc;
   }}
 
+  .inline-image {{
+    display: inline-block;
+    vertical-align: middle;
+  }}
+  .inline-image img {{
+    max-width: 100%;
+    height: auto;
+  }}
+
+  span.text-box {{
+    display: inline-block;
+    vertical-align: middle;
+  }}
+
   .text-box {{
     border: 1px solid #999;
     padding: 8px 12px;
     margin: 1em 0;
     border-radius: 4px;
+    box-sizing: border-box;
+    overflow: hidden;
   }}
 
   .drawing {{
@@ -1488,8 +1965,9 @@ _TEMPLATE_PAGINATED = """\
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
+{meta_tags}
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&family=Noto+Serif+KR:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@400;700&family=Nanum+Myeongjo:wght@400;700&family=Nanum+Gothic+Coding&family=Noto+Sans+KR:wght@400;700&family=Noto+Serif+KR:wght@400;700&display=swap" rel="stylesheet">
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 <style>
   *, *::before, *::after {{ box-sizing: border-box; }}
@@ -1498,9 +1976,11 @@ _TEMPLATE_PAGINATED = """\
     margin: 0;
     padding: 32px 16px 64px;
     background: #e0e0e0;
-    font-family: 'Noto Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+    font-family: 'Malgun Gothic', 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif;
+    font-size: 10pt;
     color: #1a1a1a;
-    line-height: 1.7;
+    line-height: 1.6;
+    letter-spacing: 0.06em;
   }}
 
   .page {{
@@ -1508,6 +1988,9 @@ _TEMPLATE_PAGINATED = """\
     margin: 0 auto 24px;
     box-shadow: 0 2px 12px rgba(0,0,0,.15);
     position: relative;
+    overflow: visible;
+  }}
+  .page-flow {{
     overflow: hidden;
   }}
 
@@ -1530,32 +2013,32 @@ _TEMPLATE_PAGINATED = """\
     color: #666;
   }}
 
-  h1 {{ font-size: 1.9em; margin: 1.2em 0 0.4em; }}
-  h2 {{ font-size: 1.5em; margin: 1.0em 0 0.35em; }}
-  h3 {{ font-size: 1.25em; margin: 0.9em 0 0.3em; }}
-  h4, h5, h6 {{ font-size: 1.08em; margin: 0.8em 0 0.25em; }}
+  h1 {{ font-size: 1.9em; margin: 0; }}
+  h2 {{ font-size: 1.5em; margin: 0; }}
+  h3 {{ font-size: 1.25em; margin: 0; }}
+  h4, h5, h6 {{ font-size: 1.08em; margin: 0; }}
 
-  p {{ margin: 0.45em 0; }}
+  p {{ margin: 0; }}
 
-  ul, ol {{ padding-left: 1.6em; margin: 0.6em 0; }}
-  li {{ margin: 0.25em 0; }}
+  ul, ol {{ padding-left: 1.6em; margin: 0; }}
+  li {{ margin: 0; }}
 
   table {{
     border-collapse: collapse;
     width: 100%;
-    margin: 0.8em 0;
-    font-size: 0.92em;
+    margin: 0;
+    font-size: inherit;
   }}
   th, td {{
     border: 1px solid #bbb;
-    padding: 7px 11px;
+    padding: 4px 7px;
     text-align: left;
     vertical-align: top;
   }}
   th {{ background: #f5f5f5; font-weight: 600; }}
 
   figure {{
-    margin: 1em 0;
+    margin: 0;
     text-align: center;
   }}
   figure img {{
@@ -1566,6 +2049,16 @@ _TEMPLATE_PAGINATED = """\
     margin-top: 4px;
     font-size: 0.82em;
     color: #666;
+  }}
+
+  .anchor-wrap {{
+    position: relative;
+    height: 0;
+    overflow: visible;
+    pointer-events: none;
+  }}
+  .anchor-wrap > * {{
+    pointer-events: auto;
   }}
 
   blockquote {{
@@ -1630,6 +2123,8 @@ _TEMPLATE_PAGINATED = """\
     padding: 8px 12px;
     margin: 0.8em 0;
     border-radius: 4px;
+    box-sizing: border-box;
+    overflow: hidden;
   }}
 
   .drawing {{
@@ -1641,6 +2136,8 @@ _TEMPLATE_PAGINATED = """\
     color: #888;
     font-size: 0.88em;
     margin: 0.8em 0;
+    box-sizing: border-box;
+    overflow: hidden;
   }}
 
   .chart-placeholder {{

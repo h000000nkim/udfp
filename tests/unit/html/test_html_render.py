@@ -94,9 +94,10 @@ class TestParagraphBlock:
         assert "<p" in html
         assert "Hello" in html
 
-    def test_empty_skipped(self):
+    def test_empty_preserved(self):
         html = render_html(_doc(_para("p1", _text("   "))))
-        assert "<p" not in html or "   " not in html
+        assert "<p" in html
+        assert "&nbsp;" in html
 
     def test_format(self):
         html = render_html(_doc(ParagraphBlock(
@@ -752,7 +753,7 @@ class TestImageResolution:
             blocks=[ImageBlock(id="i1", src="bindata:photo.png")],
             verbatim=VerbatimLayer(format="hwp", bindata_streams={"photo.png": "AAAA"}),
         )
-        html = render_html(doc, image_dir="img")
+        html = render_html(doc, image_dir="img", embed_images=False)
         assert 'src="img/photo.png"' in html
 
     def test_bindata_embed(self):

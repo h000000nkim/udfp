@@ -24,6 +24,7 @@ from udf.schema import (
     HeaderBlock,
     HeadingBlock,
     ImageBlock,
+    ImageInline,
     ParagraphBlock,
     PositionInfo,
     TableBlock,
@@ -34,6 +35,7 @@ from udf.schema import (
     TextInline,
     UnknownBlock,
 )
+from udf.schema.formats import normalize_position
 from udf.schema.types import Ratio, hwpunit_to_pt
 from udf.pipeline.verbatim import VerbatimBlock
 from udf.parsers.hwp.doc_info import DocInfoResult
@@ -137,15 +139,16 @@ def _extract_text(pt_payload: bytes) -> str:
                 chars.append(chr(code))
             off += 2
         elif code in _PT_CTRL_2BYTE:
-            if code == 0x0009 and off + 14 <= n:
-                w1 = struct.unpack_from("<H", pt_payload, off + 4)[0]
-                w2 = struct.unpack_from("<H", pt_payload, off + 6)[0]
-                w3 = struct.unpack_from("<H", pt_payload, off + 8)[0]
-                w4 = struct.unpack_from("<H", pt_payload, off + 10)[0]
-                w5 = struct.unpack_from("<H", pt_payload, off + 12)[0]
-                if w1 == 0 and w2 == 0x0203 and w3 == 0 and w4 == 0 and w5 == 0:
-                    off += 14
-                    continue
+            if code == 0x0009:
+                chars.append('\t')
+                if off + 14 <= n:
+                    w1 = struct.unpack_from("<H", pt_payload, off + 4)[0]
+                    w2 = struct.unpack_from("<H", pt_payload, off + 6)[0]
+                    if w1 == 0 and w2 == 0x0203:
+                        off += 14
+                        continue
+            elif code == 0x000A:
+                chars.append('\n')
             off += 2
         else:
             # hwp.md §5.2: 그 외 모든 ctrl 코드는 인라인 오브젝트 (2+14=16바이트)
@@ -199,16 +202,17 @@ def _build_inlines(
             pos_idx += 1
             off += 2
         elif code in _PT_CTRL_2BYTE:
-            if code == 0x0009 and off + 14 <= n:
-                w1 = struct.unpack_from("<H", pt_payload, off + 4)[0]
-                w2 = struct.unpack_from("<H", pt_payload, off + 6)[0]
-                w3 = struct.unpack_from("<H", pt_payload, off + 8)[0]
-                w4 = struct.unpack_from("<H", pt_payload, off + 10)[0]
-                w5 = struct.unpack_from("<H", pt_payload, off + 12)[0]
-                if w1 == 0 and w2 == 0x0203 and w3 == 0 and w4 == 0 and w5 == 0:
-                    pos_idx += 7
-                    off += 14
-                    continue
+            if code == 0x0009:
+                chars_with_pos.append((pos_idx, '\t'))
+                if off + 14 <= n:
+                    w1 = struct.unpack_from("<H", pt_payload, off + 4)[0]
+                    w2 = struct.unpack_from("<H", pt_payload, off + 6)[0]
+                    if w1 == 0 and w2 == 0x0203:
+                        pos_idx += 7
+                        off += 14
+                        continue
+            elif code == 0x000A:
+                chars_with_pos.append((pos_idx, '\n'))
             pos_idx += 1
             off += 2
         else:
@@ -375,7 +379,6 @@ def _para_shape_to_format(
             line_spacing = _to_pt(ls_val)
 
     page_break_before = ps.get("start_new_page") or None
-    keep_with_next = ps.get("with_next_paragraph") or None
     widow_orphan = ps.get("protect") or None
     level = ps.get("level")
     outline_level = level if level is not None and 1 <= level <= 7 else None
@@ -408,8 +411,8 @@ def _para_shape_to_format(
 
     return BlockFormat(
         alignment=safe_align,
-        indent_left=_to_pt(left_m),
-        indent_right=_to_pt(right_m),
+        indent_left=_to_pt_signed(left_m),
+        indent_right=_to_pt_signed(right_m),
         indent_first=_to_pt_signed(first_m),
         space_before=_to_pt(top_sp),
         space_after=_to_pt(bot_sp),
@@ -417,7 +420,6 @@ def _para_shape_to_format(
         line_spacing_type=safe_ls_type,
         outline_level=outline_level,
         page_break_before=page_break_before,
-        keep_with_next=keep_with_next,
         widow_orphan=widow_orphan,
         background_color=bg_color,
         border_top=border_top,
@@ -671,8 +673,12 @@ def _parse_table(
                 if v_align in {"top", "middle", "bottom"}
                 else None,
             )
+            _tbl_pad_map = {"left": "margin_left", "right": "margin_right",
+                           "top": "margin_top", "bottom": "margin_bottom"}
             for side in ("top", "bottom", "left", "right"):
                 pad_val = lh.get(f"padding_{side}", 0)
+                if not pad_val and locals().get('tbl_props'):
+                    pad_val = tbl_props.get(_tbl_pad_map[side], 0)
                 if pad_val:
                     setattr(cfmt, f"padding_{side}", hwpunit_to_pt(pad_val))
             bf_id = lh.get("border_fill_id")
@@ -717,7 +723,8 @@ def _parse_table(
                 v for (ri, _), v in sorted(cells_by_rc.items()) if ri == row_idx
             ]
             if row_cells:
-                rows.append(TableRow(cells=row_cells))
+                row_h = row_cells[0].height if row_cells[0].height else None
+                rows.append(TableRow(cells=row_cells, height=row_h))
     else:
         rows = []
 
@@ -769,10 +776,12 @@ def _parse_table(
         },
     )
 
+    tbl_width = position.width if position and position.width else None
     table = TableBlock(
         type="table",
         id=tbl_id,
         rows=rows,
+        width=tbl_width,
         position=position,
         cell_spacing=tbl_cell_spacing,
         default_padding=tbl_default_padding,
@@ -991,7 +1000,7 @@ def _parse_ctrl_common(payload: bytes) -> PositionInfo | None:
             "<4H", payload, 28
         )
 
-    return PositionInfo(
+    pos = PositionInfo(
         x=x_off * _HU_TO_PT,
         y=y_off * _HU_TO_PT,
         width=width * _HU_TO_PT,
@@ -1014,6 +1023,8 @@ def _parse_ctrl_common(payload: bytes) -> PositionInfo | None:
         overlap_others=overlap_others or None,
         affect_line_spacing=affect_ls or None,
     )
+    normalize_position(pos)
+    return pos
 
 
 # ---------------------------------------------------------------------------
@@ -1126,14 +1137,17 @@ def _parse_shape_position(payload: bytes) -> PositionInfo | None:
     if len(payload) >= 32:
         cw, ch = struct.unpack_from("<II", payload, 24)
         if cw > 0 and ch > 0:
-            return PositionInfo(x=x * _HU_TO_PT, y=y * _HU_TO_PT, width=cw * _HU_TO_PT, height=ch * _HU_TO_PT)
-    return PositionInfo(x=x * _HU_TO_PT, y=y * _HU_TO_PT, width=ow * _HU_TO_PT, height=oh * _HU_TO_PT)
+            return PositionInfo(x=x * _HU_TO_PT, y=y * _HU_TO_PT, width=cw * _HU_TO_PT, height=ch * _HU_TO_PT,
+                                hrelto="paper", vrelto="paper", flow="front")
+    return PositionInfo(x=x * _HU_TO_PT, y=y * _HU_TO_PT, width=ow * _HU_TO_PT, height=oh * _HU_TO_PT,
+                        hrelto="paper", vrelto="paper", flow="front")
 
 
 def _extract_child_shapes(
     ctrl_children: list[HwpRecord],
     block_counter: itertools.count[int],
     info: DocInfoResult | None = None,
+    parent_position: PositionInfo | None = None,
 ) -> list[Block]:
     """$con 컨테이너에서 기하 도형 및 $pic 이미지 자식을 추출."""
     sc_indices = [
@@ -1154,6 +1168,13 @@ def _extract_child_shapes(
         if has_lh:
             continue
         pos = _parse_shape_position(pay)
+        if pos and parent_position:
+            if not pos.flow:
+                pos.flow = parent_position.flow
+            if not pos.hrelto:
+                pos.hrelto = parent_position.hrelto
+            if not pos.vrelto:
+                pos.vrelto = parent_position.vrelto
         if st == "$pic" and info is not None:
             bin_item_id = None
             for k in range(idx + 1, next_sc):
@@ -1163,12 +1184,16 @@ def _extract_child_shapes(
                     break
             if bin_item_id is not None:
                 src = _resolve_bin_src(bin_item_id, info)
+                w = pos.width if pos and pos.width else None
+                h = pos.height if pos and pos.height else None
+                if pos and w and h and w > 400 and h > 600:
+                    pos.flow = "back"
                 results.append(ImageBlock(
                     type="image",
                     id=make_block_id(next(block_counter)),
                     src=src,
-                    width=pos.width if pos and pos.width else None,
-                    height=pos.height if pos and pos.height else None,
+                    width=w,
+                    height=h,
                     position=pos,
                 ))
                 continue
@@ -1272,6 +1297,8 @@ def _extract_nested_textboxes(
                         type="text_box",
                         id=tb_id,
                         content=blocks,
+                        width=pos.width if pos else None,
+                        height=pos.height if pos else None,
                         position=pos,
                         background_color=fill_c,
                         line_color=line_c,
@@ -1446,7 +1473,7 @@ def _parse_gso(
             )
             content_blocks.extend(nested)
             verbatim_map.update(nv)
-            geom_children = _extract_child_shapes(ctrl_children, block_counter, info)
+            geom_children = _extract_child_shapes(ctrl_children, block_counter, info, position)
             content_blocks.extend(geom_children)
         elif lh_idx is not None:
             lh_rec = ctrl_children[lh_idx]
@@ -1461,10 +1488,14 @@ def _parse_gso(
         if round_corner and position and position.width and position.height:
             shorter = min(position.width, position.height)
             br_pt = shorter * round_corner / 100.0
+        tb_w = position.width if position else None
+        tb_h = position.height if position else None
         block = TextBoxBlock(
             type="text_box",
             id=blk_id,
             content=content_blocks,
+            width=tb_w,
+            height=tb_h,
             position=position,
             padding_top=tb_pad.get("top"),
             padding_bottom=tb_pad.get("bottom"),
@@ -1497,7 +1528,7 @@ def _parse_gso(
         child_drawing: list[DrawingBlock] = []
         child_content: list[Block] = []
         if shape_type == "$con":
-            for cs in _extract_child_shapes(ctrl_children, block_counter, info):
+            for cs in _extract_child_shapes(ctrl_children, block_counter, info, position):
                 if isinstance(cs, DrawingBlock):
                     child_drawing.append(cs)
                 else:
@@ -1752,22 +1783,29 @@ def _parse_block_list(
                 verbatim_map.update(tv)
                 handled_primary = True
             elif ctrl_recs and first_ctrl_id == _CTRL_ID_EQED and len(ctrl_recs) == 1:
-                ctrl = ctrl_recs[0]
-                ctrl_children, _ = _collect_children(
-                    children, children.index(ctrl) + 1, ctrl.level
+                pt_child = next(
+                    (c for c in children
+                     if c.tag_id == HWPTAG_PARA_TEXT and c.level == base_level + 1),
+                    None,
                 )
-                eq_blk, ev = _parse_equation(
-                    ctrl, ctrl_children, block_counter, verb_counter, section,
-                )
-                if eq_blk.verbatim_ref and eq_blk.verbatim_ref in ev:
-                    eq_vb = ev[eq_blk.verbatim_ref]
-                    decoded = dict(eq_vb.decoded) if eq_vb.decoded else {}
-                    decoded["ph_offset"] = rec.offset
-                    decoded["ph_level"] = rec.level
-                    eq_vb.decoded = decoded
-                blocks.append(eq_blk)
-                verbatim_map.update(ev)
-                handled_primary = True
+                host_text = _extract_text(pt_child.payload) if pt_child else ""
+                if not host_text.strip():
+                    ctrl = ctrl_recs[0]
+                    ctrl_children, _ = _collect_children(
+                        children, children.index(ctrl) + 1, ctrl.level
+                    )
+                    eq_blk, ev = _parse_equation(
+                        ctrl, ctrl_children, block_counter, verb_counter, section,
+                    )
+                    if eq_blk.verbatim_ref and eq_blk.verbatim_ref in ev:
+                        eq_vb = ev[eq_blk.verbatim_ref]
+                        decoded = dict(eq_vb.decoded) if eq_vb.decoded else {}
+                        decoded["ph_offset"] = rec.offset
+                        decoded["ph_level"] = rec.level
+                        eq_vb.decoded = decoded
+                    blocks.append(eq_blk)
+                    verbatim_map.update(ev)
+                    handled_primary = True
 
             if not handled_primary:
                 inline_objects = None
@@ -1791,7 +1829,16 @@ def _parse_block_list(
                     rec, children, info, block_counter, verb_counter, section,
                     inline_objects=inline_objects,
                 )
-                blocks.append(para)
+                has_table_ctrl = any(
+                    ctrl_id_from_payload(c.payload) == _CTRL_ID_TABLE
+                    for c in ctrl_recs
+                )
+                para_text = "".join(
+                    il.text for il in para.inlines
+                    if hasattr(il, "text") and il.text
+                ) if hasattr(para, "inlines") else ""
+                if not (has_table_ctrl and not para_text.strip()):
+                    blocks.append(para)
                 verbatim_map.update(pv)
 
             # 단락 내 모든 CTRL_HEADER 순회: gso/eqed/fn/en/tbl 추출
@@ -1833,18 +1880,42 @@ def _parse_block_list(
                     blocks.append(fn_blk)
                     verbatim_map.update(fv)
                 elif cid in (_CTRL_ID_HEADER, _CTRL_ID_FOOTER):
-                    hf_blk, hfv = _parse_header_footer(
+                    _, hfv = _parse_header_footer(
                         ctrl, cc, info, block_counter, verb_counter, section,
                         is_footer=(cid == _CTRL_ID_FOOTER),
                     )
-                    blocks.append(hf_blk)
                     verbatim_map.update(hfv)
-                elif cid in (_CTRL_ID_PGNP, _CTRL_ID_ATNO, _CTRL_ID_HLK):
+                elif cid == _CTRL_ID_ATNO:
                     f_blk, fv = _parse_field_ctrl(
                         ctrl, cc, info, block_counter, verb_counter, section, cid,
                     )
                     blocks.append(f_blk)
                     verbatim_map.update(fv)
+                elif cid == _CTRL_ID_HLK:
+                    _, fv = _parse_field_ctrl(
+                        ctrl, cc, info, block_counter, verb_counter, section, cid,
+                    )
+                    verbatim_map.update(fv)
+                elif cid == _CTRL_ID_PGNP:
+                    _, fv = _parse_field_ctrl(
+                        ctrl, cc, info, block_counter, verb_counter, section, cid,
+                    )
+                    verbatim_map.update(fv)
+
+            if not handled_primary and not para_text.strip():
+                produced_images = any(
+                    getattr(blocks[j], "type", "") == "image"
+                    for j in range(len(blocks) - 1, -1, -1)
+                    if j >= len(blocks) - len(ctrl_recs)
+                )
+                if produced_images and blocks and getattr(blocks[-len(ctrl_recs) - 1 if len(blocks) > len(ctrl_recs) else 0], "type", "") == "paragraph":
+                    for k in range(len(blocks) - 1, -1, -1):
+                        if getattr(blocks[k], "type", "") == "paragraph" and not any(
+                            hasattr(il, "text") and il.text and il.text.strip()
+                            for il in (blocks[k].inlines if hasattr(blocks[k], "inlines") else [])
+                        ):
+                            blocks.pop(k)
+                            break
 
             i = next_i
 
@@ -1877,17 +1948,26 @@ def _parse_block_list(
                 blocks.append(gso_blk)
                 verbatim_map.update(gv)
             elif ctrl_id in (_CTRL_ID_HEADER, _CTRL_ID_FOOTER):
-                hf_blk, hfv = _parse_header_footer(
+                _, hfv = _parse_header_footer(
                     rec, children, info, block_counter, verb_counter, section,
                     is_footer=(ctrl_id == _CTRL_ID_FOOTER),
                 )
-                blocks.append(hf_blk)
                 verbatim_map.update(hfv)
-            elif ctrl_id in (_CTRL_ID_PGNP, _CTRL_ID_ATNO, _CTRL_ID_HLK):
+            elif ctrl_id == _CTRL_ID_ATNO:
                 f_blk, fv = _parse_field_ctrl(
                     rec, children, info, block_counter, verb_counter, section, ctrl_id,
                 )
                 blocks.append(f_blk)
+                verbatim_map.update(fv)
+            elif ctrl_id == _CTRL_ID_HLK:
+                _, fv = _parse_field_ctrl(
+                    rec, children, info, block_counter, verb_counter, section, ctrl_id,
+                )
+                verbatim_map.update(fv)
+            elif ctrl_id == _CTRL_ID_PGNP:
+                _, fv = _parse_field_ctrl(
+                    rec, children, info, block_counter, verb_counter, section, ctrl_id,
+                )
                 verbatim_map.update(fv)
             elif ctrl_id in _CTRL_IDS_SKIP:
                 pass
@@ -1923,6 +2003,50 @@ def _parse_block_list(
 # ---------------------------------------------------------------------------
 
 
+def _flatten_con_textboxes(blocks: list[Any]) -> list[Any]:
+    """$con TextBoxBlock의 자식 블록들을 최상위로 추출 (HWPX 파서와 구조 일관성).
+
+    ImageBlock을 TextBoxBlock보다 앞에 배치하여 HWPX 파서 순서와 일치.
+    """
+    result: list[Any] = []
+    for blk in blocks:
+        if (isinstance(blk, TextBoxBlock)
+                and blk.content
+                and blk.background_image
+                and any(isinstance(cb, (TextBoxBlock, ImageBlock, DrawingBlock)) for cb in blk.content)):
+            images = [cb for cb in blk.content if isinstance(cb, ImageBlock)]
+            others = [cb for cb in blk.content if not isinstance(cb, ImageBlock)]
+            result.extend(images)
+            result.extend(others)
+        else:
+            result.append(blk)
+    return result
+
+
+def _absorb_like_char_images(blocks: list[Any]) -> list[Any]:
+    """like_char=True인 ImageBlock을 직전 ParagraphBlock의 인라인으로 흡수."""
+    result: list[Any] = []
+    for blk in blocks:
+        if (isinstance(blk, ImageBlock)
+                and blk.position
+                and blk.position.like_char
+                and result
+                and isinstance(result[-1], ParagraphBlock)):
+            prev = result[-1]
+            inline = ImageInline(
+                src=blk.src,
+                alt=blk.alt,
+                width=blk.position.width if blk.position else blk.width,
+                height=blk.position.height if blk.position else blk.height,
+            )
+            inlines = list(prev.inlines or [])
+            inlines.append(inline)
+            result[-1] = prev.model_copy(update={"inlines": inlines})
+        else:
+            result.append(blk)
+    return result
+
+
 def parse_section(
     stream_bytes: bytes,
     info: DocInfoResult,
@@ -1947,7 +2071,10 @@ def parse_section(
     records = list(iter_records(stream_bytes))
     block_counter: itertools.count[int] = itertools.count()
     verb_counter: itertools.count[int] = itertools.count()
-    return _parse_block_list(records, 0, info, block_counter, verb_counter, section)
+    blocks, verb = _parse_block_list(records, 0, info, block_counter, verb_counter, section)
+    blocks = _flatten_con_textboxes(blocks)
+    blocks = _absorb_like_char_images(blocks)
+    return blocks, verb
 
 
 def extract_page_def(stream_bytes: bytes) -> dict[str, Any] | None:

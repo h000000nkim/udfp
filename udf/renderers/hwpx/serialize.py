@@ -11,6 +11,7 @@ from lxml import etree
 
 from udf.core.schema import (
     Block,
+    CodeBlock,
     DrawingBlock,
     EndnoteBlock,
     EquationBlock,
@@ -21,12 +22,14 @@ from udf.core.schema import (
     FootnoteRefInline,
     HeaderBlock,
     HeadingBlock,
+    HorizontalRuleBlock,
     ImageBlock,
     ImageInline,
     LinkInline,
     ListBlock,
     ListItem,
     ParagraphBlock,
+    QuoteBlock,
     TableBlock,
     TableCell,
     TableRow,
@@ -73,6 +76,118 @@ def _fix_xml_decl(data: bytes) -> bytes:
 # 현재 직렬화 세션의 charPr 매핑 (TextInline 스타일 키 → charPr ID)
 _char_pr_map: dict[tuple, int] = {}
 _char_pr_list: list[dict] = []
+
+# BlockFormat → paraPr ID 매핑 (BUG-148)
+_para_pr_map: dict[tuple, int] = {}
+_para_pr_extra: list[dict] = []
+_STD_PP_COUNT = 21  # 기본 paraPr 수
+
+# CellFormat → borderFill ID 매핑 (BUG-151)
+_bf_map: dict[tuple, int] = {}
+_bf_extra: list[dict] = []
+_STD_BF_COUNT = 3  # 기본 borderFill 수 (header에 3개 고정)
+
+_ALIGN_TO_HWPX = {"left": "LEFT", "right": "RIGHT", "center": "CENTER", "justify": "JUSTIFY"}
+
+
+def _block_format_key(fmt) -> tuple:
+    if fmt is None:
+        return ()
+    return (
+        fmt.alignment or "justify",
+        round((fmt.space_before or 0) * 100),
+        round((fmt.space_after or 0) * 100),
+        round((fmt.indent_left or 0) * 100),
+        round((fmt.indent_right or 0) * 100),
+        round((fmt.indent_first or 0) * 100),
+        int(fmt.line_spacing.percent) if fmt.line_spacing and hasattr(fmt.line_spacing, "percent") else 160,
+        fmt.page_break_before or False,
+        fmt.widow_orphan or False,
+    )
+
+
+def _collect_para_formats(blocks: list) -> None:
+    """수집: 고유한 BlockFormat 조합을 모아 paraPr ID를 할당."""
+    global _para_pr_map, _para_pr_extra
+    _para_pr_map.clear()
+    _para_pr_extra.clear()
+    next_id = _STD_PP_COUNT
+    for block in blocks:
+        fmt = getattr(block, "format", None)
+        if fmt is None:
+            continue
+        key = _block_format_key(fmt)
+        if not key or key in _para_pr_map:
+            continue
+        align, sb, sa, il, ir, fi, ls, pb, wo = key
+        _para_pr_map[key] = next_id
+        _para_pr_extra.append({
+            "id": str(next_id),
+            "align": _ALIGN_TO_HWPX.get(align, "JUSTIFY"),
+            "space_before": str(sb),
+            "space_after": str(sa),
+            "indent_left": str(il),
+            "indent_right": str(ir),
+            "indent_first": str(fi),
+            "ls_val": str(ls),
+            "page_break_before": "1" if pb else "0",
+            "widow_orphan": "1" if wo else "0",
+        })
+        next_id += 1
+
+
+def _get_para_pr_id(block) -> str | None:
+    """블록의 BlockFormat에 매칭되는 paraPr ID를 반환."""
+    fmt = getattr(block, "format", None)
+    if fmt is None:
+        return None
+    key = _block_format_key(fmt)
+    if key and key in _para_pr_map:
+        return str(_para_pr_map[key])
+    return None
+
+
+def _cell_bf_key(fmt) -> tuple:
+    if fmt is None:
+        return ()
+    bg = str(fmt.background_color or "")
+    bl = str(fmt.border_left or "")
+    br = str(fmt.border_right or "")
+    bt = str(fmt.border_top or "")
+    bb = str(fmt.border_bottom or "")
+    return (bg, bl, br, bt, bb)
+
+
+def _collect_cell_border_fills(blocks: list) -> None:
+    global _bf_map, _bf_extra
+    _bf_map.clear()
+    _bf_extra.clear()
+    next_id = _STD_BF_COUNT + 1  # 1-based
+    for block in blocks:
+        if not hasattr(block, "rows"):
+            continue
+        for row in block.rows:
+            for cell in row.cells:
+                fmt = getattr(cell, "format", None)
+                key = _cell_bf_key(fmt)
+                if not key or key == ("", "", "", "", "") or key in _bf_map:
+                    continue
+                bg, bl, br, bt, bb = key
+                _bf_map[key] = next_id
+                _bf_extra.append({
+                    "id": str(next_id),
+                    "bg": bg,
+                    "border_left": bl, "border_right": br,
+                    "border_top": bt, "border_bottom": bb,
+                })
+                next_id += 1
+
+
+def _get_cell_bf_id(fmt) -> str:
+    key = _cell_bf_key(fmt)
+    if key and key in _bf_map:
+        return str(_bf_map[key])
+    return "1"
 
 
 def _inline_style_key(il: TextInline) -> tuple:
@@ -125,6 +240,16 @@ def _collect_char_styles(blocks: list[Block]) -> None:
 
     _visit(blocks)
 
+    _HEADING_SIZE = {1: 24.0, 2: 18.0, 3: 14.0, 4: 12.0, 5: 11.0, 6: 10.0}
+    for block in blocks:
+        if isinstance(block, HeadingBlock):
+            level = max(1, min(block.level, 6))
+            hil = TextInline(text="", bold=True, font_size=_HEADING_SIZE[level])
+            k = _inline_style_key(hil)
+            if k not in _char_pr_map:
+                _char_pr_map[k] = len(_char_pr_list)
+                _char_pr_list.append(_inline_to_char_pr(hil))
+
 
 def _inline_to_char_pr(il: TextInline) -> dict:
     """TextInline → charPr 속성 dict (header.xml 생성용)."""
@@ -151,7 +276,23 @@ def _inline_to_char_pr(il: TextInline) -> dict:
             c = f"#{c}"
         props["textColor"] = c
     if il.font_size is not None:
-        props["height"] = int(float(il.font_size) * 100)
+        props["height"] = round(float(il.font_size) * 100)
+    if il.font_name:
+        props["font_name"] = il.font_name
+    if il.letter_spacing:
+        props["letter_spacing"] = int(il.letter_spacing)
+    if il.char_scale and hasattr(il.char_scale, "percent"):
+        props["char_scale"] = int(il.char_scale.percent)
+    if il.superscript:
+        props["superscript"] = True
+    if il.subscript:
+        props["subscript"] = True
+    if il.highlight_color:
+        sc = str(il.highlight_color)
+        props["shadeColor"] = sc if sc.startswith("#") else f"#{sc}"
+    if il.underline_color:
+        uc = str(il.underline_color)
+        props["underline_color"] = uc if uc.startswith("#") else f"#{uc}"
     return props
 
 
@@ -182,17 +323,36 @@ def blocks_to_section_xml(blocks: list[Block], doc: UdfDocument) -> bytes:
         UTF-8 encoded section XML with XML declaration.
     """
     _collect_char_styles(blocks)
+    _collect_para_formats(blocks)
+    _collect_cell_border_fills(blocks)
 
     sec = etree.Element(f"{_HS}sec", nsmap=_NSMAP)
 
-    # 첫 번째 단락에 secPr 삽입 (From Scratch에서 최소한의 페이지 설정)
     secpr_para = _build_secpr_paragraph(doc)
-    sec.append(secpr_para)
+    secpr_el = secpr_para.find(f".//{_HP}secPr", namespaces=None)
+    if secpr_el is None:
+        for child in secpr_para:
+            inner = child.find(f"{_HP}secPr")
+            if inner is not None:
+                secpr_el = inner
+                break
 
+    merged_secpr = False
     for block in blocks:
         elements = _block_to_elements(block, doc)
+        if not merged_secpr and elements and secpr_el is not None:
+            first_el = elements[0]
+            if first_el.tag == f"{_HP}p":
+                secpr_run = etree.Element(f"{_HP}run")
+                secpr_run.set("charPrIDRef", "0")
+                secpr_run.append(secpr_el)
+                first_el.insert(0, secpr_run)
+                merged_secpr = True
         for el in elements:
             sec.append(el)
+
+    if not merged_secpr:
+        sec.insert(0, secpr_para)
 
     return _fix_xml_decl(etree.tostring(
         sec,
@@ -243,7 +403,7 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
         font.set("face", "함초롬돋움")
 
     border_fills = etree.SubElement(ref_list, f"{_HH}borderFills")
-    border_fills.set("itemCnt", "3")
+    border_fills.set("itemCnt", str(3 + len(_bf_extra)))
     for bf_id in ("1", "2", "3"):
         bf = etree.SubElement(border_fills, f"{_HH}borderFill")
         bf.set("id", bf_id)
@@ -252,6 +412,30 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
             b.set("type", "NONE")
             b.set("width", "0.1 mm")
             b.set("color", "#000000")
+    for bf_def in _bf_extra:
+        bf = etree.SubElement(border_fills, f"{_HH}borderFill")
+        bf.set("id", bf_def["id"])
+        _side_keys = [("leftBorder", "border_left"), ("rightBorder", "border_right"),
+                      ("topBorder", "border_top"), ("bottomBorder", "border_bottom")]
+        for side_tag, side_key in _side_keys:
+            b = etree.SubElement(bf, f"{_HH}{side_tag}")
+            bval = bf_def.get(side_key, "")
+            if bval:
+                parts = bval.split()
+                b.set("width", parts[0] if parts else "0.1 mm")
+                b.set("type", "SOLID" if len(parts) >= 2 and parts[1] == "solid" else "NONE")
+                b.set("color", parts[2] if len(parts) >= 3 else "#000000")
+            else:
+                b.set("type", "NONE")
+                b.set("width", "0.1 mm")
+                b.set("color", "#000000")
+        bg = bf_def.get("bg", "")
+        if bg:
+            fc = etree.SubElement(bf, f"{_HH}fillBrush")
+            wc = etree.SubElement(fc, f"{_HH}winBrush")
+            wc.set("faceColor", bg if bg.startswith("#") else f"#{bg}")
+            wc.set("hatchColor", "#FFFFFF")
+            wc.set("alpha", "0")
 
     char_props = etree.SubElement(ref_list, f"{_HH}charProperties")
     char_props.set("itemCnt", str(len(_char_pr_list)))
@@ -260,7 +444,7 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
         cp.set("id", str(cp_id))
         cp.set("height", str(cp_dict.get("height", 1000)))
         cp.set("textColor", cp_dict.get("textColor", "#000000"))
-        cp.set("shadeColor", "none")
+        cp.set("shadeColor", cp_dict.get("shadeColor", "none"))
         cp.set("useFontSpace", "0")
         cp.set("useKerning", "0")
         cp.set("symMark", "NONE")
@@ -268,12 +452,14 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
         font_ref = etree.SubElement(cp, f"{_HH}fontRef")
         for lang in _LANGS_LOWER:
             font_ref.set(lang, "0")
+        cs_val = str(cp_dict.get("char_scale", 100))
         ratio = etree.SubElement(cp, f"{_HH}ratio")
         for lang in _LANGS_LOWER:
-            ratio.set(lang, "100")
+            ratio.set(lang, cs_val)
+        ls_val = str(cp_dict.get("letter_spacing", 0))
         spacing = etree.SubElement(cp, f"{_HH}spacing")
         for lang in _LANGS_LOWER:
-            spacing.set(lang, "0")
+            spacing.set(lang, ls_val)
         rel_sz = etree.SubElement(cp, f"{_HH}relSz")
         for lang in _LANGS_LOWER:
             rel_sz.set(lang, "100")
@@ -285,10 +471,13 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
         if cp_dict.get("italic"):
             etree.SubElement(cp, f"{_HH}italic")
         ul = etree.SubElement(cp, f"{_HH}underline")
+        ul_color = cp_dict.get("underline_color", "#000000")
+        if not ul_color.startswith("#"):
+            ul_color = f"#{ul_color}"
         if cp_dict.get("underline"):
             ul.set("type", "BOTTOM")
             ul.set("shape", "SOLID")
-            ul.set("color", "#000000")
+            ul.set("color", ul_color)
         else:
             ul.set("type", "NONE")
             ul.set("shape", "SOLID")
@@ -311,6 +500,14 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
             etree.SubElement(cp, f"{_HH}emboss")
         if cp_dict.get("engrave"):
             etree.SubElement(cp, f"{_HH}engrave")
+        if cp_dict.get("superscript"):
+            sup = etree.SubElement(cp, f"{_HH}supscript")
+            sup.set("sz", "70")
+            sup.set("raise", "30")
+        if cp_dict.get("subscript"):
+            sub = etree.SubElement(cp, f"{_HH}subscript")
+            sub.set("sz", "70")
+            sub.set("lower", "30")
 
     tab_props = etree.SubElement(ref_list, f"{_HH}tabProperties")
     tab_props.set("itemCnt", "1")
@@ -361,9 +558,10 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
         {"id": "19", "align": "JUSTIFY", "ls_type": "PERCENT", "ls_val": "160"},
         {"id": "20", "align": "CENTER", "ls_type": "PERCENT", "ls_val": "160"},
     ]
+    all_pp_defs = list(_STD_PP_DEFS) + list(_para_pr_extra)
     para_props = etree.SubElement(ref_list, f"{_HH}paraProperties")
-    para_props.set("itemCnt", str(len(_STD_PP_DEFS)))
-    for ppd in _STD_PP_DEFS:
+    para_props.set("itemCnt", str(len(all_pp_defs)))
+    for ppd in all_pp_defs:
         pp = etree.SubElement(para_props, f"{_HH}paraPr")
         pp.set("id", ppd["id"])
         align = etree.SubElement(pp, f"{_HH}align")
@@ -376,10 +574,10 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
         bs = etree.SubElement(pp, f"{_HH}breakSetting")
         bs.set("breakLatinWord", "KEEP_WORD")
         bs.set("breakNonLatinWord", "KEEP_WORD")
-        bs.set("widowOrphan", "0")
+        bs.set("widowOrphan", ppd.get("widow_orphan", "0"))
         bs.set("keepWithNext", "0")
         bs.set("keepLines", "0")
-        bs.set("pageBreakBefore", "0")
+        bs.set("pageBreakBefore", ppd.get("page_break_before", "0"))
         bs.set("lineWrap", "BREAK")
         auto_sp = etree.SubElement(pp, f"{_HH}autoSpacing")
         auto_sp.set("eAsianEng", "0")
@@ -393,15 +591,20 @@ def build_minimal_header_xml(doc: UdfDocument) -> bytes:
         bdr.set("offsetBottom", "0")
         bdr.set("connect", "0")
         bdr.set("ignoreMargin", "0")
-        if ppd.get("indent"):
+        has_margin = ppd.get("indent") or ppd.get("indent_left") or ppd.get("indent_first")
+        if has_margin:
             margin = etree.SubElement(pp, f"{_HH}margin")
-            margin.set("indent", ppd["indent"])
-            margin.set("left", "0")
-            margin.set("right", "0")
-        if ppd.get("ls_type"):
+            margin.set("indent", ppd.get("indent_first") or ppd.get("indent", "0"))
+            margin.set("left", ppd.get("indent_left", "0"))
+            margin.set("right", ppd.get("indent_right", "0"))
+        if ppd.get("space_before") or ppd.get("space_after"):
+            sp = etree.SubElement(pp, f"{_HH}spacing")
+            sp.set("before", ppd.get("space_before", "0"))
+            sp.set("after", ppd.get("space_after", "0"))
+        if ppd.get("ls_type") or ppd.get("ls_val"):
             ls = etree.SubElement(pp, f"{_HH}lineSpacing")
-            ls.set("type", ppd["ls_type"])
-            ls.set("value", ppd["ls_val"])
+            ls.set("type", ppd.get("ls_type", "PERCENT"))
+            ls.set("value", ppd.get("ls_val", "160"))
 
     _STD_STYLES = [
         {"id": "0", "type": "PARA", "name": "바탕글", "eng": "Normal", "pp": "0", "cp": "0"},
@@ -712,6 +915,26 @@ def _block_to_elements(block: Block, doc: UdfDocument) -> list[etree._Element]:
         return [_equation_block_to_xml(block, doc)]
     elif isinstance(block, (FootnoteBlock, EndnoteBlock)):
         return []
+    elif isinstance(block, QuoteBlock):
+        elements = []
+        for child in block.content:
+            elements.extend(_block_to_elements(child, doc))
+        return elements if elements else [_empty_paragraph()]
+    elif isinstance(block, CodeBlock):
+        text = block.code or ""
+        from udf.core.schema import TextInline as _TI
+        lines = text.split("\n")
+        result = []
+        for line in lines:
+            p = _paragraph_to_xml(
+                ParagraphBlock(type="paragraph", id=block.id,
+                               inlines=[_TI(text=line, font_name="Courier New")]),
+                doc,
+            )
+            result.append(p)
+        return result if result else [_empty_paragraph()]
+    elif isinstance(block, HorizontalRuleBlock):
+        return [_empty_paragraph()]
     elif isinstance(block, TextBoxBlock):
         elements: list[etree._Element] = []
         for child in block.content:
@@ -720,7 +943,13 @@ def _block_to_elements(block: Block, doc: UdfDocument) -> list[etree._Element]:
     elif isinstance(block, (HeaderBlock, FooterBlock)):
         return []
     elif isinstance(block, DrawingBlock):
-        return []
+        elements = []
+        for child in block.content:
+            elements.extend(_block_to_elements(child, doc))
+        for child_draw in getattr(block, "children", []):
+            for cc in child_draw.content:
+                elements.extend(_block_to_elements(cc, doc))
+        return elements if elements else [_empty_paragraph()]
     elif isinstance(block, FieldBlock):
         if block.inlines:
             p = _paragraph_to_xml(
@@ -909,9 +1138,13 @@ def _paragraph_to_xml(
             para_pr_id = str(vb.decoded.get("paraPrIDRef", 0))
             style_id = str(vb.decoded.get("styleIDRef", 0))
 
+    dyn_pp_id = _get_para_pr_id(block)
+    if dyn_pp_id and para_pr_id == "0":
+        para_pr_id = dyn_pp_id
     p.set("paraPrIDRef", para_pr_id)
     p.set("styleIDRef", style_id)
-    p.set("pageBreak", "0")
+    pb = "1" if getattr(getattr(block, "format", None), "page_break_before", False) else "0"
+    p.set("pageBreak", pb)
     p.set("columnBreak", "0")
     p.set("merged", "0")
 
@@ -935,6 +1168,9 @@ def _add_linesegarray(p: etree._Element) -> None:
     ls.set("flags", "393216")
 
 
+_HWPX_HEADING_STYLE = [2, 3, 4, 5, 6, 7]
+
+
 def _heading_to_xml(
     block: HeadingBlock, doc: UdfDocument
 ) -> etree._Element:
@@ -953,6 +1189,10 @@ def _heading_to_xml(
         if vb.decoded:
             para_pr_id = str(vb.decoded.get("paraPrIDRef", 0))
             style_id = str(vb.decoded.get("styleIDRef", 0))
+    else:
+        level = max(1, min(block.level, 6))
+        style_id = str(_HWPX_HEADING_STYLE[level - 1])
+        para_pr_id = str(level + 1)
 
     p.set("paraPrIDRef", para_pr_id)
     p.set("styleIDRef", style_id)
@@ -960,10 +1200,25 @@ def _heading_to_xml(
     p.set("columnBreak", "0")
     p.set("merged", "0")
 
-    # 헤딩은 inlines가 있으면 인라인 사용, 없으면 text 사용
+    _HWPX_HEADING_SIZE = {1: 24.0, 2: 18.0, 3: 14.0, 4: 12.0, 5: 11.0, 6: 10.0}
+    level = max(1, min(block.level, 6))
+    heading_size = _HWPX_HEADING_SIZE[level]
+
     inlines = block.inlines
     if not inlines and block.text:
-        inlines = [TextInline(text=block.text)]
+        inlines = [TextInline(text=block.text, bold=True, font_size=heading_size)]
+    elif inlines:
+        sized = []
+        for il in inlines:
+            if isinstance(il, TextInline) and not il.font_size:
+                sized.append(TextInline(
+                    text=il.text, bold=il.bold if il.bold is not None else True,
+                    italic=il.italic, underline=il.underline,
+                    color=il.color, font_size=heading_size, font_name=il.font_name,
+                ))
+            else:
+                sized.append(il)
+        inlines = sized
 
     _append_inlines_as_runs(p, inlines, doc)
     _add_linesegarray(p)
@@ -1004,9 +1259,9 @@ def _table_to_xml(block: TableBlock, doc: UdfDocument) -> etree._Element:
     width_hu = 51008
     height_hu = 0
     if block.position and block.position.width:
-        width_hu = int(block.position.width * _HWPUNIT_PER_PT)
+        width_hu = round(block.position.width * _HWPUNIT_PER_PT)
     if block.position and block.position.height:
-        height_hu = int(block.position.height * _HWPUNIT_PER_PT)
+        height_hu = round(block.position.height * _HWPUNIT_PER_PT)
 
     sz = etree.SubElement(tbl, f"{_HP}sz")
     sz.set("width", str(width_hu))
@@ -1024,18 +1279,23 @@ def _table_to_xml(block: TableBlock, doc: UdfDocument) -> etree._Element:
     pos.set("flowWithText", "1")
     pos.set("allowOverlap", "0")
     pos.set("holdAnchorAndSO", "0")
-    pos.set("vertRelTo", "PARA")
-    pos.set("horzRelTo", "PARA")
-    pos.set("vertAlign", "TOP")
-    pos.set("horzAlign", "LEFT")
-    pos.set("vertOffset", "0")
-    pos.set("horzOffset", "0")
+    _VRELTO_HWPX = {"paper": "PAPER", "page": "PAGE", "paragraph": "PARA"}
+    _HRELTO_HWPX = {"paper": "PAPER", "page": "PAGE", "column": "COLUMN", "paragraph": "PARA"}
+    _VALIGN_HWPX = {"top": "TOP", "middle": "CENTER", "bottom": "BOTTOM"}
+    _HALIGN_HWPX = {"left": "LEFT", "center": "CENTER", "right": "RIGHT", "inside": "INSIDE", "outside": "OUTSIDE"}
+    bp = block.position
+    pos.set("vertRelTo", _VRELTO_HWPX.get(bp.vrelto, "PARA") if bp and bp.vrelto else "PARA")
+    pos.set("horzRelTo", _HRELTO_HWPX.get(bp.hrelto, "PARA") if bp and bp.hrelto else "PARA")
+    pos.set("vertAlign", _VALIGN_HWPX.get(bp.valign, "TOP") if bp and bp.valign else "TOP")
+    pos.set("horzAlign", _HALIGN_HWPX.get(bp.halign, "LEFT") if bp and bp.halign else "LEFT")
+    pos.set("vertOffset", str(round(bp.y * 100)) if bp and bp.y else "0")
+    pos.set("horzOffset", str(round(bp.x * 100)) if bp and bp.x else "0")
 
     out_margin = etree.SubElement(tbl, f"{_HP}outMargin")
-    out_margin.set("left", "0")
-    out_margin.set("right", "0")
-    out_margin.set("top", "0")
-    out_margin.set("bottom", "0")
+    out_margin.set("left", str(round((bp.margin_left or 0) * 100)) if bp else "0")
+    out_margin.set("right", str(round((bp.margin_right or 0) * 100)) if bp else "0")
+    out_margin.set("top", str(round((bp.margin_top or 0) * 100)) if bp else "0")
+    out_margin.set("bottom", str(round((bp.margin_bottom or 0) * 100)) if bp else "0")
 
     in_margin = etree.SubElement(tbl, f"{_HP}inMargin")
     in_margin.set("left", "510")
@@ -1072,7 +1332,7 @@ def _table_cell_to_xml(
     tc.set("protect", "0")
     tc.set("editable", "0")
     tc.set("dirty", "0")
-    tc.set("borderFillIDRef", "1")
+    tc.set("borderFillIDRef", _get_cell_bf_id(cell.format))
 
     va = "TOP"
     if cell.format and cell.format.vertical_align:
@@ -1107,8 +1367,8 @@ def _table_cell_to_xml(
     span.set("colSpan", str(cell.col_span))
     span.set("rowSpan", str(cell.row_span))
 
-    w_hu = int(cell.width * _HWPUNIT_PER_PT) if cell.width else 5000
-    h_hu = int(cell.height * _HWPUNIT_PER_PT) if cell.height else 3000
+    w_hu = round(cell.width * _HWPUNIT_PER_PT) if cell.width else 5000
+    h_hu = round(cell.height * _HWPUNIT_PER_PT) if cell.height else 3000
     sz = etree.SubElement(tc, f"{_HP}cellSz")
     sz.set("width", str(w_hu))
     sz.set("height", str(h_hu))
@@ -1243,10 +1503,18 @@ def _append_inlines_as_runs(
                 t.text = text
 
         elif isinstance(inline, LinkInline):
+            url = inline.url or ""
+            if url:
+                fb = etree.SubElement(p, f"{_HP}ctrl")
+                fb.set("ctrlId", "hlk%")
+                fb.set("type", "HYPERLINK")
+                fb.set("url", url)
             run = etree.SubElement(p, f"{_HP}run")
             run.set("charPrIDRef", "0")
             t = etree.SubElement(run, f"{_HP}t")
             t.text = inline.text
+            if url:
+                etree.SubElement(p, f"{_HP}ctrl").set("ctrlId", "hlk%end")
 
         elif isinstance(inline, ImageInline):
             run = etree.SubElement(p, f"{_HP}run")
@@ -1274,9 +1542,27 @@ def _append_inlines_as_runs(
             fn = etree.SubElement(run, f"{_HP}footNote")
             if inline.number is not None:
                 fn.set("number", str(inline.number))
-            # 각주 본문은 FootnoteBlock에서 별도 처리
             sub_list = etree.SubElement(fn, f"{_HP}subList")
             sub_list.append(_empty_paragraph())
+        elif hasattr(inline, "type"):
+            if inline.type == "endnote_ref":
+                run = etree.SubElement(p, f"{_HP}run")
+                run.set("charPrIDRef", "0")
+                en = etree.SubElement(run, f"{_HP}endNote")
+                if hasattr(inline, "number") and inline.number is not None:
+                    en.set("number", str(inline.number))
+                sub_list = etree.SubElement(en, f"{_HP}subList")
+                sub_list.append(_empty_paragraph())
+            elif inline.type == "code" and hasattr(inline, "text"):
+                run = etree.SubElement(p, f"{_HP}run")
+                run.set("charPrIDRef", "0")
+                t = etree.SubElement(run, f"{_HP}t")
+                t.text = inline.text
+            elif inline.type == "ruby" and hasattr(inline, "text"):
+                run = etree.SubElement(p, f"{_HP}run")
+                run.set("charPrIDRef", "0")
+                t = etree.SubElement(run, f"{_HP}t")
+                t.text = inline.text
 
 
 def _empty_paragraph() -> etree._Element:
@@ -1308,10 +1594,10 @@ def _pt_to_hwpunit(val: Any) -> int:
         return 0
     # float/int — pt 단위로 간주
     if isinstance(val, (int, float)):
-        return int(val * _HWPUNIT_PER_PT)
+        return round(val * _HWPUNIT_PER_PT)
     # Ratio 객체 (line_spacing 등)
     if hasattr(val, "percent"):
-        return int(val.percent)
+        return round(val.percent)
     # 문자열
     if isinstance(val, str):
         if not val:
@@ -1319,16 +1605,16 @@ def _pt_to_hwpunit(val: Any) -> int:
         v = val.strip()
         if v.endswith("pt"):
             try:
-                return int(float(v[:-2]) * _HWPUNIT_PER_PT)
+                return round(float(v[:-2]) * _HWPUNIT_PER_PT)
             except ValueError:
                 return 0
         if v.endswith("mm"):
             try:
-                return int(float(v[:-2]) * 283.46)
+                return round(float(v[:-2]) * 283.46)
             except ValueError:
                 return 0
         try:
-            return int(float(v))
+            return round(float(v))
         except ValueError:
             return 0
     return 0

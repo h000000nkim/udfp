@@ -138,8 +138,15 @@ def parse_hwp(path: str) -> UdfDocument:
         ))
 
     dp = info.doc_properties
+    language: str | None = None
+    if info.face_names:
+        for fn in info.face_names:
+            if fn:
+                language = "ko"
+                break
     metadata = DocumentMetadata(
         sections=sections,
+        language=language,
         start_page_number=dp.get("start_page"),
         start_footnote_number=dp.get("start_footnote"),
         start_endnote_number=dp.get("start_endnote"),

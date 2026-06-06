@@ -13,9 +13,11 @@ from typing import Any
 
 from udf.core.schema import (
     Block,
+    BookmarkBlock,
     ChartBlock,
     CodeBlock,
     DrawingBlock,
+    EndnoteBlock,
     EquationBlock,
     EquationInline,
     FieldBlock,
@@ -29,7 +31,9 @@ from udf.core.schema import (
     ImageInline,
     LinkInline,
     ListBlock,
+    PageBreakBlock,
     ParagraphBlock,
+    QuoteBlock,
     TableBlock,
     TableCell,
     TableRow,
@@ -1656,8 +1660,17 @@ def _render_block_md(block: Block, ctx: _MdCtx) -> str | None:
             return id_comment + "" if id_comment else None
         fmt = getattr(block, "format", None)
         bg = getattr(fmt, "background_color", None) if fmt else None
+        style_parts: list[str] = []
         if bg and str(bg).lower() not in ("#ffffff", "white", ""):
-            return id_comment + f'<p style="background:{bg};padding:4px">{inline_text}</p>'
+            style_parts.append(f"background:{bg};padding:4px")
+        if fmt:
+            if fmt.indent_left and fmt.indent_left > 0.5:
+                style_parts.append(f"margin-left:{fmt.indent_left}pt")
+            if fmt.indent_first and abs(fmt.indent_first) > 0.5:
+                style_parts.append(f"text-indent:{fmt.indent_first}pt")
+        if style_parts:
+            ss = ";".join(style_parts)
+            return id_comment + f'<p style="{ss}">{inline_text}</p>'
         return id_comment + _escape_line_start(inline_text)
     if isinstance(block, HeadingBlock):
         prefix = "#" * max(1, min(6, block.level))
@@ -1742,6 +1755,20 @@ def _render_block_md(block: Block, ctx: _MdCtx) -> str | None:
             ss = ";".join(div_styles)
             return id_comment + f'<div style="{ss}">\n\n{inner}\n\n</div>'
         return id_comment + inner
+    if isinstance(block, QuoteBlock) and block.content:
+        inner = "\n".join(
+            "> " + (p or "") for p in (_render_block_md(b, ctx) for b in block.content) if p
+        )
+        return id_comment + inner if inner else None
+    if isinstance(block, EndnoteBlock) and block.content:
+        inner = "\n".join(
+            p for p in (_render_block_md(b, ctx) or "" for b in block.content) if p
+        )
+        return id_comment + f"[^{getattr(block, 'ref', 'end')}]: {inner}"
+    if isinstance(block, PageBreakBlock):
+        return id_comment + '<div style="page-break-before:always"></div>'
+    if isinstance(block, BookmarkBlock):
+        return id_comment + f'<a id="{block.name or block.id}"></a>'
     if isinstance(block, (DrawingBlock, TextBoxBlock, ChartBlock, TextArtBlock)):
         return id_comment + f"<!-- unsupported: {block.type} -->"
     if isinstance(block, FieldBlock):
@@ -1837,8 +1864,9 @@ def _render_cell_content_md(cell: TableCell, ctx: _MdCtx) -> str:
 def _render_list_md(block: ListBlock, ctx: _MdCtx) -> str:
     """Render a ListBlock to Markdown list syntax."""
     lines: list[str] = []
+    start_num = getattr(block, "start", 1) or 1
     for idx, item in enumerate(block.items):
-        prefix = f"{idx + 1}." if block.ordered else "-"
+        prefix = f"{start_num + idx}." if block.ordered else "-"
         text = _render_inlines_md(item.inlines, ctx)
         if ctx.embed_ids:
             lines.append(f"<!-- item: {item.id} -->\n{prefix} {text}")
@@ -1893,6 +1921,10 @@ def _render_inlines_md(inlines: list[Any], ctx: _MdCtx | None = None) -> str:
                     text = f"<del>{text}</del>"
                 if il.underline:
                     text = f"<u>{text}</u>"
+                if il.superscript:
+                    text = f"<sup>{text}</sup>"
+                if il.subscript:
+                    text = f"<sub>{text}</sub>"
                 ss = ";".join(span_styles)
                 parts.append(f'<span style="{ss}">{text}</span>')
             else:
@@ -1911,6 +1943,10 @@ def _render_inlines_md(inlines: list[Any], ctx: _MdCtx | None = None) -> str:
                     inner = f"~~{inner}~~"
                 if il.underline:
                     inner = f"<u>{inner}</u>"
+                if il.superscript:
+                    inner = f"<sup>{inner}</sup>"
+                if il.subscript:
+                    inner = f"<sub>{inner}</sub>"
                 parts.append(lead + inner + trail)
         elif isinstance(il, LinkInline):
             parts.append(f"[{_escape_md(il.text)}]({il.url})")
@@ -1925,6 +1961,14 @@ def _render_inlines_md(inlines: list[Any], ctx: _MdCtx | None = None) -> str:
         elif isinstance(il, FootnoteRefInline):
             if il.ref_id:
                 parts.append(f"[^{il.ref_id}]")
+        elif hasattr(il, "type"):
+            if il.type == "endnote_ref" and hasattr(il, "ref_id"):
+                parts.append(f"[^{il.ref_id}]")
+            elif il.type == "ruby" and hasattr(il, "text"):
+                ruby_text = getattr(il, "ruby_text", "")
+                parts.append(f"<ruby>{_escape_html(il.text)}<rp>(</rp><rt>{_escape_html(ruby_text)}</rt><rp>)</rp></ruby>")
+            elif il.type == "code" and hasattr(il, "text"):
+                parts.append(f"`{il.text}`")
     return "".join(parts)
 
 

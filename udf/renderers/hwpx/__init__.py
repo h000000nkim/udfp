@@ -56,6 +56,7 @@ def render_hwpx(
     output_path: str,
     *,
     seed_path: str | None = None,
+    validate: bool = True,
 ) -> None:
     """Render a UdfDocument to an HWPX (OWPML) ZIP package.
 
@@ -103,6 +104,18 @@ def render_hwpx(
     doc.loss_report = collect_render_losses(
         doc, "hwpx", is_from_scratch=is_from_scratch,
     )
+
+    if validate:
+        from udf.validation.hwpx.rules import validate_hwpx as _validate_hwpx
+
+        report = _validate_hwpx(output_path)
+        doc._validation_report = report
+        if not report.is_passing():
+            import warnings
+            violations = ", ".join(
+                f"{v.rule_id}:{v.message}" for v in report.all_violations
+            )
+            warnings.warn(f"HWPX HX-규칙 위반: {violations}", stacklevel=2)
 
 generate_hwpx = render_hwpx
 

@@ -317,3 +317,49 @@ class TestR4DetectsOobCharShape:
         violations = check_r4(doc)
         assert len(violations) > 0
         assert violations[0].rule_id == "R4"
+
+
+class TestR2DetectsCorruption:
+    """Verify R2 detects csCount/PCS length mismatch when data is corrupted.
+
+    PH offset 12의 csCount를 변조하여 R2가 탐지하는지 확인.
+    """
+
+    def test_wrong_cscount_detected(self) -> None:
+        import base64
+        import copy
+        import struct
+
+        doc = parse_hwp(_fixture("f02_char_format.hwp"))
+        doc = copy.deepcopy(doc)
+        for vb in doc.verbatim.blocks.values():
+            if vb.raw_tag_id == 66 and vb.decoded and vb.decoded.get("pcs_bytes"):
+                ph = bytearray(base64.b64decode(vb.raw_bytes))
+                if len(ph) >= 14:
+                    struct.pack_into("<H", ph, 12, 9999)
+                    vb.raw_bytes = base64.b64encode(bytes(ph)).decode()
+                    break
+        violations = check_r2(doc)
+        assert len(violations) > 0, "R2 should detect csCount mismatch"
+        assert violations[0].rule_id == "R2"
+        assert "csCount" in violations[0].message
+
+
+class TestR3DetectsCorruption:
+    """Verify R3 detects missing PLS for paragraphs with text.
+
+    텍스트가 있는 단락에서 pls_bytes를 제거하여 R3가 탐지하는지 확인.
+    """
+
+    def test_missing_pls_detected(self) -> None:
+        import copy
+
+        doc = parse_hwp(_fixture("f01_plain_text.hwp"))
+        doc = copy.deepcopy(doc)
+        for vb in doc.verbatim.blocks.values():
+            if vb.raw_tag_id == 66 and vb.decoded and vb.decoded.get("pls_bytes"):
+                vb.decoded["pls_bytes"] = None
+                break
+        violations = check_r3(doc)
+        assert len(violations) > 0, "R3 should detect missing PLS"
+        assert violations[0].rule_id == "R3"

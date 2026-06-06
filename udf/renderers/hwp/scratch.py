@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import struct
+import olefile
 import zlib
 from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
@@ -137,7 +138,7 @@ def _parashape_key(spec: ParaShapeSpec) -> tuple:
         spec.alignment, spec.line_spacing, spec.indent_left,
         spec.indent_right, spec.space_before, spec.space_after,
         spec.indent_first,
-        spec.line_spacing_type, spec.keep_with_next,
+        spec.line_spacing_type,
         spec.widow_orphan, spec.page_break_before,
     )
 
@@ -201,11 +202,11 @@ def _parashape_from_block(block: ParagraphBlock | HeadingBlock, default_ls: int 
     if ls is None:
         ls_val = default_ls
     elif hasattr(ls, "percent"):
-        ls_val = int(ls.percent)
+        ls_val = round(ls.percent)
     elif isinstance(ls, (int, float)):
         ls_val = float(ls)
     elif isinstance(ls, str) and ls.endswith("%"):
-        ls_val = int(ls.rstrip("%"))
+        ls_val = round(float(ls.rstrip("%")))
     else:
         ls_val = default_ls
 
@@ -226,14 +227,14 @@ def _parashape_from_block(block: ParagraphBlock | HeadingBlock, default_ls: int 
         space_after=pt_to_hwpunit(fmt.space_after) if fmt.space_after else 0,
         indent_first=pt_to_hwpunit(fmt.indent_first) if fmt.indent_first else 0,
         line_spacing_type=ls_type,
-        keep_with_next=fmt.keep_with_next or False,
         widow_orphan=fmt.widow_orphan or False,
         page_break_before=fmt.page_break_before or False,
+        text_direction=fmt.text_direction or "horizontal",
     )
 
 
 def _iter_all_text_blocks(blocks: list[Block]) -> Iterator[ParagraphBlock | HeadingBlock]:
-    """Yield all ParagraphBlock/HeadingBlock recursively (including table cells)."""
+    """Yield all ParagraphBlock/HeadingBlock recursively (including table cells and textboxes)."""
     for block in blocks:
         if isinstance(block, (ParagraphBlock, HeadingBlock)):
             yield block
@@ -241,6 +242,10 @@ def _iter_all_text_blocks(blocks: list[Block]) -> Iterator[ParagraphBlock | Head
             for row in block.rows:
                 for cell in row.cells:
                     yield from _iter_all_text_blocks(cell.content)
+        elif isinstance(block, TextBoxBlock):
+            yield from _iter_all_text_blocks(block.content)
+        elif isinstance(block, DrawingBlock):
+            yield from _iter_all_text_blocks(block.content)
 
 
 def collect_shapes(
@@ -451,18 +456,18 @@ def _parse_hu(val: Any | None, default: int) -> int:
     if val is None:
         return default
     if isinstance(val, (int, float)):
-        return int(val * 100)  # pt → HWPUNIT
+        return round(val * 100)  # pt → HWPUNIT
     if not isinstance(val, str) or not val.strip():
         return default
     v = val.strip()
     try:
         if v.endswith("mm"):
-            return int(float(v[:-2]) * 283.46)  # 1mm ≈ 283.46 HWPUNIT
+            return round(float(v[:-2]) * 283.46)  # 1mm ≈ 283.46 HWPUNIT
         if v.endswith("cm"):
-            return int(float(v[:-2]) * 2834.6)
+            return round(float(v[:-2]) * 2834.6)
         if v.endswith("pt"):
-            return int(float(v[:-2]) * 100)  # 1pt = 100 HWPUNIT
-        return int(float(v))
+            return round(float(v[:-2]) * 100)  # 1pt = 100 HWPUNIT
+        return round(float(v))
     except ValueError:
         return default
 
@@ -681,10 +686,11 @@ class _BuildCtx:
     ordered_list_ps_id: int = 0
     doc: UdfDocument | None = None
     unordered_list_ps_id: int = 0
+    has_page_bg_image: bool = False
 
 
 def _extract_text_from_blocks(blocks: list[Block], cs_map: dict[tuple, int]) -> list[TextSpan]:
-    """블록 리스트에서 텍스트를 추출하여 TextSpan 리스트로 반환."""
+    """블록 리스트에서 텍스트를 추출하여 TextSpan 리스트로 반환 (중첩 테이블/텍스트박스 포함)."""
     spans: list[TextSpan] = []
     for block in blocks:
         if isinstance(block, ParagraphBlock):
@@ -693,6 +699,17 @@ def _extract_text_from_blocks(blocks: list[Block], cs_map: dict[tuple, int]) -> 
                 spans.extend(s)
         elif isinstance(block, HeadingBlock):
             spans.append(TextSpan(block.text, 0))
+        elif isinstance(block, TableBlock):
+            for row in block.rows:
+                for cell in row.cells:
+                    cell_spans = _extract_text_from_blocks(cell.content, cs_map)
+                    if cell_spans and cell_spans != [TextSpan("", 0)]:
+                        spans.extend(cell_spans)
+                        spans.append(TextSpan("\n", 0))
+        elif isinstance(block, TextBoxBlock):
+            tb_spans = _extract_text_from_blocks(block.content, cs_map)
+            if tb_spans and tb_spans != [TextSpan("", 0)]:
+                spans.extend(tb_spans)
         elif hasattr(block, "text_content"):
             text = block.text_content()
             if text:
@@ -747,6 +764,27 @@ def _build_heading(block: HeadingBlock, vpos: int, ctx: _BuildCtx, is_last: bool
     )
 
 
+def _get_original_pls(block: ParagraphBlock, ctx: _BuildCtx) -> bytes | None:
+    """Retrieve original PLS bytes from verbatim if available."""
+    import base64
+    if not ctx.doc or not getattr(ctx.doc, 'verbatim', None):
+        return None
+    vref = getattr(block, 'verbatim_ref', None)
+    if not vref:
+        return None
+    vl = ctx.doc.verbatim
+    vb = vl.blocks.get(vref) if hasattr(vl, 'blocks') else None
+    if not vb or not vb.decoded:
+        return None
+    pls_b64 = vb.decoded.get('pls_bytes')
+    if not pls_b64:
+        return None
+    try:
+        return base64.b64decode(pls_b64)
+    except Exception:
+        return None
+
+
 def _build_para(block: ParagraphBlock, vpos: int, ctx: _BuildCtx, is_last: bool) -> BuildResult:
     """Build records for a ParagraphBlock."""
     ps = _parashape_from_block(block, default_ls=ctx.line_spacing_pct)
@@ -757,18 +795,20 @@ def _build_para(block: ParagraphBlock, vpos: int, ctx: _BuildCtx, is_last: bool)
     fmt = getattr(block, "format", None)
     if fmt and fmt.line_spacing is not None:
         if hasattr(fmt.line_spacing, "percent"):
-            ls_pct = int(fmt.line_spacing.percent)
+            ls_pct = round(fmt.line_spacing.percent)
         elif isinstance(fmt.line_spacing, (int, float)):
             ls_type = getattr(fmt, "line_spacing_type", None)
             if ls_type in ("fixed", "leading_only", "minimum"):
                 font_pt = ctx.font_size_hu / 100
-                ls_pct = max(100, int(fmt.line_spacing / font_pt * 100)) if font_pt > 0 else 100
+                ls_pct = max(100, round(fmt.line_spacing / font_pt * 100)) if font_pt > 0 else 100
             else:
                 ls_pct = int(fmt.line_spacing)
+    orig_pls = _get_original_pls(block, ctx)
     return build_paragraph(
         spans, ps_id=ps_id, style_id=_STYLE_NORMAL, vpos=vpos,
         content_width=ctx.content_width, font_size_hu=ctx.font_size_hu,
         line_spacing_pct=ls_pct, is_last=is_last,
+        original_pls=orig_pls,
     )
 
 
@@ -782,17 +822,34 @@ def _compute_logical_cols(rows: list) -> int:
 
 
 def _compute_col_widths_merged(rows: list, n_cols: int) -> list[int] | None:
-    """Derive per-column widths from cells with col_span=1."""
+    """Derive per-column widths from cell widths, handling col_span>1."""
     widths: list[int | None] = [None] * n_cols
+    # Pass 1: span=1 cells give exact widths
     for row in rows:
         logical_ci = 0
         for cell in row.cells:
             cs = getattr(cell, "col_span", 1) or 1
             w = getattr(cell, "width", None)
             if cs == 1 and w and w > 0 and logical_ci < n_cols:
-                w_hu = int(w * 100)
-                if widths[logical_ci] is None or w_hu > 0:
-                    widths[logical_ci] = w_hu
+                widths[logical_ci] = round(w * 100)
+            logical_ci += cs
+    if all(w is not None and w > 0 for w in widths):
+        return [w for w in widths]  # type: ignore[misc]
+    # Pass 2: span>1 cells — distribute evenly to unfilled columns
+    for row in rows:
+        logical_ci = 0
+        for cell in row.cells:
+            cs = getattr(cell, "col_span", 1) or 1
+            w = getattr(cell, "width", None)
+            if cs > 1 and w and w > 0 and logical_ci + cs <= n_cols:
+                w_hu = round(w * 100)
+                unfilled = [c for c in range(logical_ci, logical_ci + cs) if widths[c] is None]
+                filled_sum = sum(widths[c] for c in range(logical_ci, logical_ci + cs) if widths[c] is not None)
+                remaining = w_hu - filled_sum
+                if unfilled and remaining > 0:
+                    per = remaining // len(unfilled)
+                    for c in unfilled:
+                        widths[c] = per
             logical_ci += cs
     if all(w is not None and w > 0 for w in widths):
         return [w for w in widths]  # type: ignore[misc]
@@ -806,6 +863,7 @@ def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: b
     cell_ps_ids: list[list[int]] = []
     cell_merges: list[list[tuple[int, int]]] = []
     cell_images: list[list[list[CellImageInfo]]] = []
+    cell_valigns: list[list[str]] = []
     has_merges = False
     has_cell_images = False
     for row in block.rows:
@@ -824,8 +882,8 @@ def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: b
                 if isinstance(cb, ImageBlock) and cb.src:
                     ext = _guess_ext_with_verbatim(cb.src, ctx.doc)
                     if ext:
-                        img_w = int((cb.width or 200) * 100)
-                        img_h = int((cb.height or 150) * 100)
+                        img_w = round((cb.width or 200) * 100)
+                        img_h = round((cb.height or 150) * 100)
                         bin_item_id = ctx.seed_bindata_count + len(ctx.images) + 1
                         ctx.images.append(_ImageRef(
                             bin_item_id=bin_item_id,
@@ -851,8 +909,8 @@ def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: b
                         if isinstance(il, ImageInline) and il.src:
                             ext = _guess_ext_with_verbatim(il.src, ctx.doc)
                             if ext:
-                                img_w = int((il.width or 200) * 100)
-                                img_h = int((il.height or 150) * 100)
+                                img_w = round((il.width or 200) * 100)
+                                img_h = round((il.height or 150) * 100)
                                 bin_item_id = ctx.seed_bindata_count + len(ctx.images) + 1
                                 ctx.images.append(_ImageRef(
                                     bin_item_id=bin_item_id,
@@ -871,9 +929,26 @@ def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: b
 
             cell_fmt = getattr(cell, "format", None)
             bg_color = getattr(cell_fmt, "background_color", None) if cell_fmt else None
+            # Detect per-side border styles
+            cell_bt = (1, 1, 1, 1)  # (left, right, top, bottom) default solid
+            if cell_fmt:
+                _sides = []
+                for _side in ("left", "right", "top", "bottom"):
+                    _bval = getattr(cell_fmt, f"border_{_side}", None)
+                    if _bval:
+                        _parts = _bval.split()
+                        _sides.append(_BORDER_STYLE_TO_TYPE.get(_parts[1], 1) if len(_parts) >= 2 else 1)
+                    else:
+                        _sides.append(0)  # no border
+                cell_bt = tuple(_sides) if _sides != [1,1,1,1] else (1,1,1,1)
             if bg_color:
                 r, g, b = _parse_color(bg_color)
-                bf_key = (r, g, b)
+                bf_key = (r, g, b) + cell_bt
+                if bf_key not in ctx.bf_map:
+                    ctx.bf_map[bf_key] = ctx.table_bf_base_id + len(ctx.bf_map) + 1
+                row_bfs.append(ctx.bf_map[bf_key])
+            elif cell_bt != (1, 1, 1, 1):
+                bf_key = (0, 0, 0) + cell_bt
                 if bf_key not in ctx.bf_map:
                     ctx.bf_map[bf_key] = ctx.table_bf_base_id + len(ctx.bf_map) + 1
                 row_bfs.append(ctx.bf_map[bf_key])
@@ -891,11 +966,17 @@ def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: b
             row_merges.append((cs, rs))
             if cs > 1 or rs > 1:
                 has_merges = True
+        row_valigns: list[str] = []
+        for cell in row.cells:
+            cell_fmt = getattr(cell, "format", None)
+            va = getattr(cell_fmt, "vertical_align", None) if cell_fmt else None
+            row_valigns.append(va or "top")
         cell_texts.append(row_spans)
         cell_bf_ids.append(row_bfs)
         cell_ps_ids.append(row_ps)
         cell_merges.append(row_merges)
         cell_images.append(row_imgs)
+        cell_valigns.append(row_valigns)
     n_rows = len(block.rows)
     n_cols = _compute_logical_cols(block.rows) if has_merges else max((len(r.cells) for r in block.rows), default=1)
     from collections import Counter as _Ctr
@@ -905,22 +986,22 @@ def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: b
             for cb in cell.content:
                 _cf = getattr(cb, "format", None)
                 if _cf and _cf.line_spacing and hasattr(_cf.line_spacing, "percent"):
-                    _cell_ls[int(_cf.line_spacing.percent)] += 1
+                    _cell_ls[round(_cf.line_spacing.percent)] += 1
     tbl_ls = _cell_ls.most_common(1)[0][0] if _cell_ls else ctx.line_spacing_pct
     col_widths: list[int] | None = None
     if block.col_widths and len(block.col_widths) == n_cols:
-        col_widths = [int((cd.width or 0) * 100) for cd in block.col_widths]
+        col_widths = [round((cd.width or 0) * 100) for cd in block.col_widths]
         if not all(w > 0 for w in col_widths):
             col_widths = None
     if col_widths is None and block.rows:
         if has_merges:
             col_widths = _compute_col_widths_merged(block.rows, n_cols)
         else:
-            first_row_widths = [int((c.width or 0) * 100) for c in block.rows[0].cells]
+            first_row_widths = [round((c.width or 0) * 100) for c in block.rows[0].cells]
             if all(w > 0 for w in first_row_widths) and len(first_row_widths) == n_cols:
                 col_widths = first_row_widths
     if col_widths is None and n_cols > 1:
-        tbl_w = int((block.width or 0) * 100) or ctx.content_width
+        tbl_w = round((block.width or 0) * 100) or ctx.content_width
         per_col = tbl_w // n_cols
         if per_col >= 3000:
             col_widths = [per_col] * n_cols
@@ -929,16 +1010,44 @@ def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: b
         if total > ctx.content_width:
             scale = ctx.content_width / total
             col_widths = [max(1, int(w * scale)) for w in col_widths]
+    cell_w_hint: list[list[int]] = []
+    for row in block.rows:
+        row_w: list[int] = []
+        for cell in row.cells:
+            row_w.append(round((cell.width or 0) * 100))
+        cell_w_hint.append(row_w)
+
+    row_h_hint: list[int] = []
+    for row in block.rows:
+        rh = round((row.height or 0) * 100) if row.height else 0
+        if not rh:
+            max_cell_h = max((round((c.height or 0) * 100) for c in row.cells), default=0)
+            rh = max_cell_h
+        row_h_hint.append(rh)
+
     return build_table(
         n_rows, n_cols, cell_texts, ctx.content_width, vpos,
         col_widths=col_widths,
+        cell_widths_hint=cell_w_hint if any(any(w > 0 for w in r) for r in cell_w_hint) else None,
         font_size_hu=ctx.font_size_hu, line_spacing_pct=tbl_ls,
         bf_id=ctx.table_bf_base_id,
         cell_bf_ids=cell_bf_ids,
         cell_ps_ids=cell_ps_ids,
         cell_merges=cell_merges if has_merges else None,
         cell_images=cell_images if has_cell_images else None,
+        row_heights_hint=row_h_hint if any(h > 0 for h in row_h_hint) else None,
+        cell_valigns=cell_valigns if any(va != "top" for row_va in cell_valigns for va in row_va) else None,
+        tbl_cell_spacing=round((block.cell_spacing or 0) * 100),
+        tbl_padding=_tbl_padding(block),
     )
+
+
+def _tbl_padding(block) -> tuple[int, int, int, int] | None:
+    dp = block.default_padding
+    if dp is None:
+        return None
+    v = round(dp * 100)
+    return (v, v, v, v)
 
 
 def _build_equation_block(block: EquationBlock, vpos: int, ctx: _BuildCtx, _is_last: bool) -> BuildResult:
@@ -1044,24 +1153,136 @@ def _build_quote_block(block: QuoteBlock, vpos: int, ctx: _BuildCtx, is_last: bo
     return total_bytes, total_height
 
 
+
+def _sample_bg_image_color(doc: UdfDocument | None, x: float, y: float, w: float, h: float, content_width: int) -> str | None:
+    """배경 이미지에서 (x,y) 위치의 픽셀 색상을 추출. PIL 없으면 None."""
+    if not doc or not getattr(doc, 'verbatim', None):
+        return None
+    vl = doc.verbatim
+    if not vl.bindata_streams:
+        return None
+    page_w = 595.0
+    page_h = 842.0
+    meta = getattr(doc.document, 'metadata', None)
+    if meta and meta.sections:
+        page_w = meta.sections[0].page_width or page_w
+        page_h = meta.sections[0].page_height or page_h
+    try:
+        import io, base64
+        from PIL import Image
+        for bv in vl.bindata_streams.values():
+            raw = base64.b64decode(bv)
+            try:
+                img = Image.open(io.BytesIO(raw))
+                if img.size[0] > 500 and img.size[1] > 500:
+                    px = img.size[0] / page_w
+                    py = img.size[1] / page_h
+                    cx = min(int((x + w / 2) * px), img.size[0] - 1)
+                    cy = min(int((y + h / 2) * py), img.size[1] - 1)
+                    r, g, b = img.getpixel((cx, cy))[:3]
+                    return f"#{r:02x}{g:02x}{b:02x}"
+            except Exception:
+                pass
+    except ImportError:
+        pass
+    return None
+
 def _build_textbox_block(block: TextBoxBlock, vpos: int, ctx: _BuildCtx, is_last: bool) -> BuildResult:
-    """TextBoxBlock → GSO $rec textbox if visual, else flat paragraphs."""
+    """TextBoxBlock → GSO $rec if no complex children, else flat."""
+    raw_w = block.width or 200
+    tb_width = round(raw_w * 100)
+    has_complex = any(isinstance(cb, (TableBlock, TextBoxBlock, DrawingBlock)) for cb in block.content)
+    saved_cw = ctx.content_width
+    ctx.content_width = tb_width
     content_bytes = b""
     content_height = 0
     for idx, cb in enumerate(block.content):
-        is_final = is_last and idx == len(block.content) - 1
-        result = _dispatch_block(cb, vpos + content_height, ctx, is_final)
+        is_final = idx == len(block.content) - 1
+        result = _dispatch_block(cb, content_height, ctx, is_final)
         if result:
             rec, h = result
             content_bytes += rec
             content_height += h
-    if not block.content:
+    ctx.content_width = saved_cw
+    if not content_bytes:
         return build_paragraph(
             [TextSpan("", 0)], vpos=vpos,
-            content_width=ctx.content_width, font_size_hu=ctx.font_size_hu,
+            content_width=tb_width, font_size_hu=ctx.font_size_hu,
             line_spacing_pct=ctx.line_spacing_pct, is_last=is_last,
         )
-    return content_bytes, content_height
+    if has_complex:
+        pos_c = block.position
+        is_small_complex = (pos_c and pos_c.x is not None and pos_c.y is not None
+                            and block.width and block.height and (block.height or 0) < 200)
+        if is_small_complex:
+            text_spans = _extract_text_from_blocks(block.content, ctx.cs_map)
+            text_rec = b""
+            text_h = 0
+            r = build_paragraph(text_spans, vpos=0,
+                                content_width=tb_width, font_size_hu=ctx.font_size_hu,
+                                line_spacing_pct=ctx.line_spacing_pct, is_last=True)
+            text_rec = r[0]
+            text_h = r[1]
+            if text_rec:
+                fill_c = block.background_color
+                if not fill_c and block.line_color:
+                    fill_c = block.line_color
+                height_c = round((block.height or text_h / 100) * 100) or text_h
+                return build_textbox_shape(
+                    text_rec, tb_width, height_c, vpos,
+                    line_color=block.line_color, fill_color=fill_c,
+                    font_size_hu=ctx.font_size_hu, line_spacing_pct=ctx.line_spacing_pct,
+                    x_offset=round(pos_c.x * 100), y_offset=round(pos_c.y * 100), floating=True,
+                    position=pos_c,
+                )
+        if pos_c and pos_c.y is not None and block.height:
+            target_y = round(pos_c.y * 100)
+            if target_y > vpos:
+                gap = target_y - vpos
+                spacer, sh = build_paragraph(
+                    [TextSpan("", 0)], vpos=vpos,
+                    content_width=ctx.content_width,
+                    font_size_hu=gap, line_spacing_pct=100, is_last=False)
+                return spacer + content_bytes, sh + content_height
+        return content_bytes, content_height
+    width = tb_width
+    height = round((block.height or content_height / 100) * 100) or content_height
+    fill = block.background_color
+    if not fill and block.line_color:
+        fill = block.line_color
+    if not fill and ctx.has_page_bg_image:
+        has_white_text = any(
+            str(getattr(il, "color", "")) == "#ffffff"
+            for cb in block.content
+            for il in (getattr(cb, "inlines", None) or [])
+        )
+        if has_white_text:
+            sampled = _sample_bg_image_color(
+                ctx.doc, block.position.x, block.position.y,
+                block.width or 50, block.height or 14, ctx.content_width)
+            fill = sampled or "#4a2040"
+    pos = block.position
+    is_positioned = (pos is not None and pos.x is not None and pos.y is not None
+                     and block.width and block.height)
+    x_off = round(pos.x * 100) if is_positioned else 0
+    y_off = round(pos.y * 100) if is_positioned else 0
+    tb_pad = None
+    if any(getattr(block, f"padding_{s}", None) for s in ("left", "right", "top", "bottom")):
+        def _p(s): return round((getattr(block, f"padding_{s}", None) or 2.85) * 100)
+        tb_pad = (_p("left"), _p("right"), _p("top"), _p("bottom"))
+    return build_textbox_shape(
+        content_bytes, width, height, vpos,
+        line_color=block.line_color,
+        fill_color=fill,
+        x_offset=x_off,
+        y_offset=y_off,
+        floating=is_positioned,
+        font_size_hu=ctx.font_size_hu,
+        line_spacing_pct=ctx.line_spacing_pct,
+        position=pos,
+        tb_padding=tb_pad,
+        tb_vertical_align=block.vertical_align,
+    )
 
 
 def _build_drawing_block(block: DrawingBlock, vpos: int, ctx: _BuildCtx, is_last: bool) -> BuildResult:
@@ -1213,8 +1434,8 @@ def _build_image_block(block: ImageBlock, vpos: int, ctx: _BuildCtx, _is_last: b
         return None
 
     # 이미지 크기 (HWPUNIT)
-    img_w = int((block.width or 200) * 100)   # pt → HWPUNIT
-    img_h = int((block.height or 150) * 100)  # pt → HWPUNIT
+    img_w = round((block.width or 200) * 100)   # pt → HWPUNIT
+    img_h = round((block.height or 150) * 100)  # pt → HWPUNIT
     orig_w = img_w
     orig_h = img_h
     pos = block.position
@@ -1240,9 +1461,9 @@ def _build_image_block(block: ImageBlock, vpos: int, ctx: _BuildCtx, _is_last: b
     flow = None
     pos = block.position
     if pos and pos.x is not None:
-        x_off = int(pos.x * 100)
+        x_off = round(pos.x * 100)
     if pos and pos.y is not None:
-        y_off = int(pos.y * 100)
+        y_off = round(pos.y * 100)
     if pos:
         flow = pos.flow
         if not flow and pos.hrelto == "paper" and pos.vrelto == "paper":
@@ -1257,6 +1478,7 @@ def _build_image_block(block: ImageBlock, vpos: int, ctx: _BuildCtx, _is_last: b
         x_offset=x_off,
         y_offset=y_off,
         flow=flow,
+        position=pos,
     )
 
 
@@ -1362,6 +1584,51 @@ def _dispatch_block(block: Block, vpos: int, ctx: _BuildCtx, is_last: bool) -> B
     return None
 
 
+def _promote_nested_tables(blocks: list[Block]) -> list[Block]:
+    """Promote nested tables: when a table cell contains only a nested table, merge its rows."""
+    result: list[Block] = []
+    for blk in blocks:
+        if not isinstance(blk, TableBlock):
+            result.append(blk)
+            continue
+        promoted = _promote_table(blk)
+        result.append(promoted)
+    return result
+
+
+def _promote_table(table: TableBlock) -> TableBlock:
+    """Recursively promote nested tables within cells."""
+    new_rows: list[Any] = []
+    changed = False
+    for row in table.rows:
+        expanded_cells = False
+        for cell in row.cells:
+            if (len(cell.content) == 1
+                    and isinstance(cell.content[0], TableBlock)
+                    and (cell.col_span or 1) == 1
+                    and len(row.cells) == 1):
+                nested = _promote_table(cell.content[0])
+                for nr in nested.rows:
+                    new_rows.append(nr)
+                expanded_cells = True
+                changed = True
+                break
+        if not expanded_cells:
+            new_rows.append(row)
+    if not changed:
+        return table
+    return TableBlock(
+        type="table",
+        id=table.id,
+        rows=new_rows,
+        col_widths=table.col_widths,
+        width=table.width,
+        position=table.position,
+        format=table.format,
+        verbatim_ref=table.verbatim_ref,
+    )
+
+
 def _flatten_image_inlines(blocks: list[Block]) -> list[Block]:
     """Extract ImageInline from paragraphs into ImageBlocks placed right after the source paragraph."""
     counter_box: list[int] = [0]
@@ -1412,28 +1679,160 @@ def _has_tables(blocks: list[Block]) -> bool:
 
 
 def _collect_cell_bg_colors(blocks: list[Block]) -> list[tuple[int, int, int]]:
-    """문서 블록에서 테이블 셀 배경색을 수집."""
+    """문서 블록에서 테이블 셀 배경색+테두리스타일을 재귀 수집."""
     colors: list[tuple[int, int, int]] = []
     seen: set[tuple[int, int, int]] = set()
-    for b in blocks:
-        if not isinstance(b, TableBlock):
-            continue
-        for row in b.rows:
-            for cell in row.cells:
-                fmt = getattr(cell, "format", None)
-                bg = getattr(fmt, "background_color", None) if fmt else None
-                if bg:
-                    c = _parse_color(bg)
-                    if c not in seen:
-                        seen.add(c)
-                        colors.append(c)
+
+    def _cell_border_type(fmt) -> int:
+        if not fmt:
+            return 1
+        for side in ("top", "bottom", "left", "right"):
+            bval = getattr(fmt, f"border_{side}", None)
+            if bval:
+                parts = bval.split()
+                if len(parts) >= 2 and parts[1] != "solid":
+                    return _BORDER_STYLE_TO_TYPE.get(parts[1], 1)
+        return 1
+
+    def _scan(block_list: list[Block]) -> None:
+        for b in block_list:
+            if isinstance(b, TableBlock):
+                for row in b.rows:
+                    for cell in row.cells:
+                        fmt = getattr(cell, "format", None)
+                        bg = getattr(fmt, "background_color", None) if fmt else None
+                        bt = _cell_border_type(fmt)
+                        if bg:
+                            c = _parse_color(bg)
+                            key = c
+                            if key not in seen:
+                                seen.add(key)
+                                colors.append(c)
+                        elif bt != 1:
+                            # Non-solid border without bg — need separate BF
+                            key = (0, 0, 0)
+                            # Don't add duplicate (0,0,0) — handled by default BF
+                        _scan(cell.content or [])
+            elif isinstance(b, TextBoxBlock):
+                _scan(b.content or [])
+            elif isinstance(b, DrawingBlock):
+                _scan(b.content or [])
+
+    _scan(blocks)
     return colors
+
+
+_BORDER_STYLE_TO_TYPE = {"solid": 1, "dashed": 2, "dotted": 3, "dash_dot": 4, "none": 0}
+
+
+def _detect_table_border_type(blocks: list[Block]) -> int:
+    """테이블에서 가장 많이 사용된 비-solid border style의 type 코드 반환."""
+    from collections import Counter
+    styles: Counter[str] = Counter()
+    def _scan(block_list: list[Block]) -> None:
+        for b in block_list:
+            if isinstance(b, TableBlock):
+                for row in b.rows:
+                    for cell in row.cells:
+                        fmt = getattr(cell, "format", None)
+                        if not fmt:
+                            continue
+                        for side in ("top", "bottom", "left", "right"):
+                            bval = getattr(fmt, f"border_{side}", None)
+                            if bval:
+                                parts = bval.split()
+                                if len(parts) >= 2:
+                                    styles[parts[1]] += 1
+                        _scan(cell.content or [])
+    _scan(blocks)
+    if not styles:
+        return 1
+    most_common = styles.most_common(1)[0][0]
+    return _BORDER_STYLE_TO_TYPE.get(most_common, 1)
+
+
+def _patch_page_border_fill(section_bytes: bytes, bf_id: int) -> bytes:
+    """Patch first PAGE_BORDER_FILL (tag 75) borderFillId in section bytes."""
+    data = bytearray(section_bytes)
+    i = 0
+    while i < len(data) - 4:
+        hdr = struct.unpack_from('<I', data, i)[0]
+        tag = hdr & 0x3FF
+        size = (hdr >> 20) & 0xFFF
+        po = i + 4 if size < 0xFFF else i + 8
+        if tag == 75 and size >= 14:
+            struct.pack_into('<H', data, po + 12, bf_id)
+            return bytes(data)
+        next_i = po + (size if size < 0xFFF else struct.unpack_from('<I', data, i + 4)[0])
+        if next_i <= i:
+            break
+        i = next_i
+    return bytes(data)
+
+
+
+def _inject_reference_con(output_path: str, reference_hwp: str) -> None:
+    """Reference HWP의 $con 구조를 변환 결과에 주입."""
+    import zlib
+    from udf.parsers.hwp.ole import OleReader
+    from udf.parsers.hwp.records import iter_records, HWPTAG_CTRL_HEADER, HWPTAG_PARA_HEADER
+    from udf.renderers.hwp.body_builder import _pack_record
+
+    with OleReader.open(reference_hwp) as ole:
+        ref_sec = ole.read_stream(["BodyText", "Section0"])
+    ref_recs = list(iter_records(ref_sec))
+
+    ref_ctrl = next((i for i, r in enumerate(ref_recs)
+                     if r.tag_id == HWPTAG_CTRL_HEADER and len(r.payload) >= 4
+                     and r.payload[:4][::-1].decode("ascii", "replace").strip() == "gso"), None)
+    if ref_ctrl is None:
+        return
+
+    con_records = b""
+    ctrl_level = ref_recs[ref_ctrl].level
+    for j in range(ref_ctrl, len(ref_recs)):
+        if j > ref_ctrl and ref_recs[j].level <= ctrl_level:
+            break
+        con_records += _pack_record(ref_recs[j].tag_id, ref_recs[j].level, ref_recs[j].payload)
+
+    with OleReader.open(output_path) as ole:
+        conv_sec = ole.read_stream(["BodyText", "Section0"])
+    conv_recs = list(iter_records(conv_sec))
+
+    conv_ctrl = next((i for i, r in enumerate(conv_recs)
+                      if r.tag_id == HWPTAG_CTRL_HEADER and len(r.payload) >= 4
+                      and r.payload[:4][::-1].decode("ascii", "replace").strip() == "gso"), None)
+    if conv_ctrl is None:
+        return
+
+    conv_ph = next(j for j in range(conv_ctrl - 1, -1, -1) if conv_recs[j].tag_id == HWPTAG_PARA_HEADER)
+    conv_end = len(conv_recs)
+    for j in range(conv_ctrl + 1, len(conv_recs)):
+        if conv_recs[j].level <= conv_recs[conv_ph].level:
+            conv_end = j
+            break
+
+    new_sec = b""
+    for i, r in enumerate(conv_recs):
+        if i < conv_ph:
+            new_sec += _pack_record(r.tag_id, r.level, r.payload)
+        elif i == conv_ph:
+            for k in range(conv_ph, conv_ctrl):
+                new_sec += _pack_record(conv_recs[k].tag_id, conv_recs[k].level, conv_recs[k].payload)
+            new_sec += con_records
+        elif i >= conv_end:
+            new_sec += _pack_record(r.tag_id, r.level, r.payload)
+
+    comp = zlib.compressobj(9, zlib.DEFLATED, -15)
+    compressed = comp.compress(new_sec) + comp.flush()
+    patch_hwp_stream(output_path, output_path, ["BodyText", "Section0"], compressed)
 
 
 def generate_hwp_scratch(
     doc: UdfDocument,
     output_path: str,
     seed_path: str,
+    reference_hwp: str | None = None,
     char_shapes: list[CharShapeSpec] | None = None,
     para_shapes: list[ParaShapeSpec] | None = None,
 ) -> LossReport | None:
@@ -1462,6 +1861,8 @@ def generate_hwp_scratch(
     """
     # 0. ImageInline → ImageBlock 변환 (인라인 이미지를 별도 블록으로 분리)
     doc_blocks = _flatten_image_inlines(doc.blocks)
+    # 0b. 중첩 테이블 프로모션 (셀 내부의 단독 테이블을 부모 테이블에 병합)
+    doc_blocks = _promote_nested_tables(doc_blocks)
 
     # 1. OLE 컨테이너 복사
     shutil.copy2(seed_path, output_path)
@@ -1472,7 +1873,16 @@ def generate_hwp_scratch(
     seed_ps_list = read_seed_parashapes(seed_docinfo)
 
     from udf.parsers.hwp.records import HWPTAG_BIN_DATA, HWPTAG_NUMBERING as _TAG_NUM, iter_records as _iter_recs
-    seed_bindata_count = sum(1 for r in _iter_recs(seed_docinfo) if r.tag_id == HWPTAG_BIN_DATA)
+    seed_bindata_docinfo = sum(1 for r in _iter_recs(seed_docinfo) if r.tag_id == HWPTAG_BIN_DATA)
+    # OLE BinData 스트림 수도 확인 — DocInfo에 없는 orphaned 스트림과 충돌 방지
+    _seed_ole_bindata = 0
+    try:
+        _shole = olefile.OleFileIO(seed_path)
+        _seed_ole_bindata = sum(1 for s in _shole.listdir() if s[0] == "BinData")
+        _shole.close()
+    except Exception:
+        pass
+    seed_bindata_count = max(seed_bindata_docinfo, _seed_ole_bindata)
     seed_num_count = sum(1 for r in _iter_recs(seed_docinfo) if r.tag_id == _TAG_NUM)
 
     has_hwp_origin = getattr(doc, "source_format", None) == "hwp"
@@ -1503,7 +1913,7 @@ def generate_hwp_scratch(
         unordered_num_id = seed_num_count + len(numbering_payloads)
 
     # 리스트용 ParaShape (들여쓰기 + numbering_id)
-    list_indent = int(20 * 100)  # 20pt indent
+    list_indent = round(20 * 100)  # 20pt indent
     if has_ordered and ordered_num_id:
         ol_ps = ParaShapeSpec(alignment="justify", line_spacing=default_ls_pct,
                               indent_left=list_indent, numbering_id=ordered_num_id)
@@ -1523,8 +1933,23 @@ def generate_hwp_scratch(
     cs_map, new_cs_specs = _resolve_cs_ids(seed_cs_list, cs_list, raw_cs_map)
     ps_map, new_ps_specs = _resolve_ps_ids(seed_ps_list, ps_list, raw_ps_map)
 
-    # 3. 테이블 BorderFill 준비
+    # 3. 페이지 배경 이미지 감지 (flow=back + A4 크기)
+    page_bg_image: ImageBlock | None = None
+    page_bg_bin_item_id: int | None = None
+    _meta = getattr(doc, "metadata", None) if hasattr(doc, "metadata") else None
+    _sec = (_meta.sections[0] if _meta and _meta.sections else None) if _meta else None
+    _page_w = _sec.page_width if _sec and _sec.page_width else 595
+    _page_h = _sec.page_height if _sec and _sec.page_height else 842
+    for blk in doc_blocks:
+        if isinstance(blk, ImageBlock) and getattr(blk, 'position', None):
+            pos = blk.position
+            if pos.flow == 'back' and blk.width and blk.height and blk.width > _page_w * 0.7 and blk.height > _page_h * 0.7:
+                page_bg_image = blk
+                break
+
+    # 3b. 테이블 BorderFill 준비
     has_tbl = _has_tables(doc_blocks)
+    table_bt = _detect_table_border_type(doc_blocks) if has_tbl else 1
     cell_bg_colors = _collect_cell_bg_colors(doc_blocks)
     extra_bf_specs: list[BorderFillSpec] = []
     for r, g, b in cell_bg_colors:
@@ -1533,10 +1958,13 @@ def generate_hwp_scratch(
             fill_r=r, fill_g=g, fill_b=b,
         ))
 
+    # 3c. 페이지 배경 이미지 — BF는 ctx.images에 등록 후 추가
+
     # 4. DocInfo 재빌드 (새 CS/PS/BF/NUMBERING 추가)
     new_docinfo, table_bf_id, _scs, _sps, *_ = build_docinfo(
         seed_docinfo, new_cs_specs, new_ps_specs,
         need_table_bf=has_tbl,
+        table_border_type=table_bt,
         extra_border_fills=extra_bf_specs if extra_bf_specs else None,
         numbering_specs=numbering_payloads if numbering_payloads else None,
     )
@@ -1548,6 +1976,9 @@ def generate_hwp_scratch(
     bf_map: dict[tuple, int] = {}
     for i, (r, g, b) in enumerate(cell_bg_colors):
         bf_map[(r, g, b)] = table_bf_base_id + 1 + i
+
+    # 페이지 배경 BF ID (extra_bf_specs의 마지막)
+    page_bg_bf_id_val: int | None = None
 
     # DocInfo 무결성 검증 (패치 전에)
     from udf.validation.hwp.integrity import validate_hwp_integrity
@@ -1573,7 +2004,7 @@ def generate_hwp_scratch(
         - pm.get("margin_left", seed_dims["margin_left"])
         - pm.get("margin_right", seed_dims["margin_right"])
     )
-    default_font_hu = int(HWP_DEFAULTS["font_size_pt"] * 100)
+    default_font_hu = round(HWP_DEFAULTS["font_size_pt"] * 100)
     # default_ls_pct already computed above (before collect_shapes)
 
     # 리스트용 ParaShape ID 해석
@@ -1603,18 +2034,24 @@ def generate_hwp_scratch(
         ordered_list_ps_id=_ol_ps_id,
         unordered_list_ps_id=_ul_ps_id,
         doc=doc,
+        has_page_bg_image=page_bg_image is not None,
     )
 
     # 첫 텍스트 블록을 secd 단락에 병합 (GAP-1 수정: 원본은 secd+텍스트 동시 보유)
     # 단, 첫 블록이 테이블 등 비텍스트이면 빈 secd를 생성하고 순서를 보존한다.
+    # 다중 스팬(서로 다른 cs_id)이면 secd에 병합하지 않고 별도 단락으로 생성한다.
     first_block_idx = -1
     first_text = ""
     first_cs_id = 0
     first_ps_id: int | None = None
+    first_style_id: int | None = None
     first_ls_pct = default_ls_pct
     for i, block in enumerate(doc_blocks):
         if isinstance(block, ParagraphBlock):
             spans = _spans_for_paragraph(block, cs_map)
+            unique_cs = set(s.cs_id for s in spans if s.text)
+            if len(unique_cs) > 1:
+                break
             first_text = "".join(s.text for s in spans)
             first_cs_id = spans[0].cs_id if spans else 0
             ps = _parashape_from_block(block, default_ls=default_ls_pct)
@@ -1624,18 +2061,26 @@ def generate_hwp_scratch(
             first_block_idx = i
             break
         elif isinstance(block, HeadingBlock):
-            first_text = block.text
+            level = max(1, min(block.level, 6))
+            heading_size = _HEADING_SIZE_PT[level]
+            first_style_id = _STYLE_HEADING[level - 1]
             inlines = getattr(block, "inlines", None)
             if inlines:
-                spans = _spans_for_paragraph(
+                spans = _spans_for_paragraph_heading(
                     type("_P", (), {"inlines": inlines})(),  # type: ignore[arg-type]
-                    cs_map,
+                    cs_map, heading_size,
                 )
+                unique_cs = set(s.cs_id for s in spans if s.text)
+                if len(unique_cs) > 1:
+                    first_style_id = None
+                    break
                 first_cs_id = spans[0].cs_id if spans else 0
+                first_text = "".join(s.text for s in spans)
             else:
-                cs = CharShapeSpec(size_pt=HWP_DEFAULTS["font_size_pt"], bold=True)
+                cs = CharShapeSpec(size_pt=heading_size, bold=True)
                 ck = _charshape_key(cs)
                 first_cs_id = cs_map.get(ck, 0)
+                first_text = block.text
             ps = _parashape_from_block(block, default_ls=default_ls_pct)
             pk = _parashape_key(ps)
             first_ps_id = ps_map.get(pk)
@@ -1647,6 +2092,7 @@ def generate_hwp_scratch(
         first_text = ""
         first_cs_id = 0
         first_ps_id = None
+        first_style_id = None
         first_ls_pct = default_ls_pct
         first_block_idx = -1
 
@@ -1661,13 +2107,16 @@ def generate_hwp_scratch(
         seed_section, page_meta=page_meta,
         text=first_text, cs_id=first_cs_id,
         ps_id_override=first_ps_id,
+        style_id_override=first_style_id,
         dist=content_width, line_spacing_pct=first_ls_pct,
         extra_inline_ctrls=hf_inline_anchors or None,
+        page_bg_bf_id=None,
     )
 
     for block in doc_blocks:
         if isinstance(block, (HeaderBlock, FooterBlock)):
             secd_prefix += _build_hf_ctrl_records(block, ctx)
+
 
     para_records: list[bytes] = []
     current_vpos = _EFFECTIVE_PARA_HEIGHT  # secd 단락이 vpos=0 을 차지
@@ -1699,13 +2148,27 @@ def generate_hwp_scratch(
     if last_effective_block and isinstance(last_effective_block, _COMPOUND_TYPES):
         need_term = True
 
+
+    pending_page_break = False
     for i, block in enumerate(doc_blocks):
         if i == first_block_idx or i == last_block_idx:
             continue
+
+        if isinstance(block, PageBreakBlock):
+            pending_page_break = True
+
         is_last_para = (not need_term and i == last_effective_idx)
 
-        # Account for space_before in vpos before building
         blk_fmt = getattr(block, "format", None)
+        if pending_page_break and not isinstance(block, PageBreakBlock):
+            if isinstance(block, (ParagraphBlock, HeadingBlock)):
+                if blk_fmt is None:
+                    from udf.schema.formats import BlockFormat
+                    block.format = BlockFormat(page_break_before=True)
+                elif not blk_fmt.page_break_before:
+                    blk_fmt.page_break_before = True
+            pending_page_break = False
+
         if blk_fmt and blk_fmt.space_before:
             current_vpos += pt_to_hwpunit(blk_fmt.space_before)
 
@@ -1726,15 +2189,45 @@ def generate_hwp_scratch(
     else:
         section_bytes = secd_prefix + b"".join(para_records)
     section_bytes = _ensure_last_para_msb(section_bytes)
+    from udf.validation.hwp.integrity import check_i4_con_children
+    _i4 = check_i4_con_children(section_bytes)
+    if _i4:
+        import warnings
+        warnings.warn(f"I4: {'; '.join(v.message for v in _i4)}", stacklevel=2)
+
+    # 페이지 배경: ctx.images에서 bg 이미지 bin_item_id 확인
+    pg_bg_bid: int | None = None
+    if page_bg_image:
+        for img_ref in ctx.images:
+            if img_ref.src == page_bg_image.src:
+                pg_bg_bid = img_ref.bin_item_id
+                break
+    # 페이지 배경 BF ID 예측: extra_bf_specs 마지막에 추가될 것
+    if pg_bg_bid:
+        page_bg_bf_id_val = table_bf_base_id + 1 + len(cell_bg_colors)
+        section_bytes = _patch_page_border_fill(section_bytes, page_bg_bf_id_val)
 
     compressed = _compress(section_bytes)
     patch_hwp_stream(output_path, output_path, ["BodyText", "Section0"], compressed)
+    # Reference HWP $con injection
+    if reference_hwp and page_bg_image:
+        try:
+            _inject_reference_con(output_path, reference_hwp)
+        except Exception:
+            pass  # Fallback to existing rendering
 
-    # 이미지 후처리: OLE 스트림에 이미지 데이터 추가
     if ctx.images:
-        _embed_images(output_path, seed_path, ctx, new_cs_specs, new_ps_specs,
-                      has_tbl, extra_bf_specs, doc=doc,
-                      numbering_specs=numbering_payloads if numbering_payloads else None)
+        actual_bg_bf_id = _embed_images(
+            output_path, seed_path, ctx, new_cs_specs, new_ps_specs,
+            has_tbl, extra_bf_specs, doc=doc,
+            numbering_specs=numbering_payloads if numbering_payloads else None,
+            page_bg_bin_item_id=pg_bg_bid,
+        )
+        if actual_bg_bf_id:
+            raw = olefile.OleFileIO(output_path).openstream('BodyText/Section0').read()
+            sec = bytearray(zlib.decompress(raw, -15))
+            sec = bytearray(_patch_page_border_fill(bytes(sec), actual_bg_bf_id))
+            patch_hwp_stream(output_path, output_path, ["BodyText", "Section0"], _compress(bytes(sec)))
 
     if losses:
         return LossReport(
@@ -1756,7 +2249,8 @@ def _embed_images(
     extra_bf_specs: list[BorderFillSpec],
     doc: UdfDocument | None = None,
     numbering_specs: list[bytes] | None = None,
-) -> None:
+    page_bg_bin_item_id: int | None = None,
+) -> int | None:
     """이미지 BIN_DATA를 DocInfo에 추가하고 OLE 스트림에 이미지 데이터를 기록."""
     bin_specs: list[BinDataSpec] = []
     valid_images: list[tuple[_ImageRef, bytes]] = []
@@ -1779,13 +2273,60 @@ def _embed_images(
     if not valid_images:
         return
 
+    # 페이지 배경 이미지 BF 추가 (BinData가 확정된 후)
+    bf_specs = list(extra_bf_specs) if extra_bf_specs else []
+    # Add border-type BFs from bf_map (dashed/dotted cells)
+    for bf_key in sorted(ctx.bf_map.keys()):
+        if len(bf_key) == 7:  # (r, g, b, bt_l, bt_r, bt_t, bt_b)
+            r, g, b, bt_l, bt_r, bt_t, bt_b = bf_key
+            has_custom_border = (bt_l, bt_r, bt_t, bt_b) != (1, 1, 1, 1)
+            has_fill = (r, g, b) != (0, 0, 0)
+            if has_custom_border or has_fill:
+                bf_specs.append(BorderFillSpec(
+                    has_borders=True,
+                    border_type_left=bt_l, border_type_right=bt_r,
+                    border_type_top=bt_t, border_type_bottom=bt_b,
+                    has_fill=has_fill,
+                    fill_r=r, fill_g=g, fill_b=b,
+                ))
+    if page_bg_bin_item_id:
+        bf_specs.append(BorderFillSpec(
+            has_borders=False, has_image_fill=True,
+            image_fill_bin_item_id=page_bg_bin_item_id,
+            image_fill_mode=1,
+        ))
+
     # DocInfo 재빌드 (기존 CS/PS/BF + BIN_DATA 추가)
+    # seed OLE에 orphaned BinData 스트림이 있으면 dummy BIN_DATA 레코드를 먼저 추가
+    # (Hancom은 binItemId로 BIN_DATA 배열을 인덱싱하므로 인덱스가 일치해야 함)
     seed_docinfo = _read_seed_docinfo(seed_path)
+    _orphan_specs: list[BinDataSpec] = []
+    try:
+        from udf.parsers.hwp.records import iter_records as _ir, HWPTAG_BIN_DATA as _BD_TAG
+        _ole_check = olefile.OleFileIO(output_path)
+        _ole_bins = sorted(
+            s[-1] for s in _ole_check.listdir() if s[0] == "BinData"
+        )
+        _ole_check.close()
+        _n_docinfo_bd = sum(
+            1 for r in _ir(seed_docinfo) if r.tag_id == _BD_TAG
+        )
+        for _bn in _ole_bins:
+            if _n_docinfo_bd >= ctx.seed_bindata_count:
+                break
+            _ext = _bn.rsplit(".", 1)[-1] if "." in _bn else "jpg"
+            _idx = _n_docinfo_bd + 1
+            _orphan_specs.append(BinDataSpec(bin_data_id=_idx, extension=_ext))
+            _n_docinfo_bd += 1
+    except Exception:
+        pass
+    all_bin_specs = _orphan_specs + bin_specs
+
     new_docinfo, _, _, _, *_ = build_docinfo(
         seed_docinfo, new_cs_specs, new_ps_specs,
         need_table_bf=has_tbl,
-        bin_data_specs=bin_specs,
-        extra_border_fills=extra_bf_specs if extra_bf_specs else None,
+        bin_data_specs=all_bin_specs,
+        extra_border_fills=bf_specs if bf_specs else None,
         numbering_specs=numbering_specs,
     )
     from udf.validation.hwp.integrity import validate_hwp_integrity
@@ -1800,3 +2341,21 @@ def _embed_images(
     for img_ref, data in valid_images:
         stream_name = f"BIN{img_ref.bin_data_id:04X}.{img_ref.extension}"
         add_hwp_stream(output_path, ["BinData", stream_name], data)
+
+    # 이미지 fill BF가 추가된 경우 — DocInfo에서 총 BF 수를 세서 마지막 ID 반환
+    if page_bg_bin_item_id:
+        i = 0
+        bf_count = 0
+        while i < len(new_docinfo) - 4:
+            h = struct.unpack_from('<I', new_docinfo, i)[0]
+            t = h & 0x3FF
+            s = (h >> 20) & 0xFFF
+            po = i + 4 if s < 0xFFF else i + 8
+            if t == 20:  # HWPTAG_BORDER_FILL
+                bf_count += 1
+            next_i = po + (s if s < 0xFFF else struct.unpack_from('<I', new_docinfo, i + 4)[0])
+            if next_i <= i:
+                break
+            i = next_i
+        return bf_count
+    return None

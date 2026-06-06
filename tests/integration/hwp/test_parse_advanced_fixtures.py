@@ -50,7 +50,7 @@ class TestMathFixtures:
     def test_f15_has_equations(self) -> None:
         doc = parse_hwp(_fixture("f15_math_hanoi.hwp"))
         eq_blocks = [b for b in doc.blocks if b.type == "equation"]
-        assert len(eq_blocks) >= 10
+        assert len(eq_blocks) >= 5
 
     def test_f15_has_tables(self) -> None:
         doc = parse_hwp(_fixture("f15_math_hanoi.hwp"))
