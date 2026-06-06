@@ -52,6 +52,4 @@ def render(doc: UdfDocument, fmt: str, output_path: str | None = None, **kwargs:
         renderer(doc, output_path, **kwargs)
         return None
     else:
-        if output_path and fmt in ("md", "markdown"):
-            kwargs["output_path"] = output_path
         return renderer(doc, **kwargs)  # type: ignore[return-value]

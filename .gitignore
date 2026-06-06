@@ -16,9 +16,6 @@ htmlcov/
 venv/
 env/
 
-# Layout engine (unused, see BUG-246)
-udf/layout/
-
 # Rust
 target/
 Cargo.lock
@@ -27,8 +24,13 @@ Cargo.lock
 *.whl
 wheels/
 
+# 로컬 환경
 .env
 .env.local
+
+# Claude Code 로컬 설정 및 개인 메모 (개인 정보 포함)
+.claude/settings.local.json
+*.local.md
 
 # IDE
 .vscode/
@@ -37,10 +39,26 @@ wheels/
 *.swo
 .DS_Store
 
+# dev 브랜치 전용 문서 (main에서 제외)
+dev/
+
+# 작업 산출물 (배포 불포함, dev/ 아래로 이동됨)
+output/
+sandbox/
+workspace/
+scripts/
+notebooks/
+
+# UDFP 작업 산출물
 /tmp_roundtrip/
-tests/roundtrip_output/
 *.udfp.bak.json
+
+# 원본 컨테이너 백업 (사용자 문서, 저장소에 커밋 금지)
 *.original_container.bin
 
+# Screenshot pipeline
+scripts/.hancom_auth.json
+tests/fixtures/html_screenshots/
+
+# Node
 node_modules/
-site/

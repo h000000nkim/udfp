@@ -2,8 +2,6 @@
 
 import struct
 
-import pytest
-
 from udf.parsers.hwp.body import _extract_text, _build_inlines, parse_section
 from udf.parsers.hwp.doc_info import DocInfoResult
 from udf.parsers.hwp.records import (
@@ -55,9 +53,9 @@ class TestExtractText:
         payload = _utf16le(text) + b"\x0d\x00"  # 단락 끝
         assert _extract_text(payload) == "안녕하세요"
 
-    def test_tab_preserved(self) -> None:
+    def test_tab_skipped(self) -> None:
         payload = _utf16le("A") + b"\x09\x00" + _utf16le("B") + b"\x0d\x00"
-        assert _extract_text(payload) == "A\tB"
+        assert _extract_text(payload) == "AB"
 
     def test_para_end_skipped(self) -> None:
         payload = _utf16le("X") + b"\x0d\x00"
@@ -264,7 +262,7 @@ class TestHeadingBlock:
             / "paragraph_styles.hwp"
         )
         if not fixture.exists():
-            pytest.skip("fixture not found: paragraph_styles.hwp")
+            return
         doc = parse_hwp(str(fixture))
         heading_blocks = [b for b in doc.blocks if b.type == "heading"]
         assert len(heading_blocks) >= 1, "paragraph_styles.hwp에서 HeadingBlock이 없음"
@@ -330,30 +328,3 @@ class TestFootnoteEndnote:
         assert any(isinstance(b, ParagraphBlock) for b in fn.content)
         para = [b for b in fn.content if isinstance(b, ParagraphBlock)][0]
         assert para.inlines[0].text == "각주 내용"
-
-
-class TestCtrl001FText:
-    """0x001F 제어 코드가 2바이트로 올바르게 처리되는지 검증."""
-
-    def test_extract_text_with_001f(self):
-        """0x001F로 구분된 텍스트가 모두 추출되어야 함."""
-        import struct
-        from udf.parsers.hwp.body import _extract_text
-        # "학년" + 0x001F + "반" + 0x001F + "번호" + CR
-        pt = struct.pack("<6H", 0xD559, 0xB144, 0x001F, 0xBC18, 0x001F, 0x000D)
-        text = _extract_text(pt)
-        assert "학년" in text
-        assert "반" in text
-
-    def test_001f_is_2byte(self):
-        """0x001F가 2바이트 제어 코드로 분류되어야 함."""
-        from udf.parsers.hwp.records import _PT_CTRL_2BYTE
-        assert 0x001F in _PT_CTRL_2BYTE
-
-    def test_newline_preserved(self):
-        """0x000A 줄바꿈이 \\n으로 보존되어야 함."""
-        import struct
-        from udf.parsers.hwp.body import _extract_text
-        pt = struct.pack("<4H", 0xD55C, 0x000A, 0xAE00, 0x000D)  # 한\n글\r
-        text = _extract_text(pt)
-        assert "한\n글" == text

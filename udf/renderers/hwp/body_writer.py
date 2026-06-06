@@ -1,11 +1,10 @@
-"""HWP 섹션 스트림 패처 (텍스트, 수식, 테이블 속성, 이미지 삽입).
+"""HWP 섹션 스트림 패처 (텍스트, 수식, 테이블 속성).
 
 Seed Patch 모드에서 변경된 단락/수식/테이블만 교체하고 나머지 레코드는 원본 그대로 보존.
 세 종류 패치를 한 번의 파싱·재직렬화로 처리 (중간 오프셋 무효화 방지).
 
 Public functions:
   apply_section_patches     — 텍스트+수식+테이블 속성 패치를 단일 사이클로 통합 적용
-  inject_image_gso          — 기존 단락에 이미지 GSO 인라인 컨트롤 삽입
   apply_paragraph_patches   — 단락 텍스트 교체 + CharShape 오버라이드
   apply_equation_patches    — EQEDIT 수식 스크립트 교체
   apply_table_attr_patches  — 테이블 CTRL_HEADER 속성 (like_char 등) 전환
@@ -26,7 +25,6 @@ from udf.parsers.hwp.records import (
     HWPTAG_EQEDIT,
     HWPTAG_PARA_CHAR_SHAPE,
     HWPTAG_PARA_HEADER,
-    HWPTAG_PARA_LINE_SEG,
     HWPTAG_PARA_TEXT,
     HwpRecord,
     iter_records,
@@ -132,19 +130,6 @@ def _rebuild_pt_with_new_text(
     return result
 
 
-def _rebuild_eqedit_payload(old_payload: bytes, new_script: str) -> bytes:
-    """EQEDIT payload를 재조립한다. attr + script를 교체하되 trailer를 보존."""
-    attr = old_payload[:4] if len(old_payload) >= 4 else b"\x00\x00\x00\x00"
-    trailer = b""
-    if len(old_payload) >= 6:
-        old_script_len = struct.unpack_from("<H", old_payload, 4)[0]
-        script_end = 6 + old_script_len * 2
-        if script_end < len(old_payload):
-            trailer = old_payload[script_end:]
-    script_bytes = new_script.encode("utf-16-le")
-    return attr + struct.pack("<H", len(new_script)) + script_bytes + trailer
-
-
 def _serialize_record(rec: HwpRecord) -> bytes:
     """Serialize a single HWP record to bytes."""
     size = len(rec.payload)
@@ -192,112 +177,19 @@ def _common_suffix_len_seq(a: list[int], b: list[int], prefix_len: int) -> int:
     return n
 
 
-_CTRL_CHAR_LEN = 8
-
-
-def _ctrl_char_positions(pt_payload: bytes) -> list[int]:
-    """Get char-level positions of 16-byte inline ctrl objects in PT."""
-    positions: list[int] = []
-    char_pos = 0
-    byte_pos = 0
-    while byte_pos + 2 <= len(pt_payload):
-        ch = struct.unpack_from("<H", pt_payload, byte_pos)[0]
-        if ch == 0x000D:
-            break
-        if ch > 0x001F or ch in _CTRL_2BYTE:
-            byte_pos += 2
-            char_pos += 1
-        else:
-            positions.append(char_pos)
-            byte_pos += 16
-            char_pos += _CTRL_CHAR_LEN
-    return positions
-
-
 def _adjust_pcs_positions(
     old_pt: bytes, new_pt: bytes, pcs_entries: list[bytes],
 ) -> list[bytes]:
     """Adjust PCS entry positions to account for text length changes.
 
-    When inline ctrl objects are present and their count is unchanged,
-    uses them as fixed anchors to correctly handle disjoint multi-edits
-    (e.g. text changed on both sides of a ctrl). Falls back to
-    prefix/suffix matching when there are no ctrls or the ctrl count
-    changed.
+    Uses prefix/suffix matching on the full PT char stream to find
+    exactly where text was inserted or removed, then shifts PCS
+    entries accordingly.
     """
     old_total = len(old_pt) // 2
     new_total = len(new_pt) // 2
-
-    old_ctrls = _ctrl_char_positions(old_pt)
-    new_ctrls = _ctrl_char_positions(new_pt)
-
-    if old_ctrls and len(old_ctrls) == len(new_ctrls):
-        if old_ctrls == new_ctrls and old_total == new_total:
-            return pcs_entries
-        return _adjust_pcs_by_ctrls(
-            old_total, new_total, old_ctrls, new_ctrls, pcs_entries,
-        )
-
     if old_total == new_total:
         return pcs_entries
-
-    return _adjust_pcs_by_prefix_suffix(old_pt, new_pt, pcs_entries)
-
-
-def _adjust_pcs_by_ctrls(
-    old_total: int,
-    new_total: int,
-    old_ctrls: list[int],
-    new_ctrls: list[int],
-    pcs_entries: list[bytes],
-) -> list[bytes]:
-    """Remap PCS positions using ctrl segment anchors."""
-    regions: list[tuple[int, int, int, int]] = []
-    old_prev = 0
-    new_prev = 0
-    for oc, nc in zip(old_ctrls, new_ctrls):
-        regions.append((old_prev, oc, new_prev, nc))
-        old_prev = oc + _CTRL_CHAR_LEN
-        new_prev = nc + _CTRL_CHAR_LEN
-    regions.append((old_prev, old_total, new_prev, new_total))
-
-    ctrl_map = {oc: nc for oc, nc in zip(old_ctrls, new_ctrls)}
-
-    adjusted: list[bytes] = []
-    for entry in pcs_entries:
-        old_pos = struct.unpack_from("<I", entry, 0)[0]
-        cs_id = struct.unpack_from("<I", entry, 4)[0]
-
-        if old_pos in ctrl_map:
-            new_pos = ctrl_map[old_pos]
-        else:
-            for oc, nc in zip(old_ctrls, new_ctrls):
-                if oc < old_pos < oc + _CTRL_CHAR_LEN:
-                    new_pos = nc + (old_pos - oc)
-                    break
-            else:
-                new_pos = old_pos
-                for os_, oe, ns_, ne in regions:
-                    if os_ <= old_pos < oe:
-                        rlen = oe - os_
-                        if rlen == 0:
-                            new_pos = ns_
-                        else:
-                            new_pos = ns_ + (old_pos - os_) * (ne - ns_) // rlen
-                        break
-
-        if 0 <= new_pos < new_total:
-            adjusted.append(struct.pack("<II", new_pos, cs_id))
-
-    return adjusted
-
-
-def _adjust_pcs_by_prefix_suffix(
-    old_pt: bytes, new_pt: bytes, pcs_entries: list[bytes],
-) -> list[bytes]:
-    """Fallback: prefix/suffix matching for single contiguous edits."""
-    old_total = len(old_pt) // 2
-    new_total = len(new_pt) // 2
 
     old_chars = [struct.unpack_from("<H", old_pt, i * 2)[0] for i in range(old_total)]
     new_chars = [struct.unpack_from("<H", new_pt, i * 2)[0] for i in range(new_total)]
@@ -397,7 +289,6 @@ def apply_paragraph_patches(
 
         pt_idx: int | None = None
         pcs_idx: int | None = None
-        pls_idx: int | None = None
         for j in range(i + 1, len(records)):
             if records[j].level <= ph_level:
                 break
@@ -405,8 +296,6 @@ def apply_paragraph_patches(
                 pt_idx = j
             elif records[j].tag_id == HWPTAG_PARA_CHAR_SHAPE and pcs_idx is None:
                 pcs_idx = j
-            elif records[j].tag_id == HWPTAG_PARA_LINE_SEG and pls_idx is None:
-                pls_idx = j
 
         old_pt_payload = records[pt_idx].payload if pt_idx is not None else b""
         trailing_cr = _has_trailing_cr(old_pt_payload) if old_pt_payload else True
@@ -454,20 +343,6 @@ def apply_paragraph_patches(
                 cs_id = cs_override_val[0]
             new_pcs = struct.pack("<II", 0, cs_id)
             struct.pack_into("<H", ph_payload, 12, 1)
-
-        if pls_idx is not None and new_char_cnt > 0:
-            pls_data = bytearray(records[pls_idx].payload)
-            pls_changed = False
-            for entry_off in range(0, len(pls_data) - 35, 36):
-                tpos = struct.unpack_from("<I", pls_data, entry_off)[0]
-                if tpos >= new_char_cnt:
-                    struct.pack_into("<I", pls_data, entry_off, max(0, new_char_cnt - 1))
-                    pls_changed = True
-            if pls_changed:
-                records[pls_idx] = HwpRecord(
-                    HWPTAG_PARA_LINE_SEG, records[pls_idx].level,
-                    bytes(pls_data), records[pls_idx].offset,
-                )
 
         records[i] = HwpRecord(
             HWPTAG_PARA_HEADER, rec.level, bytes(ph_payload), rec.offset
@@ -559,7 +434,6 @@ def apply_section_patches(
     tbl_attr_patches: list[tuple[int, dict[str, bool]]] | None = None,
     *,
     cs_overrides: dict[int, int | dict[int, int]] | None = None,
-    pcs_remap: dict[int, bytes] | None = None,
 ) -> bytes:
     """Apply text, equation, and table attr patches in a single parse-modify-serialize cycle.
 
@@ -609,7 +483,6 @@ def apply_section_patches(
             new_text = text_map[rec.offset]
             pt_idx: int | None = None
             pcs_idx: int | None = None
-            pls_idx: int | None = None
             for j in range(i + 1, len(records)):
                 if records[j].level <= ph_level:
                     break
@@ -617,8 +490,6 @@ def apply_section_patches(
                     pt_idx = j
                 elif records[j].tag_id == HWPTAG_PARA_CHAR_SHAPE and pcs_idx is None:
                     pcs_idx = j
-                elif records[j].tag_id == HWPTAG_PARA_LINE_SEG and pls_idx is None:
-                    pls_idx = j
 
             old_pt_payload = records[pt_idx].payload if pt_idx is not None else b""
             trailing_cr = _has_trailing_cr(old_pt_payload) if old_pt_payload else True
@@ -632,15 +503,11 @@ def apply_section_patches(
             struct.pack_into("<I", ph_payload, 0, msb | (new_char_cnt & 0x3FFFFFFF))
 
             cs_override_val = (cs_overrides or {}).get(rec.offset)
-            remap_pcs = (pcs_remap or {}).get(rec.offset)
             if pcs_idx is not None:
-                if remap_pcs is not None:
-                    entries = [remap_pcs[k : k + 8] for k in range(0, len(remap_pcs) - len(remap_pcs) % 8, 8)]
-                else:
-                    pcs = records[pcs_idx].payload
-                    entries = [pcs[k : k + 8] for k in range(0, len(pcs) - len(pcs) % 8, 8)]
-                    if old_pt_payload and len(entries) > 1:
-                        entries = _adjust_pcs_positions(old_pt_payload, new_pt, entries)
+                pcs = records[pcs_idx].payload
+                entries = [pcs[k : k + 8] for k in range(0, len(pcs) - len(pcs) % 8, 8)]
+                if old_pt_payload and len(entries) > 1:
+                    entries = _adjust_pcs_positions(old_pt_payload, new_pt, entries)
                 valid = [
                     e for e in entries if struct.unpack_from("<I", e, 0)[0] < new_char_cnt
                 ]
@@ -664,20 +531,6 @@ def apply_section_patches(
                     cs_id = cs_override_val[0]
                 new_pcs = struct.pack("<II", 0, cs_id)
                 struct.pack_into("<H", ph_payload, 12, 1)
-
-            if pls_idx is not None and new_char_cnt > 0:
-                pls_data = bytearray(records[pls_idx].payload)
-                pls_changed = False
-                for entry_off in range(0, len(pls_data) - 35, 36):
-                    tpos = struct.unpack_from("<I", pls_data, entry_off)[0]
-                    if tpos >= new_char_cnt:
-                        struct.pack_into("<I", pls_data, entry_off, max(0, new_char_cnt - 1))
-                        pls_changed = True
-                if pls_changed:
-                    records[pls_idx] = HwpRecord(
-                        HWPTAG_PARA_LINE_SEG, records[pls_idx].level,
-                        bytes(pls_data), records[pls_idx].offset,
-                    )
 
             records[i] = HwpRecord(
                 HWPTAG_PARA_HEADER, rec.level, bytes(ph_payload), rec.offset
@@ -716,7 +569,9 @@ def apply_section_patches(
                             break
                         if records[k].tag_id == HWPTAG_EQEDIT:
                             old_payload = records[k].payload
-                            new_payload = _rebuild_eqedit_payload(old_payload, new_script)
+                            attr = old_payload[:4] if len(old_payload) >= 4 else b"\x00\x00\x00\x00"
+                            script_bytes = new_script.encode("utf-16-le")
+                            new_payload = attr + struct.pack("<H", len(new_script)) + script_bytes
                             records[k] = HwpRecord(
                                 HWPTAG_EQEDIT, records[k].level,
                                 new_payload, records[k].offset,
@@ -806,164 +661,14 @@ def apply_equation_patches(
                         break
                     if records[k].tag_id == HWPTAG_EQEDIT:
                         old_payload = records[k].payload
-                        new_payload = _rebuild_eqedit_payload(old_payload, new_script)
+                        attr = old_payload[:4] if len(old_payload) >= 4 else b"\x00\x00\x00\x00"
+                        script_bytes = new_script.encode("utf-16-le")
+                        new_payload = attr + struct.pack("<H", len(new_script)) + script_bytes
                         records[k] = HwpRecord(
                             HWPTAG_EQEDIT, records[k].level,
                             new_payload, records[k].offset,
                         )
                         break
                 break
-
-    return _serialize_records(records)
-
-
-# ---------------------------------------------------------------------------
-# Image GSO injection for Seed Patch mode
-# ---------------------------------------------------------------------------
-
-_GSO_INLINE_CTRL = (
-    struct.pack("<H", 0x000B)          # ctrl_code GSO
-    + b"\x20\x6f\x73\x67"             # ctrl_id 'gso ' LE
-    + b"\x00" * 8
-    + struct.pack("<H", 0x000B)
-)
-assert len(_GSO_INLINE_CTRL) == 16
-
-
-def _has_secd_ctrl(records: list[HwpRecord], ph_idx: int) -> bool:
-    """Check if a paragraph contains a secd (section descriptor) control."""
-    from udf.parsers.hwp.records import ctrl_id_from_payload
-
-    ph_level = records[ph_idx].level
-    for j in range(ph_idx + 1, len(records)):
-        if records[j].level <= ph_level:
-            break
-        if records[j].tag_id == HWPTAG_CTRL_HEADER:
-            try:
-                cid = ctrl_id_from_payload(records[j].payload)
-            except Exception:
-                continue
-            if cid in ("secd", "cold"):
-                return True
-    return False
-
-
-def inject_image_gso(
-    section_bytes: bytes,
-    target_ph_offset: int,
-    gso_child_records: list[HwpRecord],
-) -> bytes:
-    """Inject an image GSO inline control into an existing paragraph.
-
-    Modifies PARA_TEXT (inserts 16B GSO marker before trailing CR),
-    updates PARA_HEADER charCnt, and appends GSO child records
-    (CTRL_HEADER + SHAPE_COMPONENT + PIC) as children of the paragraph.
-
-    Does NOT add a new PARA_HEADER — Hancom DOC_DATA cross-validation
-    requires the paragraph count to remain unchanged.
-
-    If the target paragraph contains a secd/cold control, the injection
-    is moved to the next content paragraph to avoid Hancom rendering
-    corruption.
-
-    Parameters
-    ----------
-    section_bytes : bytes
-        Decompressed section stream.
-    target_ph_offset : int
-        Byte offset of the PARA_HEADER to inject into.
-    gso_child_records : list[HwpRecord]
-        Pre-built GSO records (CTRL_HEADER, SHAPE_COMPONENT, PIC).
-        Levels will be adjusted relative to the target paragraph.
-
-    Returns
-    -------
-    bytes
-        Re-serialized section stream with the image injected.
-    """
-    records = list(iter_records(section_bytes))
-
-    ph_idx: int | None = None
-    for i, rec in enumerate(records):
-        if rec.tag_id == HWPTAG_PARA_HEADER and rec.offset == target_ph_offset:
-            ph_idx = i
-            break
-    if ph_idx is None:
-        return section_bytes
-
-    if _has_secd_ctrl(records, ph_idx):
-        ph_level = records[ph_idx].level
-        best = None
-        for i in range(ph_idx + 1, len(records)):
-            if records[i].tag_id != HWPTAG_PARA_HEADER or records[i].level != ph_level:
-                continue
-            if _has_secd_ctrl(records, i):
-                continue
-            cc = struct.unpack_from("<I", records[i].payload, 0)[0] & 0x3FFFFFFF
-            if cc <= 1:
-                best = i
-                break
-            if best is None:
-                best = i
-        if best is not None:
-            ph_idx = best
-
-    ph_rec = records[ph_idx]
-    ph_level = ph_rec.level
-
-    pt_idx: int | None = None
-    pcs_idx: int | None = None
-    pls_idx: int | None = None
-    child_end = ph_idx + 1
-    for j in range(ph_idx + 1, len(records)):
-        if records[j].level <= ph_level:
-            break
-        child_end = j + 1
-        if records[j].tag_id == HWPTAG_PARA_TEXT and pt_idx is None:
-            pt_idx = j
-        elif records[j].tag_id == HWPTAG_PARA_CHAR_SHAPE and pcs_idx is None:
-            pcs_idx = j
-        elif records[j].tag_id == HWPTAG_PARA_LINE_SEG and pls_idx is None:
-            pls_idx = j
-
-    old_pt = records[pt_idx].payload if pt_idx is not None else b"\x0d\x00"
-    if old_pt.endswith(b"\x0d\x00"):
-        new_pt = old_pt[:-2] + _GSO_INLINE_CTRL + b"\x0d\x00"
-    else:
-        new_pt = old_pt + _GSO_INLINE_CTRL
-
-    new_char_cnt = len(new_pt) // 2
-
-    ph_payload = bytearray(ph_rec.payload)
-    old_dw = struct.unpack_from("<I", ph_payload, 0)[0]
-    msb = old_dw & 0x80000000
-    if len(ph_payload) >= 8:
-        old_cm = struct.unpack_from("<I", ph_payload, 4)[0]
-        struct.pack_into("<I", ph_payload, 4, old_cm | 0x00000800)
-    struct.pack_into("<I", ph_payload, 0, msb | (new_char_cnt & 0x3FFFFFFF))
-    records[ph_idx] = HwpRecord(
-        HWPTAG_PARA_HEADER, ph_level, bytes(ph_payload), ph_rec.offset,
-    )
-
-    if pt_idx is not None:
-        records[pt_idx] = HwpRecord(
-            HWPTAG_PARA_TEXT, records[pt_idx].level, new_pt, records[pt_idx].offset,
-        )
-    else:
-        records.insert(ph_idx + 1, HwpRecord(HWPTAG_PARA_TEXT, ph_level + 1, new_pt, 0))
-        child_end += 1
-
-    base_child_level = ph_level + 1
-    adjusted: list[HwpRecord] = []
-    for cr in gso_child_records:
-        adjusted.append(HwpRecord(
-            cr.tag_id,
-            base_child_level + cr.level,
-            cr.payload,
-            0,
-        ))
-
-    for idx, arec in enumerate(adjusted):
-        records.insert(child_end + idx, arec)
 
     return _serialize_records(records)

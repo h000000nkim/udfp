@@ -10,7 +10,6 @@ import pytest
 from udf.core.schema import (
     ColumnDef,
     DocumentMetadata,
-    DrawingBlock,
     EndnoteBlock,
     EquationInline,
     FootnoteRefInline,
@@ -254,8 +253,8 @@ class TestFromScratch:
 
         NS = {"hp": "http://www.hancom.co.kr/hwpml/2011/paragraph"}
         paragraphs = root.findall("hp:p", NS)
-        # secPr이 heading에 병합되므로 heading + body = 최소 2개
-        assert len(paragraphs) >= 2
+        # secPr 단락 + heading 단락 + body 단락 = 최소 3개
+        assert len(paragraphs) >= 3
 
         # 텍스트 확인: 어딘가에 "제목 1" 텍스트가 존재해야 함
         all_text = etree.tostring(root, encoding="unicode")
@@ -692,94 +691,3 @@ class TestBlockTypeCoverageHwpx:
         ])
         xml = blocks_to_section_xml(doc.blocks, doc).decode("utf-8")
         assert "본문" in xml
-
-
-class TestHwpxLossReport:
-    def test_drawing_block_records_loss(self, tmp_path):
-        doc = UdfDocument(
-            source_format="hwpx",
-            blocks=[
-                ParagraphBlock(type="paragraph", id="b_0", inlines=[TextInline(text="text")]),
-                DrawingBlock(type="drawing", id="d_0"),
-            ],
-        )
-        out = str(tmp_path / "out.hwpx")
-        generate_hwpx(doc, out)
-        assert doc.loss_report is not None
-        assert any("drawing" in b.description for b in doc.loss_report.lossy_blocks)
-
-    def test_from_scratch_sets_loss_report(self, tmp_path):
-        doc = UdfDocument(
-            source_format="hwpx",
-            blocks=[
-                ParagraphBlock(type="paragraph", id="b_0", inlines=[TextInline(text="hello")]),
-            ],
-        )
-        out = str(tmp_path / "out.hwpx")
-        generate_hwpx(doc, out)
-        assert doc.loss_report is not None
-        assert doc.loss_report.total_blocks == 1
-
-
-class TestHwpxCharPrIDRef:
-    """Phase 15d: HWPX charPrIDRef 동적 생성 검증."""
-
-    def test_bold_inline_gets_unique_charpr(self):
-        doc = UdfDocument(
-            source_format="hwpx",
-            blocks=[
-                ParagraphBlock(type="paragraph", id="b1", inlines=[
-                    TextInline(text="normal"),
-                    TextInline(text="bold", bold=True),
-                ]),
-            ],
-        )
-        section_xml = blocks_to_section_xml(doc.blocks, doc).decode("utf-8")
-        header_xml = build_minimal_header_xml(doc).decode("utf-8")
-        assert "charPrIDRef" in section_xml
-        assert "charPr" in header_xml
-        assert "bold" in header_xml.lower() or "fontBold" in header_xml
-
-    def test_multiple_styles_create_multiple_charpr(self):
-        doc = UdfDocument(
-            source_format="hwpx",
-            blocks=[
-                ParagraphBlock(type="paragraph", id="b1", inlines=[
-                    TextInline(text="plain"),
-                    TextInline(text="bold", bold=True),
-                    TextInline(text="italic", italic=True),
-                    TextInline(text="both", bold=True, italic=True),
-                ]),
-            ],
-        )
-        blocks_to_section_xml(doc.blocks, doc)
-        header_xml = build_minimal_header_xml(doc).decode("utf-8")
-        assert header_xml.count("charPr ") >= 3  # default + bold + italic + both
-
-    def test_colored_inline_in_header(self):
-        doc = UdfDocument(
-            source_format="hwpx",
-            blocks=[
-                ParagraphBlock(type="paragraph", id="b1", inlines=[
-                    TextInline(text="red text", color="#ff0000"),
-                ]),
-            ],
-        )
-        blocks_to_section_xml(doc.blocks, doc)
-        header_xml = build_minimal_header_xml(doc).decode("utf-8")
-        assert "textColor" in header_xml
-
-
-class TestStrikeoutShape3D:
-    """BUG-087: strikeout shape='3D'가 취소선으로 잘못 판정되지 않아야 함."""
-
-    def test_3d_not_in_strike_shapes(self):
-        """shape='3D'는 취소선 화이트리스트에 포함되지 않아야 함."""
-        _STRIKE_SHAPES = {"SOLID", "DASH", "DOT", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE"}
-        assert "3D" not in _STRIKE_SHAPES
-        assert "NONE" not in _STRIKE_SHAPES
-
-    def test_solid_is_strikethrough(self):
-        """shape='SOLID'는 취소선으로 판정되어야 함."""
-        _STRIKE_SHAPES = {"SOLID", "DASH", "DOT", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE"}
-        assert "SOLID" in _STRIKE_SHAPES

@@ -12,7 +12,6 @@ from udf.schema import (
     FootnoteBlock,
     FootnoteRefInline,
     HeaderBlock,
-    ImageBlock,
     ImageInline,
     LinkInline,
     PageBreakBlock,
@@ -100,8 +99,11 @@ class TestImageParsing:
         blocks, _ = parse_section_xml(xml, info, "section0.xml")
 
         assert len(blocks) == 1
-        img = blocks[0]
-        assert isinstance(img, ImageBlock)
+        para = blocks[0]
+        assert isinstance(para, ParagraphBlock)
+        assert len(para.inlines) == 1
+        img = para.inlines[0]
+        assert isinstance(img, ImageInline)
         assert img.src == "bindata:image1.jpg"
         assert img.width == 50.0
         assert img.height == 30.0
@@ -120,9 +122,10 @@ class TestImageParsing:
         info = _make_info()
         blocks, _ = parse_section_xml(xml, info, "section0.xml")
 
-        img = blocks[0]
-        assert isinstance(img, ImageBlock)
-        assert img.src == "bindata:nested.png"
+        para = blocks[0]
+        assert len(para.inlines) == 1
+        assert isinstance(para.inlines[0], ImageInline)
+        assert para.inlines[0].src == "bindata:nested.png"
 
     def test_pic_no_img_returns_no_inline(self):
         """hp:pic에 hp:img가 없으면 인라인을 생성하지 않는다."""
@@ -155,7 +158,7 @@ class TestImageParsing:
         assert len(para.inlines) == 0
 
     def test_pic_alongside_text(self):
-        """텍스트+이미지 혼합 시 ParagraphBlock(text) + ImageBlock으로 분리."""
+        """텍스트와 이미지가 같은 run에 있을 때 모두 수집된다."""
         xml = _wrap_section(
             _wrap_para(
                 _wrap_run(
@@ -169,10 +172,11 @@ class TestImageParsing:
         blocks, _ = parse_section_xml(xml, info, "section0.xml")
 
         para = blocks[0]
-        assert isinstance(para, ParagraphBlock)
         assert len(para.inlines) == 3
+        assert isinstance(para.inlines[0], TextInline)
         assert para.inlines[0].text == "Before"
         assert isinstance(para.inlines[1], ImageInline)
+        assert isinstance(para.inlines[2], TextInline)
         assert para.inlines[2].text == "After"
 
 
@@ -676,7 +680,7 @@ class TestMixedContent:
     """여러 요소 타입이 혼합된 단락 테스트."""
 
     def test_text_image_equation_in_one_para(self):
-        """텍스트+이미지+수식 혼합 시 ParagraphBlock(text+eq) + ImageBlock 분리."""
+        """텍스트, 이미지, 수식이 같은 단락에 있을 때 모두 수집."""
         xml = _wrap_section(
             _wrap_para(
                 _wrap_run(
@@ -690,14 +694,13 @@ class TestMixedContent:
         blocks, _ = parse_section_xml(xml, info, "section0.xml")
 
         para = blocks[0]
-        assert isinstance(para, ParagraphBlock)
         assert len(para.inlines) == 3
         assert isinstance(para.inlines[0], TextInline)
         assert isinstance(para.inlines[1], ImageInline)
         assert isinstance(para.inlines[2], EquationInline)
 
     def test_multiple_runs(self):
-        """여러 run에 걸친 텍스트+이미지 혼합 시 단일 ParagraphBlock 유지."""
+        """여러 run에 걸친 다양한 인라인이 순서대로 수집된다."""
         xml = _wrap_section(
             _wrap_para(
                 _wrap_run('<hp:t>Run1</hp:t>')
@@ -712,131 +715,10 @@ class TestMixedContent:
         blocks, _ = parse_section_xml(xml, info, "section0.xml")
 
         para = blocks[0]
+        assert len(para.inlines) == 3
         assert para.inlines[0].text == "Run1"
         assert isinstance(para.inlines[1], ImageInline)
         assert para.inlines[2].text == "Run3"
-
-
-# ===========================================================================
-# Phase: Shape fill image extraction
-# ===========================================================================
-
-
-class TestShapeFillImage:
-    """fillBrush > imgFill > img에서 배경 이미지를 추출하는 테스트."""
-
-    def test_rect_with_imgfill_and_drawtext(self):
-        """rect with imgFill + drawText → TextBoxBlock with background_image."""
-        xml = _wrap_section(
-            _wrap_para(
-                _wrap_run(
-                    '<hp:rect>'
-                    '  <hc:fillBrush>'
-                    '    <hc:imgFill>'
-                    '      <hc:img binaryItemIDRef="BIN0001.png" />'
-                    '    </hc:imgFill>'
-                    '  </hc:fillBrush>'
-                    '  <hp:drawText>'
-                    '    <hp:subList>'
-                    '      <hp:p paraPrIDRef="0" styleIDRef="0">'
-                    '        <hp:run charPrIDRef="0"><hp:t>Hello</hp:t></hp:run>'
-                    '      </hp:p>'
-                    '    </hp:subList>'
-                    '  </hp:drawText>'
-                    '</hp:rect>'
-                )
-            )
-        )
-        info = _make_info()
-        blocks, _ = parse_section_xml(xml, info, "section0.xml")
-        # The rect produces a TextBoxBlock via extra_blocks
-        tb_blocks = [b for b in blocks if isinstance(b, TextBoxBlock)]
-        assert len(tb_blocks) >= 1
-        tb = tb_blocks[0]
-        assert tb.background_image == "bindata:BIN0001.png"
-
-    def test_rect_with_imgfill_no_content(self):
-        """rect with imgFill but no drawText → standalone image."""
-        xml = _wrap_section(
-            _wrap_para(
-                _wrap_run(
-                    '<hp:rect>'
-                    '  <hp:curSz width="10000" height="8000" />'
-                    '  <hc:fillBrush>'
-                    '    <hc:imgFill>'
-                    '      <hc:img binaryItemIDRef="BIN0002.jpg" />'
-                    '    </hc:imgFill>'
-                    '  </hc:fillBrush>'
-                    '</hp:rect>'
-                )
-            )
-        )
-        info = _make_info()
-        blocks, _ = parse_section_xml(xml, info, "section0.xml")
-        # Should produce a ParagraphBlock with an ImageInline
-        img_inlines = []
-        for b in blocks:
-            if isinstance(b, ParagraphBlock):
-                for il in b.inlines:
-                    if isinstance(il, ImageInline):
-                        img_inlines.append(il)
-        assert len(img_inlines) >= 1
-        assert img_inlines[0].src == "bindata:BIN0002.jpg"
-
-    def test_rect_with_winbrush_only_no_image(self):
-        """rect with winBrush only (no imgFill) → no background_image."""
-        xml = _wrap_section(
-            _wrap_para(
-                _wrap_run(
-                    '<hp:rect>'
-                    '  <hc:fillBrush>'
-                    '    <hc:winBrush faceColor="#FF0000" hatchColor="#000000" alpha="0" />'
-                    '  </hc:fillBrush>'
-                    '  <hp:drawText>'
-                    '    <hp:subList>'
-                    '      <hp:p paraPrIDRef="0" styleIDRef="0">'
-                    '        <hp:run charPrIDRef="0"><hp:t>Text</hp:t></hp:run>'
-                    '      </hp:p>'
-                    '    </hp:subList>'
-                    '  </hp:drawText>'
-                    '</hp:rect>'
-                )
-            )
-        )
-        info = _make_info()
-        blocks, _ = parse_section_xml(xml, info, "section0.xml")
-        tb_blocks = [b for b in blocks if isinstance(b, TextBoxBlock)]
-        assert len(tb_blocks) >= 1
-        assert tb_blocks[0].background_image is None
-        assert tb_blocks[0].background_color == "#FF0000"
-
-    def test_imgfill_hp_namespace(self):
-        """imgFill under hp: namespace also works."""
-        xml = _wrap_section(
-            _wrap_para(
-                _wrap_run(
-                    '<hp:rect>'
-                    '  <hp:fillBrush>'
-                    '    <hp:imgFill>'
-                    '      <hp:img binaryItemIDRef="BIN0003.png" />'
-                    '    </hp:imgFill>'
-                    '  </hp:fillBrush>'
-                    '  <hp:drawText>'
-                    '    <hp:subList>'
-                    '      <hp:p paraPrIDRef="0" styleIDRef="0">'
-                    '        <hp:run charPrIDRef="0"><hp:t>Content</hp:t></hp:run>'
-                    '      </hp:p>'
-                    '    </hp:subList>'
-                    '  </hp:drawText>'
-                    '</hp:rect>'
-                )
-            )
-        )
-        info = _make_info()
-        blocks, _ = parse_section_xml(xml, info, "section0.xml")
-        tb_blocks = [b for b in blocks if isinstance(b, TextBoxBlock)]
-        assert len(tb_blocks) >= 1
-        assert tb_blocks[0].background_image == "bindata:BIN0003.png"
 
 
 # ===========================================================================

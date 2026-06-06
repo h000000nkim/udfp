@@ -59,9 +59,7 @@ from udf.parsers.hwp.records import (
 _IDMAP_BINDATA_OFF = 0
 _IDMAP_BORDERFILL_OFF = 32
 _IDMAP_CHARSHAPE_OFF = 36
-_IDMAP_NUMBERING_OFF = 44
 _IDMAP_PARASHAPE_OFF = 52
-_IDMAP_STYLE_OFF = 56
 
 # 정렬 값 → attr bits 2-4
 _ALIGN_ATTR = {"justify": 0, "left": 1, "right": 2, "center": 3, "distribute": 4, "divide": 5}
@@ -115,25 +113,6 @@ class CharShapeSpec:
     color_g: int = 0
     color_b: int = 0
     font_name: str | None = None
-    # Phase 15a: 확장 필드 (기본값 = 기존 하드코딩 값)
-    outline: bool = False           # attr bits 8-10
-    shadow_type: int = 0            # attr bits 11-12 (0=없음 1-3=스타일)
-    emboss: bool = False            # attr bit 13
-    engrave: bool = False           # attr bit 14
-    superscript: bool = False       # rel_size < 100 + offset > 0
-    subscript: bool = False         # rel_size < 100 + offset < 0
-    char_scale: int = 100           # ratio[7] (50-200, 기본 100)
-    letter_spacing: int = 0         # char_spacing[7] (-50~50)
-    char_offset: int = 0            # char_offset[7]
-    underline_color_r: int = 0
-    underline_color_g: int = 0
-    underline_color_b: int = 0
-    bg_color_r: int = 255           # shade_color (0xFFFFFF = 음영 없음)
-    bg_color_g: int = 255
-    bg_color_b: int = 255
-    strike_color_r: int = 0
-    strike_color_g: int = 0
-    strike_color_b: int = 0
 
 
 @dataclass
@@ -145,22 +124,15 @@ class BinDataSpec:
 @dataclass
 class BorderFillSpec:
     has_borders: bool = True
-    border_type: int = 1    # 1=solid (default for all sides)
+    border_type: int = 1    # 1=solid
     border_width: int = 1   # width code
     border_r: int = 0
     border_g: int = 0
     border_b: int = 0
-    border_type_left: int | None = None
-    border_type_right: int | None = None
-    border_type_top: int | None = None
-    border_type_bottom: int | None = None
     has_fill: bool = False
     fill_r: int = 255
     fill_g: int = 255
     fill_b: int = 255
-    has_image_fill: bool = False
-    image_fill_bin_item_id: int = 0
-    image_fill_mode: int = 0  # 0=tile, 1=stretch, 2=center
 
 
 @dataclass
@@ -172,13 +144,6 @@ class ParaShapeSpec:
     space_before: int = 0
     space_after: int = 0
     indent_first: int = 0
-    # Phase 15b: 확장 필드
-    line_spacing_type: int = 0       # 0=ratio 1=fixed 2=leading_only 3=minimum
-    widow_orphan: bool = False       # attr bit 5 (protect)
-    page_break_before: bool = False  # attr bit 6
-    # Phase 15e: 번호/글머리표
-    numbering_id: int = 0           # offset 30-31 (1-based, 0=없음)
-    text_direction: str = "horizontal"  # horizontal | vertical
 
 
 # ---------------------------------------------------------------------------
@@ -206,53 +171,29 @@ def pack_char_shape(spec: CharShapeSpec) -> bytes:
         attr |= 0x02                        # bit 1: bold
     if spec.underline:
         attr |= (1 & 0x03) << 2            # bits 2-3: underline_type=1 (bottom)
-    if spec.outline:
-        attr |= (1 << 8)                   # bits 8-10: outline_type
-    if spec.shadow_type:
-        attr |= (spec.shadow_type & 0x03) << 11  # bits 11-12
-    if spec.emboss:
-        attr |= (1 << 13)
-    if spec.engrave:
-        attr |= (1 << 14)
     if spec.strikethrough:
         attr |= (2 << 18)                   # bits 18-20: strikethrough ≥ 2
 
     text_color = spec.color_r | (spec.color_g << 8) | (spec.color_b << 16)
-    base_size = round(spec.size_pt * 100)
+    base_size = int(spec.size_pt * 100)
     faces = [spec.face_hangul, spec.face_latin,
              spec.face_hangul, spec.face_hangul,
              spec.face_hangul, spec.face_hangul, spec.face_hangul]
 
-    ratio = max(50, min(200, spec.char_scale))
-    spacing = max(-50, min(50, spec.letter_spacing))
-
-    rel_size = 100
-    char_offset = max(-128, min(127, spec.char_offset))
-    if spec.superscript:
-        rel_size = 70
-        char_offset = max(char_offset, 30) if char_offset >= 0 else 30
-    elif spec.subscript:
-        rel_size = 70
-        char_offset = min(char_offset, -30) if char_offset <= 0 else -30
-
-    ul_color = spec.underline_color_r | (spec.underline_color_g << 8) | (spec.underline_color_b << 16)
-    shade_color = spec.bg_color_r | (spec.bg_color_g << 8) | (spec.bg_color_b << 16)
-    strike_color = spec.strike_color_r | (spec.strike_color_g << 8) | (spec.strike_color_b << 16)
-
     buf = struct.pack("<7H", *faces)          # 0-13   face_ids
-    buf += struct.pack("<7B", *([ratio] * 7)) # 14-20  ratio (장평)
-    buf += struct.pack("<7b", *([spacing] * 7))  # 21-27  char_spacing (자간)
-    buf += struct.pack("<7B", *([rel_size] * 7)) # 28-34  rel_size
-    buf += struct.pack("<7b", *([char_offset] * 7))  # 35-41  char_offset
+    buf += bytes([100] * 7)                   # 14-20  ratio
+    buf += bytes([0] * 7)                     # 21-27  char_spacing
+    buf += bytes([100] * 7)                   # 28-34  rel_size
+    buf += bytes([0] * 7)                     # 35-41  char_offset
     buf += struct.pack("<i", base_size)       # 42-45  base_size (i32)
     buf += struct.pack("<I", attr)            # 46-49  attr
     buf += bytes([0, 0])                      # 50-51  shadow_offset_x, shadow_offset_y
     buf += struct.pack("<I", text_color)      # 52-55  text_color
-    buf += struct.pack("<I", ul_color)        # 56-59  underline_color
-    buf += struct.pack("<I", shade_color)     # 60-63  shade_color
+    buf += struct.pack("<I", 0)               # 56-59  underline_color
+    buf += struct.pack("<I", 0x00FFFFFF)      # 60-63  shade_color (흰색=음영없음)
     buf += struct.pack("<I", 0x00B2B2B2)      # 64-67  shadow_color (기본 회색)
     buf += struct.pack("<H", 0)               # 68-69  border_fill_id
-    buf += struct.pack("<I", strike_color)    # 70-73  strike_color
+    buf += struct.pack("<I", 0)               # 70-73  strike_color
     assert len(buf) == 74
     return buf
 
@@ -272,44 +213,10 @@ def pack_bin_data(spec: BinDataSpec) -> bytes:
     """
     ext_utf16 = spec.extension.encode("utf-16-le")
     ext_len = len(spec.extension)
-    buf = struct.pack("<H", 0x0021)         # flags: embedded, storage (no compress)
+    buf = struct.pack("<H", 0x0001)         # flags: embedded
     buf += struct.pack("<H", spec.bin_data_id)
     buf += struct.pack("<H", ext_len)
     buf += ext_utf16
-    return buf
-
-
-def pack_style(name: str, para_shape_id: int = 0, char_shape_id: int = 0) -> bytes:
-    """Serialize a Style record payload (BSTR name + BSTR ename + fixed fields)."""
-    name_utf16 = name.encode("utf-16-le")
-    buf = struct.pack("<H", len(name)) + name_utf16
-    buf += struct.pack("<H", 0)  # ename_len = 0
-    buf += bytes([0, 0])         # style_type=paragraph, next_style_id=0
-    buf += struct.pack("<H", 0)  # lang_id
-    buf += struct.pack("<H", 0)  # locking_mask
-    buf += struct.pack("<HH", para_shape_id, char_shape_id)
-    return buf
-
-
-_DEFAULT_STYLES = [
-    ("바탕글", 0, 0),
-    ("본문", 0, 0),
-    ("개요 1", 0, 0),
-    ("개요 2", 0, 0),
-    ("개요 3", 0, 0),
-    ("개요 4", 0, 0),
-    ("개요 5", 0, 0),
-    ("개요 6", 0, 0),
-]
-
-
-def _build_table_cell_bf(border_type: int = 1) -> bytes:
-    """테이블 셀 기본 BF — border_type을 동적으로 설정."""
-    buf = struct.pack("<H", 0)  # attr
-    border_entry = struct.pack("<BB", border_type, 1) + struct.pack("<I", 0)  # type, width, color=black
-    buf += border_entry * 4  # 4 sides
-    buf += b"\x00\x00\x00\x00\x00\x00"  # diagonal
-    buf += struct.pack("<I", 0)  # fill_attr = none
     return buf
 
 
@@ -330,27 +237,16 @@ def pack_border_fill(spec: BorderFillSpec) -> bytes:
 
     if spec.has_borders:
         border_color = spec.border_r | (spec.border_g << 8) | (spec.border_b << 16)
-        side_types = [
-            spec.border_type_left or spec.border_type,
-            spec.border_type_right or spec.border_type,
-            spec.border_type_top or spec.border_type,
-            spec.border_type_bottom or spec.border_type,
-        ]
-        for st in side_types:
-            buf += struct.pack("<BB", st, spec.border_width) + struct.pack("<I", border_color)
+        border_entry = struct.pack("<BB", spec.border_type, spec.border_width)
+        border_entry += struct.pack("<I", border_color)
     else:
-        buf += b"\x00\x00\x00\x00\x00\x00" * 4
+        border_entry = b"\x00\x00\x00\x00\x00\x00"
+
+    buf += border_entry * 4  # left, right, top, bottom
 
     buf += b"\x00\x00\x00\x00\x00\x00"  # diagonal (none)
 
-    if spec.has_image_fill:
-        buf += struct.pack("<I", 4)              # +0: fill_attr
-        buf += struct.pack("<B", spec.image_fill_mode)  # +4: mode (1B)
-        buf += struct.pack("<BBB", 0, 0, 0)     # +5: bright, contrast, effect (3B)
-        buf += b"\x00" * 13                      # +8: color/pattern area (13B)
-        buf += struct.pack("<H", spec.image_fill_bin_item_id)  # +21: binItemId
-        buf += b"\x00" * 16                      # +23: trailing (16B to reach 39B total)
-    elif spec.has_fill:
+    if spec.has_fill:
         fill_color = spec.fill_r | (spec.fill_g << 8) | (spec.fill_b << 16)
         buf += struct.pack("<I", 1)              # fill_attr: bit 0 = solid fill
         buf += struct.pack("<I", fill_color)     # fg_color (실제 배경색)
@@ -365,68 +261,34 @@ def pack_border_fill(spec: BorderFillSpec) -> bytes:
 
 
 def pack_para_shape(spec: ParaShapeSpec) -> bytes:
-    """Serialize a ParaShapeSpec into a 58-byte ParaShape record payload."""
+    """Serialize a ParaShapeSpec into an 88-byte ParaShape record payload.
+
+    Parameters
+    ----------
+    spec : ParaShapeSpec
+        Paragraph shape specification.
+
+    Returns
+    -------
+    bytes
+        88-byte binary payload for the PARA_SHAPE record.
+    """
     align_val = _ALIGN_ATTR.get(spec.alignment, 0)
-    attr = (spec.line_spacing_type & 0x03) | (align_val << 2)
-    if spec.widow_orphan:
-        attr |= (1 << 5)
-    if spec.page_break_before:
-        attr |= (1 << 6)
-    attr |= (1 << 7)   # bit 7: breakNonLatinWord = KEEP_WORD (default)
-    attr |= (1 << 8)   # bit 8: breakLatinWord = KEEP_WORD (default)
+    # attr: bits 2-4 = alignment, bit 7-8 = 0x01 (일반 단락 플래그)
+    attr = 0x00000180 | (align_val << 2)
 
     buf = struct.pack("<I", attr)              # 0-3    attr
     buf += struct.pack(
-        "<iiiIII",
-        spec.indent_left,                      # 4-7    왼쪽 여백 (signed)
-        spec.indent_right,                     # 8-11   오른쪽 여백 (signed)
-        spec.indent_first,                     # 12-15  들여쓰기 (signed)
-        spec.space_before,                     # 16-19  문단 위 간격
-        spec.space_after,                      # 20-23  문단 아래 간격
-        spec.line_spacing,                     # 24-27  줄간격
-    )
-    buf += struct.pack("<H", 0)               # 28-29  tab_def_id
-    buf += struct.pack("<H", spec.numbering_id)  # 30-31  numbering_id
-    buf += struct.pack("<H", 2)               # 32-33  border_fill_id (기본값)
-    buf += bytes(8)                            # 34-41  border offsets (4×INT16)
-    attr2 = 0
-    if spec.text_direction == "vertical":
-        attr2 |= (1 << 0)
-    buf += struct.pack("<I", attr2)            # 42-45  attr2
-    buf += struct.pack("<I", 0)               # 46-49  attr3
-    buf += struct.pack("<I", spec.line_spacing)  # 50-53  lineSpacing2
-    buf += struct.pack("<I", 0)               # 54-57  reserved
-    assert len(buf) == 58
-    return buf
-
-
-def pack_numbering(ordered: bool = True) -> bytes:
-    """Create a NUMBERING record for ordered/unordered lists.
-
-    Ordered: level 0 pattern "^1." (decimal with dot).
-    Unordered: level 0 pattern "•" (bullet character, no counter).
-    """
-    buf = b""
-    for lvl in range(7):
-        flags = struct.pack("<H", 0)
-        reserved1 = struct.pack("<I", 0)
-        if lvl == 0:
-            num_format = 0 if ordered else 0  # decimal
-            pattern = "^1." if ordered else "•"
-        else:
-            num_format = 0
-            pattern = ""
-        fmt_bytes = pattern.encode("utf-16-le")
-        str_len = len(pattern)
-        buf += flags
-        buf += reserved1
-        buf += struct.pack("<H", num_format)
-        buf += struct.pack("<I", 0xFFFFFFFF)
-        buf += struct.pack("<H", str_len)
-        buf += fmt_bytes
-    # start values: uint32 × 7 (all start at 1)
-    for _ in range(7):
-        buf += struct.pack("<I", 1)
+        "<6I",
+        spec.indent_left,
+        spec.indent_right,
+        spec.space_before,
+        spec.space_after,
+        spec.indent_first,
+        spec.line_spacing,
+    )                                          # 4-27   margins/spacing
+    buf += bytes(60)                           # 28-87  padding
+    assert len(buf) == 88
     return buf
 
 
@@ -477,41 +339,8 @@ def _pack_face_name(name: str) -> bytes:
 _ALIGN_FROM_ATTR = {0: "justify", 1: "left", 2: "right", 3: "center", 4: "distribute", 5: "divide"}
 
 
-def _read_face_names(seed_docinfo_bytes: bytes) -> list[list[str]]:
-    """Parse FaceName records from seed DocInfo into per-category name lists.
-
-    Returns 7 lists (hangul, latin, hanja, japanese, other, symbol, user),
-    each containing font name strings indexed by face_id.
-    """
-    faces_per_cat = _count_seed_faces(seed_docinfo_bytes)
-    if faces_per_cat == 0:
-        return [[] for _ in range(7)]
-    names: list[str] = []
-    for rec in iter_records(seed_docinfo_bytes):
-        if rec.tag_id != HWPTAG_FACE_NAME:
-            continue
-        p = rec.payload
-        if len(p) < 3:
-            names.append("")
-            continue
-        name_len = struct.unpack_from("<H", p, 1)[0]
-        if len(p) >= 3 + name_len * 2:
-            names.append(p[3:3 + name_len * 2].decode("utf-16-le", "replace"))
-        else:
-            names.append("")
-    result: list[list[str]] = [[] for _ in range(7)]
-    for cat in range(7):
-        start = cat * faces_per_cat
-        end = start + faces_per_cat
-        result[cat] = names[start:end]
-    return result
-
-
 def read_seed_charshapes(seed_docinfo_bytes: bytes) -> list[CharShapeSpec]:
     """Parse CharShape records from seed DocInfo into CharShapeSpec list.
-
-    Reads all fields that participate in _charshape_key comparison,
-    including font name resolution via FaceName records.
 
     Parameters
     ----------
@@ -523,45 +352,15 @@ def read_seed_charshapes(seed_docinfo_bytes: bytes) -> list[CharShapeSpec]:
     list[CharShapeSpec]
         Parsed character shape specifications.
     """
-    face_names = _read_face_names(seed_docinfo_bytes)
-    hangul_names = face_names[0] if face_names else []
-
     result: list[CharShapeSpec] = []
     for rec in iter_records(seed_docinfo_bytes):
         if rec.tag_id != HWPTAG_CHAR_SHAPE or len(rec.payload) < 56:
             continue
         p = rec.payload
-        face_hangul = struct.unpack_from("<H", p, 0)[0]
-        face_latin = struct.unpack_from("<H", p, 2)[0]
-        ratio_hangul = p[14] if len(p) > 14 else 100
-        spacing_hangul = struct.unpack_from("<b", p, 21)[0] if len(p) > 21 else 0
-        offset_hangul = struct.unpack_from("<b", p, 35)[0] if len(p) > 35 else 0
         base_size = struct.unpack_from("<i", p, 42)[0]
         attr = struct.unpack_from("<I", p, 46)[0]
         text_color = struct.unpack_from("<I", p, 52)[0]
-        ul_color = struct.unpack_from("<I", p, 56)[0] if len(p) > 59 else 0
-        shade_color = struct.unpack_from("<I", p, 60)[0] if len(p) > 63 else 0xFFFFFF
-        strike_color = struct.unpack_from("<I", p, 70)[0] if len(p) > 73 else 0
-
-        font_name = None
-        if face_hangul < len(hangul_names) and hangul_names[face_hangul]:
-            font_name = hangul_names[face_hangul]
-
-        outline = bool((attr >> 8) & 0x07)
-        shadow_type = (attr >> 11) & 0x03
-        emboss = bool(attr & (1 << 13))
-        engrave = bool(attr & (1 << 14))
-        superscript = False
-        subscript = False
-        rel_hangul = p[28] if len(p) > 28 else 100
-        if rel_hangul < 100 and offset_hangul > 0:
-            superscript = True
-        elif rel_hangul < 100 and offset_hangul < 0:
-            subscript = True
-
         result.append(CharShapeSpec(
-            face_hangul=face_hangul,
-            face_latin=face_latin,
             size_pt=base_size / 100.0,
             bold=bool(attr & 0x02),
             italic=bool(attr & 0x01),
@@ -570,25 +369,6 @@ def read_seed_charshapes(seed_docinfo_bytes: bytes) -> list[CharShapeSpec]:
             color_r=text_color & 0xFF,
             color_g=(text_color >> 8) & 0xFF,
             color_b=(text_color >> 16) & 0xFF,
-            font_name=font_name,
-            outline=outline,
-            shadow_type=shadow_type,
-            emboss=emboss,
-            engrave=engrave,
-            superscript=superscript,
-            subscript=subscript,
-            char_scale=ratio_hangul,
-            letter_spacing=spacing_hangul,
-            char_offset=offset_hangul,
-            underline_color_r=ul_color & 0xFF,
-            underline_color_g=(ul_color >> 8) & 0xFF,
-            underline_color_b=(ul_color >> 16) & 0xFF,
-            bg_color_r=shade_color & 0xFF,
-            bg_color_g=(shade_color >> 8) & 0xFF,
-            bg_color_b=(shade_color >> 16) & 0xFF,
-            strike_color_r=strike_color & 0xFF,
-            strike_color_g=(strike_color >> 8) & 0xFF,
-            strike_color_b=(strike_color >> 16) & 0xFF,
         ))
     return result
 
@@ -613,17 +393,15 @@ def read_seed_parashapes(seed_docinfo_bytes: bytes) -> list[ParaShapeSpec]:
         p = rec.payload
         attr = struct.unpack_from("<I", p, 0)[0]
         align_val = (attr >> 2) & 0x07
-        left, right = struct.unpack_from("<II", p, 4)
-        first = struct.unpack_from("<i", p, 12)[0]
-        s_before, s_after, line_sp = struct.unpack_from("<III", p, 16)
+        left, right, top, bot, first, line_sp = struct.unpack_from("<6I", p, 4)
         result.append(ParaShapeSpec(
             alignment=_ALIGN_FROM_ATTR.get(align_val, "justify"),
             line_spacing=line_sp,
             indent_left=left,
             indent_right=right,
+            space_before=top,
+            space_after=bot,
             indent_first=first,
-            space_before=s_before,
-            space_after=s_after,
         ))
     return result
 
@@ -633,10 +411,8 @@ def build_docinfo(
     char_shapes: list[CharShapeSpec],
     para_shapes: list[ParaShapeSpec],
     need_table_bf: bool = False,
-    table_border_type: int = 1,
     bin_data_specs: list[BinDataSpec] | None = None,
     extra_border_fills: list[BorderFillSpec] | None = None,
-    numbering_specs: list[bytes] | None = None,
 ) -> tuple[bytes, int, int, int]:
     """Rebuild DocInfo by preserving all seed records and appending new ones.
 
@@ -671,8 +447,6 @@ def build_docinfo(
     seed_cs_count = 0
     seed_ps_count = 0
     seed_bindata_count = 0
-    seed_numbering_count = 0
-    seed_style_count = 0
 
     seed_faces = _read_seed_faces(seed_docinfo_bytes)
     seed_face_per_cat = _count_seed_faces(seed_docinfo_bytes)
@@ -686,16 +460,6 @@ def build_docinfo(
             seed_ps_count += 1
         elif rec.tag_id == HWPTAG_BIN_DATA:
             seed_bindata_count += 1
-        elif rec.tag_id == HWPTAG_NUMBERING:
-            seed_numbering_count += 1
-        elif rec.tag_id == HWPTAG_STYLE:
-            seed_style_count += 1
-
-    extra_style: list[bytes] = []
-    if seed_style_count == 0:
-        for name, ps_id, cs_id in _DEFAULT_STYLES:
-            extra_style.append(_pack_record(HWPTAG_STYLE, 1, pack_style(name, ps_id, cs_id)))
-    n_new_style = len(extra_style)
 
     first_extra_bf_id = 0
     if need_table_bf:
@@ -738,7 +502,7 @@ def build_docinfo(
     # BorderFill 추가: need_table_bf 먼저, 그 뒤 extra_border_fills
     extra_bf_records: list[bytes] = []
     if need_table_bf:
-        extra_bf_records.append(_pack_record(HWPTAG_BORDER_FILL, 1, _build_table_cell_bf(table_border_type)))
+        extra_bf_records.append(_pack_record(HWPTAG_BORDER_FILL, 1, _TABLE_CELL_BF))
     if extra_border_fills:
         if not first_extra_bf_id:
             first_extra_bf_id = seed_bf_count + 1
@@ -747,15 +511,12 @@ def build_docinfo(
                 _pack_record(HWPTAG_BORDER_FILL, 1, pack_border_fill(bf_spec))
             )
 
-    extra_num: list[bytes] = []
-    if numbering_specs:
-        extra_num = [_pack_record(HWPTAG_NUMBERING, 1, ns) for ns in numbering_specs]
-
+    # ID_MAPPINGS 카운트는 실제 레코드 수와 반드시 일치해야 한다.
+    # 불일치 시 한컴이 "파일이 손상되었습니다" 다이얼로그를 표시한다.
     n_new_cs = len(char_shapes)
     n_new_ps = len(para_shapes)
     n_new_bf = len(extra_bf_records)
     n_new_bd = len(extra_bd)
-    n_new_num = len(extra_num)
 
     out_buf = b""
     _face_cat_idx = 0
@@ -764,19 +525,13 @@ def build_docinfo(
     ps_appended = False
     bf_appended = False
     bd_appended = False
-    num_appended = False
-    style_appended = False
     last_cs_seen = False
     last_ps_seen = False
     last_bf_seen = False
     last_bd_seen = False
-    last_num_seen = False
-    last_style_seen = False
-    idmap_seen = False
 
     for rec in iter_records(seed_docinfo_bytes):
         if rec.tag_id == HWPTAG_ID_MAPPINGS:
-            idmap_seen = True
             idmap = bytearray(rec.payload)
             if n_new_bd and len(idmap) > _IDMAP_BINDATA_OFF + 3:
                 old = struct.unpack_from("<I", idmap, _IDMAP_BINDATA_OFF)[0]
@@ -793,20 +548,10 @@ def build_docinfo(
             if n_new_cs and len(idmap) > _IDMAP_CHARSHAPE_OFF + 3:
                 old = struct.unpack_from("<I", idmap, _IDMAP_CHARSHAPE_OFF)[0]
                 struct.pack_into("<I", idmap, _IDMAP_CHARSHAPE_OFF, old + n_new_cs)
-            if n_new_num and len(idmap) > _IDMAP_NUMBERING_OFF + 3:
-                old = struct.unpack_from("<I", idmap, _IDMAP_NUMBERING_OFF)[0]
-                struct.pack_into("<I", idmap, _IDMAP_NUMBERING_OFF, old + n_new_num)
             if n_new_ps and len(idmap) > _IDMAP_PARASHAPE_OFF + 3:
                 old = struct.unpack_from("<I", idmap, _IDMAP_PARASHAPE_OFF)[0]
                 struct.pack_into("<I", idmap, _IDMAP_PARASHAPE_OFF, old + n_new_ps)
-            if n_new_style and len(idmap) > _IDMAP_STYLE_OFF + 3:
-                old = struct.unpack_from("<I", idmap, _IDMAP_STYLE_OFF)[0]
-                struct.pack_into("<I", idmap, _IDMAP_STYLE_OFF, old + n_new_style)
             out_buf += _pack_record(rec.tag_id, rec.level, bytes(idmap))
-            if extra_bd and not bd_appended:
-                for r in extra_bd:
-                    out_buf += r
-                bd_appended = True
             continue
 
         if rec.tag_id == HWPTAG_FACE_NAME:
@@ -847,20 +592,6 @@ def build_docinfo(
                 out_buf += r
             bf_appended = True
 
-        if rec.tag_id == HWPTAG_NUMBERING:
-            last_num_seen = True
-        elif last_num_seen and not num_appended:
-            for r in extra_num:
-                out_buf += r
-            num_appended = True
-
-        if rec.tag_id == HWPTAG_STYLE:
-            last_style_seen = True
-        elif last_style_seen and not style_appended:
-            for r in extra_style:
-                out_buf += r
-            style_appended = True
-
         out_buf += _pack_record(rec.tag_id, rec.level, rec.payload)
 
     while _face_cat_idx < 7:
@@ -876,29 +607,8 @@ def build_docinfo(
     if not cs_appended:
         for r in extra_cs:
             out_buf += r
-    if extra_num and not num_appended:
-        for r in extra_num:
-            out_buf += r
     if not ps_appended:
         for r in extra_ps:
             out_buf += r
-    if extra_style and not style_appended:
-        for r in extra_style:
-            out_buf += r
 
-    if not idmap_seen:
-        idmap = bytearray(60)
-        struct.pack_into("<I", idmap, _IDMAP_BINDATA_OFF, seed_bindata_count + n_new_bd)
-        for cat_off in range(4, 32, 4):
-            struct.pack_into("<I", idmap, cat_off, seed_face_per_cat + (n_new_faces_per_cat or 0))
-        struct.pack_into("<I", idmap, _IDMAP_BORDERFILL_OFF, seed_bf_count + n_new_bf)
-        struct.pack_into("<I", idmap, _IDMAP_CHARSHAPE_OFF, seed_cs_count + n_new_cs)
-        struct.pack_into("<I", idmap, 40, 2)  # TabDef (seed default)
-        struct.pack_into("<I", idmap, _IDMAP_NUMBERING_OFF, seed_numbering_count + n_new_num)
-        struct.pack_into("<I", idmap, 48, 0)  # Bullet
-        struct.pack_into("<I", idmap, _IDMAP_PARASHAPE_OFF, seed_ps_count + n_new_ps)
-        struct.pack_into("<I", idmap, _IDMAP_STYLE_OFF, n_new_style)
-        idmap_rec = _pack_record(HWPTAG_ID_MAPPINGS, 0, bytes(idmap))
-        out_buf = idmap_rec + out_buf
-
-    return out_buf, first_extra_bf_id, seed_cs_count, seed_ps_count, seed_numbering_count
+    return out_buf, first_extra_bf_id, seed_cs_count, seed_ps_count

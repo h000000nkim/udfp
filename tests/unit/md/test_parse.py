@@ -162,9 +162,15 @@ class TestRoundtripMd:
         md = render_md(doc, embed_ids=True)
         doc2 = parse_md(md)
 
-        orig_ids = {b.id for b in doc.blocks if isinstance(b, ParagraphBlock)}
+        # 비어있는 단락은 MD에 렌더링되지 않으므로 non-empty 블록 기준으로 비교
+        non_empty_orig = {
+            b.id
+            for b in doc.blocks
+            if isinstance(b, ParagraphBlock)
+            and any(isinstance(i, TextInline) and i.text for i in b.inlines)
+        }
         rt_ids = {b.id for b in doc2.blocks if isinstance(b, ParagraphBlock)}
-        assert orig_ids == rt_ids
+        assert non_empty_orig == rt_ids
 
 
 class TestParseEquationInline:

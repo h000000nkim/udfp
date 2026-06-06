@@ -85,12 +85,6 @@ class CellFormat(_Base):
 
 class PositionInfo(_Base):
     """Position and layout info for floating objects (images, tables, text boxes). Lengths in pt."""
-    layout_mode: Literal[
-        "inline", "block", "float_left", "float_right",
-        "anchored", "background", "foreground",
-    ] | None = None
-    content_x: float | None = None
-    content_y: float | None = None
     x: float | None = None
     y: float | None = None
     width: float | None = None
@@ -120,40 +114,3 @@ class PositionInfo(_Base):
     ] | None = None
     allow_overlap: bool | None = None
     flow_with_text: bool | None = None
-
-
-def resolve_layout_mode(pos: PositionInfo) -> str:
-    if pos.like_char:
-        return "inline"
-    if pos.flow == "back":
-        return "background"
-    if pos.flow == "front":
-        return "foreground"
-    if pos.flow == "block":
-        return "block"
-    if pos.flow in ("float", "tight", "through"):
-        halign = pos.halign or "left"
-        return "float_right" if halign in ("right", "outside") else "float_left"
-    if pos.x is not None or pos.y is not None:
-        return "anchored"
-    return "block"
-
-
-def normalize_position(
-    pos: PositionInfo,
-    margins: tuple[float, float, float, float] | None = None,
-) -> None:
-    pos.layout_mode = resolve_layout_mode(pos)
-    if margins is None or pos.x is None and pos.y is None:
-        return
-    mt, mr, mb, ml = margins
-    if pos.x is not None:
-        if pos.hrelto == "paper":
-            pos.content_x = pos.x - ml
-        else:
-            pos.content_x = pos.x
-    if pos.y is not None:
-        if pos.vrelto == "paper":
-            pos.content_y = pos.y - mt
-        else:
-            pos.content_y = pos.y

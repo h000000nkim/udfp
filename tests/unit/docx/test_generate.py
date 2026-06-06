@@ -14,7 +14,6 @@ from udf.core.schema import (
     BlockFormat,
     ColumnDef,
     DocumentMetadata,
-    DrawingBlock,
     EquationBlock,
     EquationInline,
     FootnoteBlock,
@@ -586,7 +585,7 @@ class TestFromScratchPageBreak:
         root = _generate_and_read_xml(doc)
         body = root.find(_w("body"))
         elements = list(body)
-        assert len(elements) == 4  # 3 content + sectPr
+        assert len(elements) == 3
 
         # Middle element should contain w:br
         br = elements[1].find(f".//{_w('br')}")
@@ -624,134 +623,6 @@ class TestFromScratchParagraphFormat:
         jc = root.find(f".//{_w('jc')}")
         assert jc is not None
         assert jc.get(_w("val")) == "both"
-
-    def test_tab_stops(self):
-        from udf.core.schema import TabStop
-        doc = _make_doc([
-            ParagraphBlock(
-                type="paragraph",
-                id="b_0001",
-                inlines=[TextInline(text="tabs")],
-                format=BlockFormat(tab_stops=[
-                    TabStop(position=72.0, align="center"),
-                    TabStop(position=144.0, align="right", leader="dot"),
-                ]),
-            ),
-        ])
-        root = _generate_and_read_xml(doc)
-        tabs = root.find(f".//{_w('tabs')}")
-        assert tabs is not None
-        tab_els = tabs.findall(_w("tab"))
-        assert len(tab_els) == 2
-        assert tab_els[0].get(_w("val")) == "center"
-        assert tab_els[0].get(_w("pos")) == str(int(72.0 * 20))
-        assert tab_els[1].get(_w("leader")) == "dot"
-
-    def test_bidi(self):
-        doc = _make_doc([
-            ParagraphBlock(
-                type="paragraph",
-                id="b_0001",
-                inlines=[TextInline(text="rtl text")],
-                format=BlockFormat(bidi=True),
-            ),
-        ])
-        root = _generate_and_read_xml(doc)
-        bidi = root.find(f".//{_w('bidi')}")
-        assert bidi is not None
-
-
-class TestFromScratchRprExtended:
-    """Phase 15c: 확장 인라인 서식 매핑 (outline, shadow, emboss, engrave 등)."""
-
-    def test_outline(self):
-        doc = _make_doc([ParagraphBlock(
-            type="paragraph", id="b_0001",
-            inlines=[TextInline(text="O", outline=True)],
-        )])
-        root = _generate_and_read_xml(doc)
-        assert root.find(f".//{_w('outline')}") is not None
-
-    def test_shadow(self):
-        doc = _make_doc([ParagraphBlock(
-            type="paragraph", id="b_0001",
-            inlines=[TextInline(text="S", shadow=True)],
-        )])
-        root = _generate_and_read_xml(doc)
-        assert root.find(f".//{_w('shadow')}") is not None
-
-    def test_emboss(self):
-        doc = _make_doc([ParagraphBlock(
-            type="paragraph", id="b_0001",
-            inlines=[TextInline(text="E", emboss=True)],
-        )])
-        root = _generate_and_read_xml(doc)
-        assert root.find(f".//{_w('emboss')}") is not None
-
-    def test_engrave(self):
-        doc = _make_doc([ParagraphBlock(
-            type="paragraph", id="b_0001",
-            inlines=[TextInline(text="I", engrave=True)],
-        )])
-        root = _generate_and_read_xml(doc)
-        assert root.find(f".//{_w('imprint')}") is not None
-
-    def test_all_caps(self):
-        doc = _make_doc([ParagraphBlock(
-            type="paragraph", id="b_0001",
-            inlines=[TextInline(text="CAPS", all_caps=True)],
-        )])
-        root = _generate_and_read_xml(doc)
-        assert root.find(f".//{_w('caps')}") is not None
-
-    def test_emphasis_mark(self):
-        doc = _make_doc([ParagraphBlock(
-            type="paragraph", id="b_0001",
-            inlines=[TextInline(text="강조", emphasis_mark="dot")],
-        )])
-        root = _generate_and_read_xml(doc)
-        em = root.find(f".//{_w('em')}")
-        assert em is not None
-        assert em.get(_w("val")) == "dot"
-
-    def test_char_scale(self):
-        from udf.schema.types import Ratio
-        doc = _make_doc([ParagraphBlock(
-            type="paragraph", id="b_0001",
-            inlines=[TextInline(text="wide", char_scale=Ratio(percent=150))],
-        )])
-        root = _generate_and_read_xml(doc)
-        w_el = root.find(f".//{_w('w')}")
-        assert w_el is not None
-        assert w_el.get(_w("val")) == "150"
-
-    def test_char_offset(self):
-        doc = _make_doc([ParagraphBlock(
-            type="paragraph", id="b_0001",
-            inlines=[TextInline(text="up", char_offset=3.0)],
-        )])
-        root = _generate_and_read_xml(doc)
-        pos = root.find(f".//{_w('position')}")
-        assert pos is not None
-        assert pos.get(_w("val")) == "6"  # 3pt * 2 = 6 half-points
-
-    def test_rtl(self):
-        doc = _make_doc([ParagraphBlock(
-            type="paragraph", id="b_0001",
-            inlines=[TextInline(text="שלום", rtl=True)],
-        )])
-        root = _generate_and_read_xml(doc)
-        assert root.find(f".//{_w('rtl')}") is not None
-
-    def test_no_extra_elements_when_unset(self):
-        """새 매핑 필드가 None/False일 때 불필요한 요소 생성 안 함."""
-        doc = _make_doc([ParagraphBlock(
-            type="paragraph", id="b_0001",
-            inlines=[TextInline(text="Plain")],
-        )])
-        root = _generate_and_read_xml(doc)
-        for tag in ("outline", "shadow", "emboss", "imprint", "caps", "em", "w", "position", "rtl"):
-            assert root.find(f".//{_w(tag)}") is None
 
 
 # ---------------------------------------------------------------------------
@@ -1078,17 +949,13 @@ class TestSectionSerialization:
         assert cols.get(_w("space")) == "720"  # 36 * 20
         assert cols.get(_w("sep")) == "true"
 
-    def test_no_section_default_sectpr(self):
+    def test_no_section_no_sectpr(self):
         doc = _make_doc([
             ParagraphBlock(type="paragraph", id="b_1", inlines=[TextInline(text="x")]),
         ])
         root = _generate_and_read_xml(doc)
         body = root.find(_w("body"))
-        sect_pr = body.find(_w("sectPr"))
-        assert sect_pr is not None
-        pg_sz = sect_pr.find(_w("pgSz"))
-        assert pg_sz is not None
-        assert pg_sz.get(_w("w")) == "11906"
+        assert body.find(_w("sectPr")) is None
 
 
 class TestBlockTypeCoverage:
@@ -1192,42 +1059,3 @@ class TestBlockTypeCoverage:
         body = root.find(_w("body"))
         text = "".join(t.text or "" for t in body.iter(f"{{{_W_NS}}}t"))
         assert "클릭" in text
-
-
-class TestLossReport:
-    def test_drawing_block_records_loss(self) -> None:
-        doc = _make_doc([
-            ParagraphBlock(type="paragraph", id="b_0", inlines=[TextInline(type="text", text="text")]),
-            DrawingBlock(type="drawing", id="d_0"),
-        ])
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as f:
-            out_path = f.name
-        generate_docx(doc, out_path)
-        assert doc.loss_report is not None
-        assert any("drawing" in b.description for b in doc.loss_report.lossy_blocks)
-
-    def test_from_scratch_sets_loss_report(self) -> None:
-        doc = _make_doc([
-            ParagraphBlock(type="paragraph", id="b_0", inlines=[TextInline(type="text", text="hello")]),
-        ])
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as f:
-            out_path = f.name
-        generate_docx(doc, out_path)
-        assert doc.loss_report is not None
-        assert doc.loss_report.total_blocks == 1
-
-    def test_no_loss_for_supported_blocks(self) -> None:
-        doc = _make_doc([
-            ParagraphBlock(type="paragraph", id="b_0", inlines=[TextInline(type="text", text="hello")]),
-            HeadingBlock(type="heading", id="h_0", level=1, text="Title"),
-        ])
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as f:
-            out_path = f.name
-        generate_docx(doc, out_path)
-        assert doc.loss_report is not None
-        assert doc.loss_report.lossy_blocks == [] or all(
-            "verbatim_lost" in b.description for b in doc.loss_report.lossy_blocks
-        )

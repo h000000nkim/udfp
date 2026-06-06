@@ -23,7 +23,6 @@ from typing import Iterator, cast
 
 from udf.schema import (
     Block,
-    CodeBlock,
     DocumentMetadata,
     DocumentSchema,
     EquationInline,
@@ -54,13 +53,11 @@ _FOOTNOTE_DEF_RE = re.compile(r"^\[\^(\w+)\]:\s*(.*)")
 _HTML_TABLE_START_RE = re.compile(r"^\s*<table\b", re.IGNORECASE)
 _HTML_TABLE_END_RE = re.compile(r"</table>", re.IGNORECASE)
 _HTML_TD_RE = re.compile(
-    r'<(?:td|th)(?:\s+([^>]*))?>(.*?)</(?:td|th)>', re.IGNORECASE | re.DOTALL,
+    r'<td(?:\s+([^>]*))?>(.+?)</td>', re.IGNORECASE | re.DOTALL,
 )
 _HTML_ROWSPAN_RE = re.compile(r'rowspan="(\d+)"', re.IGNORECASE)
 _HTML_COLSPAN_RE = re.compile(r'colspan="(\d+)"', re.IGNORECASE)
 _HTML_WIDTH_RE = re.compile(r'width="([^"]+)"', re.IGNORECASE)
-_HTML_BID_RE = re.compile(r'data-bid="([^"]+)"', re.IGNORECASE)
-_ITEM_ID_RE = re.compile(r"<!--\s*item:\s*(\S+)\s*-->\s*")
 
 
 # ---------------------------------------------------------------------------
@@ -87,11 +84,9 @@ def _unescape(text: str) -> str:
 _EQUATION_INLINE_RE = re.compile(r"\$([^\$]+)\$")
 _FOOTNOTE_REF_RE = re.compile(r"\[\^(\w+)\](?!:)")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
-_INLINE_CODE_RE = re.compile(r"``(.+?)``|`([^`]+)`")
 _UL_RE = re.compile(r"^(\s*)[-*+]\s+(.*)")
 _OL_RE = re.compile(r"^(\s*)(\d+)\.\s+(.*)")
 _THEMATIC_BREAK_RE = re.compile(r"^[-]{3,}$|^[*]{3,}$|^[_]{3,}$")
-_FENCED_CODE_RE = re.compile(r"^(`{3,}|~{3,})\s*(.*)")
 
 
 def _parse_inlines(text: str) -> list[Inline]:
@@ -107,7 +102,6 @@ def _parse_inlines(text: str) -> list[Inline]:
 def _split_special_inlines(text: str, out: list[Inline]) -> None:
     """$...$, [^ref], [text](url) 등 특수 인라인을 먼저 분리한 뒤, 나머지를 서식 파서로 전달."""
     patterns: list[tuple[re.Pattern[str], str]] = [
-        (_INLINE_CODE_RE, "code"),
         (_EQUATION_INLINE_RE, "equation"),
         (_FOOTNOTE_REF_RE, "fnref"),
         (_LINK_RE, "link"),
@@ -130,10 +124,7 @@ def _split_special_inlines(text: str, out: list[Inline]) -> None:
         styled = []
         _parse_seg(text[:earliest_start], bold=False, italic=False, strike=False, underline=False, out=styled)
         out.extend(styled)
-    if earliest_key == "code":
-        code_text = earliest_m.group(1) or earliest_m.group(2)
-        out.append(TextInline(text=code_text, font_name="Courier New"))
-    elif earliest_key == "equation":
+    if earliest_key == "equation":
         out.append(EquationInline(latex=_unescape(earliest_m.group(1))))
     elif earliest_key == "fnref":
         out.append(FootnoteRefInline(ref_id=earliest_m.group(1)))
@@ -360,11 +351,8 @@ def _parse_html_table(
                         id=make_block_id(next(block_counter)),
                         inlines=inlines,
                     ))
-            bid_m = _HTML_BID_RE.search(attrs_str)
-            fallback_id = make_block_id(next(block_counter))
-            cell_id = bid_m.group(1) if bid_m else fallback_id
             cells.append(TableCell(
-                id=cell_id,
+                id=make_block_id(next(block_counter)),
                 content=content,
                 row_span=row_span,
                 col_span=col_span,
@@ -388,7 +376,6 @@ def _iter_blocks(
     """줄 목록을 블록 단위로 순회하며 yield."""
     i = 0
     pending_id: str | None = None
-    pending_item_id: str | None = None
 
     while i < len(lines):
         line = lines[i]
@@ -396,16 +383,7 @@ def _iter_blocks(
         # ID 주석
         m = _ID_COMMENT_RE.match(line.strip())
         if m:
-            if pending_id is not None:
-                yield ParagraphBlock(type="paragraph", id=pending_id, inlines=[])
             pending_id = m.group(1)
-            i += 1
-            continue
-
-        # item ID 주석 — 리스트 루프 밖에서 만나면 저장해두고 첫 아이템에 적용
-        item_m = _ITEM_ID_RE.match(line.strip())
-        if item_m:
-            pending_item_id = item_m.group(1)
             i += 1
             continue
 
@@ -434,27 +412,6 @@ def _iter_blocks(
                 type="footnote", id=blk_id, ref=ref, content=content_blocks,
             )
             i += 1
-            continue
-
-        # 펜스드 코드 블록: ``` 또는 ~~~
-        fence_m = _FENCED_CODE_RE.match(line)
-        if fence_m:
-            fence_char = fence_m.group(1)[0]
-            fence_len = len(fence_m.group(1))
-            lang = fence_m.group(2).strip() or None
-            code_lines: list[str] = []
-            i += 1
-            while i < len(lines):
-                cl = lines[i]
-                close_m = _FENCED_CODE_RE.match(cl)
-                if close_m and close_m.group(1)[0] == fence_char and len(close_m.group(1)) >= fence_len:
-                    i += 1
-                    break
-                code_lines.append(cl)
-                i += 1
-            blk_id = pending_id or make_block_id(next(block_counter))
-            pending_id = None
-            yield CodeBlock(type="code", id=blk_id, language=lang, code="\n".join(code_lines))
             continue
 
         # 헤딩
@@ -515,30 +472,20 @@ def _iter_blocks(
             ordered = ol_m is not None
             start_num = int(ol_m.group(2)) if ol_m else None
             items: list[ListItem] = []
-            # pending_item_id from outer scope carries the first item ID
             while i < len(lines):
-                item_id_m = _ITEM_ID_RE.match(lines[i].strip())
-                if item_id_m:
-                    pending_item_id = item_id_m.group(1)
-                    i += 1
-                    continue
                 um = _UL_RE.match(lines[i])
                 om = _OL_RE.match(lines[i])
                 if um and not ordered:
                     item_text = um.group(2)
-                    item_id = pending_item_id or make_block_id(next(block_counter))
-                    pending_item_id = None
                     items.append(ListItem(
-                        id=item_id,
+                        id=make_block_id(next(block_counter)),
                         inlines=_parse_inlines(item_text),
                     ))
                     i += 1
                 elif om and ordered:
                     item_text = om.group(3)
-                    item_id = pending_item_id or make_block_id(next(block_counter))
-                    pending_item_id = None
                     items.append(ListItem(
-                        id=item_id,
+                        id=make_block_id(next(block_counter)),
                         inlines=_parse_inlines(item_text),
                     ))
                     i += 1
@@ -559,8 +506,6 @@ def _iter_blocks(
             if _HEADING_RE.match(lines[i]) or _TABLE_ROW_RE.match(lines[i]):
                 break
             if _HTML_TABLE_START_RE.match(lines[i]):
-                break
-            if _FENCED_CODE_RE.match(lines[i]):
                 break
             if _ID_COMMENT_RE.match(lines[i].strip()):
                 break
@@ -593,8 +538,7 @@ def _iter_blocks(
                     yield ParagraphBlock(type="paragraph", id=blk_id, inlines=inlines)
         continue
 
-    if pending_id is not None:
-        yield ParagraphBlock(type="paragraph", id=pending_id, inlines=[])
+    # 남은 pending_id는 버림 (빈 블록)
 
 
 # ---------------------------------------------------------------------------
@@ -602,7 +546,7 @@ def _iter_blocks(
 # ---------------------------------------------------------------------------
 
 
-def parse_md(text: str, *, start_id: int | None = None) -> UdfDocument:
+def parse_md(text: str) -> UdfDocument:
     """Parse a GFM Markdown string into a UdfDocument.
 
     Parameters
@@ -610,10 +554,6 @@ def parse_md(text: str, *, start_id: int | None = None) -> UdfDocument:
     text : str
         GFM Markdown content. Both ``embed_ids=True`` (with block ID
         comments) and plain Markdown are accepted.
-    start_id : int, optional
-        Starting index for auto-generated block IDs. Use this to avoid
-        ID collisions when the parsed result will be diffed against an
-        existing document. If None, starts from 1.
 
     Returns
     -------
@@ -621,7 +561,7 @@ def parse_md(text: str, *, start_id: int | None = None) -> UdfDocument:
         Document model with semantic blocks. The VerbatimLayer is empty
         since Markdown has no binary verbatim data.
     """
-    block_counter: itertools.count[int] = itertools.count(start_id if start_id is not None else 1)
+    block_counter: itertools.count[int] = itertools.count(1)
     verb_counter: itertools.count[int] = itertools.count(1)
     lines = text.splitlines()
     blocks = list(_iter_blocks(lines, block_counter, verb_counter))

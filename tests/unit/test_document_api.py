@@ -8,7 +8,6 @@ from udf.schema.blocks import (
     Block,
     FootnoteBlock,
     HeadingBlock,
-    ImageBlock,
     ParagraphBlock,
     TableBlock,
     TableCell,
@@ -407,61 +406,3 @@ class TestMetadataAPI:
         doc.set_metadata(author="Second")
         assert doc.metadata.title == "First"
         assert doc.metadata.author == "Second"
-
-
-# ---------------------------------------------------------------------------
-# Phase 15g: 이미지 캐시
-# ---------------------------------------------------------------------------
-
-
-class TestImageCache:
-    def test_add_image_block_caches_data_uri(self) -> None:
-        import base64
-        raw = b"\x89PNG\r\n\x1a\n"
-        data_uri = "data:image/png;base64," + base64.b64encode(raw).decode()
-        doc = _doc()
-        doc.add_block(ImageBlock(type="image", id="img1", src=data_uri))
-        assert data_uri in doc._image_cache
-        assert doc._image_cache[data_uri] == raw
-
-    def test_add_image_block_caches_file(self, tmp_path) -> None:
-        img_file = tmp_path / "test.png"
-        img_file.write_bytes(b"FAKE_PNG")
-        doc = _doc()
-        doc.add_block(ImageBlock(type="image", id="img1", src=str(img_file)))
-        assert str(img_file) in doc._image_cache
-        assert doc._image_cache[str(img_file)] == b"FAKE_PNG"
-
-    def test_bindata_src_not_cached_on_add(self) -> None:
-        doc = _doc()
-        doc.add_block(ImageBlock(type="image", id="img1", src="bindata:BIN0001.PNG"))
-        assert "bindata:BIN0001.PNG" not in doc._image_cache
-
-    def test_resolve_image_from_cache(self) -> None:
-        doc = _doc()
-        doc._image_cache["my_img.png"] = b"CACHED"
-        assert doc.resolve_image("my_img.png") == b"CACHED"
-
-    def test_resolve_image_from_file(self, tmp_path) -> None:
-        img_file = tmp_path / "photo.jpg"
-        img_file.write_bytes(b"JPEG_DATA")
-        doc = _doc()
-        assert doc.resolve_image(str(img_file)) == b"JPEG_DATA"
-
-    def test_resolve_image_returns_none_for_missing(self) -> None:
-        doc = _doc()
-        assert doc.resolve_image("/nonexistent/path.png") is None
-
-    def test_non_image_block_not_cached(self) -> None:
-        doc = _doc()
-        doc.add_block(ParagraphBlock(
-            type="paragraph", id="p_new",
-            inlines=[TextInline(text="hello")],
-        ))
-        assert len(doc._image_cache) == 0
-
-    def test_cache_is_per_instance(self) -> None:
-        doc1 = _doc()
-        doc2 = _doc()
-        doc1._image_cache["x"] = b"A"
-        assert "x" not in doc2._image_cache

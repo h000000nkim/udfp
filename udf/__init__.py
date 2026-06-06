@@ -46,7 +46,6 @@ __all__ = [
     "convert",
     "detect",
     "diff",
-    "merge_diff",
 ]
 
 
@@ -220,31 +219,3 @@ def diff(
     from udf.core.loss import diff_documents
 
     return diff_documents(a, b, **kwargs)
-
-
-def merge_diff(
-    original: UdfDocument,
-    edited: UdfDocument,
-) -> "MergeDiffResult":  # noqa: F821
-    """Diff edited document against original and apply changes.
-
-    Compares an edited UdfDocument (typically parsed from user-edited
-    Markdown) against the original, and returns a patched deep copy of
-    the original with changes applied.  Verbatim layer and blocks not
-    representable in Markdown are preserved from the original.
-
-    Parameters
-    ----------
-    original : UdfDocument
-        The original document (with verbatim layer).
-    edited : UdfDocument
-        The document parsed from edited Markdown.
-
-    Returns
-    -------
-    MergeDiffResult
-        Patched document, list of changes, and preserved block IDs.
-    """
-    from udf.merge_diff import merge_diff as _merge_diff
-
-    return _merge_diff(original, edited)

@@ -23,7 +23,7 @@ pip install udfp[mcp]   →  udfp             (MCP 서버)
 - **크로스 포맷 변환** — 지원 포맷 간 변환 (예: HWP → DOCX, PDF → MD)
 - **프로그래밍 방식 편집** — `UdfDocument` API로 블록/인라인 추가, 수정, 삭제
 - **두 가지 생성 모드** — Seed Patch (원본 기반 수정) / From Scratch (전체 재생성)
-- **구조 검증** — HWP R-규칙 (R1–R4), HWPX HX-규칙 (HX1–HX4), DOCX D-규칙 (D1–D3) — 모두 구현 완료
+- **구조 검증** — HWP용 R-규칙 (R1–R4 구현 완료); HWPX/DOCX/PDF 규칙은 예정
 - **MCP 서버** — Claude/LLM 연동으로 문서 읽기, 편집, 생성
 
 ## 설치
@@ -68,8 +68,7 @@ udf.convert("paper.pdf", "paper.md")
 
 ```python
 import udf
-from udf.schema.blocks import ParagraphBlock
-from udf.schema.inlines import TextInline
+from udf.core.schema import ParagraphBlock, TextInline
 
 doc = udf.parse("template.hwp")
 
@@ -116,8 +115,6 @@ udfp --transport streamable-http --port 8000  # HTTP
 | `insert_blocks(path, blocks)` | 기존 문서에 블록 추가 |
 | `remove_blocks(path, block_ids)` | ID로 블록 삭제 |
 | `set_page(path, ...)` | 페이지 레이아웃 변경 (용지, 여백, 다단) |
-| `export_md(path)` | 문서를 블록 ID가 포함된 편집 가능한 Markdown으로 변환 |
-| `import_md(path, edited_md)` | 편집된 Markdown을 원본 서식 보존하며 반영 |
 | `describe(topic)` | 스키마 문서 조회 (`describe('overview')`부터 시작) |
 
 ### Claude Desktop 설정
@@ -211,9 +208,7 @@ Document Model에서 출력 파일 전체를 재생성합니다. 블록 추가, 
 **검증 규칙**:
 
 - HWP: R1–R4 구조 규칙 + I1–I3 무결성 검사 — 자동 수정기와 함께 완전 구현
-- HWPX: HX1–HX4 구조 규칙 — 완전 구현
-- DOCX: D1–D3 구조 규칙 — 완전 구현
-- PDF: 포맷별 규칙은 계획 중 (PDF 렌더링 추가 시까지 불필요)
+- HWPX, DOCX, PDF: 포맷별 규칙은 계획 중이며 미구현; 시맨틱 diff로 검증
 
 **텍스트 수준 포맷** (MD, HTML):
 

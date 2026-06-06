@@ -42,7 +42,6 @@ _SYMBOL = {
     "angle": "∠", "perp": "⊥", "parallel": "∥",
     "neg": "¬", "land": "∧", "lor": "∨",
     "to": "→", "mapsto": "↦",
-    "bullet": "•", "circ": "∘", "star": "⋆", "ast": "∗",
 }
 
 _NARY = {
@@ -179,32 +178,27 @@ class _Parser:
         else:
             base_e.append(base)
 
-        def _unwrap_e(target: etree._Element, child: etree._Element | None) -> None:
-            if child is None:
-                return
-            if child.tag == f"{{{_M}}}e":
-                for c in list(child):
-                    target.append(c)
-            else:
-                target.append(child)
-
         if has_sub and has_sup:
             el = etree.Element(f"{{{_M}}}sSubSup", nsmap=_NSMAP)
             el.append(base_e)
             s = etree.SubElement(el, f"{{{_M}}}sub")
-            _unwrap_e(s, sub_el)
+            if sub_el is not None:
+                s.append(sub_el)
             s = etree.SubElement(el, f"{{{_M}}}sup")
-            _unwrap_e(s, sup_el)
+            if sup_el is not None:
+                s.append(sup_el)
         elif has_sub:
             el = etree.Element(f"{{{_M}}}sSub", nsmap=_NSMAP)
             el.append(base_e)
             s = etree.SubElement(el, f"{{{_M}}}sub")
-            _unwrap_e(s, sub_el)
+            if sub_el is not None:
+                s.append(sub_el)
         else:
             el = etree.Element(f"{{{_M}}}sSup", nsmap=_NSMAP)
             el.append(base_e)
             s = etree.SubElement(el, f"{{{_M}}}sup")
-            _unwrap_e(s, sup_el)
+            if sup_el is not None:
+                s.append(sup_el)
         return el
 
     def _parse_expr(self) -> etree._Element | None:
@@ -356,8 +350,7 @@ class _Parser:
 
         sub = etree.SubElement(nary, f"{{{_M}}}sub")
         sup = etree.SubElement(nary, f"{{{_M}}}sup")
-        e = etree.SubElement(nary, f"{{{_M}}}e")
-        etree.SubElement(e, f"{{{_M}}}r")
+        etree.SubElement(nary, f"{{{_M}}}e")
 
         while self._peek() in ("_", "^"):
             op = self._advance()

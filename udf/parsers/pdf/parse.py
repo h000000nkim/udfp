@@ -37,11 +37,6 @@ from udf.pipeline.container import ConversionTrace
 from udf.pipeline.verbatim import VerbatimBlock
 from udf.pipeline.loss import BlockLoss, LossCategory, LossReport
 from udf.parsers.pdf.layout import _ExtractedBlock, extract_pages
-try:
-    from udf.parsers.pdf.ocr import ocr_available, ocr_page
-except ImportError:
-    def ocr_available() -> bool: return False
-    def ocr_page(*a, **kw) -> list: return []
 
 
 # ---------------------------------------------------------------------------
@@ -341,82 +336,6 @@ def parse_pdf(path: str) -> UdfDocument:
 
             page_blocks.append(block)
             page_ebs.append(eb)
-
-        # pypdf에서 발견했지만 pdfminer에서 감지 못한 이미지 추가
-        matched_names: set[str] = set()
-        for eb in page_ebs:
-            vd = eb.verbatim_data or {}
-            if vd.get("object_type") == "image" and "image_name" in vd:
-                matched_names.add(vd["image_name"])
-        page_img_cache = image_cache.get(page_num, {})
-        for img_name, (img_data, img_mime) in page_img_cache.items():
-            if img_name not in matched_names and len(img_data) > 100:
-                img_id = f"pdf_img_{next(block_counter)}"
-                img_src = _make_b64_src(img_data, img_mime)
-                img_block = ImageBlock(
-                    type="image",
-                    id=img_id,
-                    src=img_src,
-                    alt=img_name,
-                )
-                v_id = f"v_pdf_{next(verbatim_id_counter)}"
-                verbatim_blocks[v_id] = VerbatimBlock(
-                    decoded={
-                        "object_type": "image",
-                        "image_name": img_name,
-                        "page": page_num,
-                        "source": "pypdf_unmatched",
-                    },
-                )
-                try:
-                    img_block = img_block.model_copy(update={"verbatim_ref": v_id})
-                except Exception:
-                    pass
-                page_blocks.append(img_block)
-
-        # OCR fallback: 텍스트 블록 없이 이미지만 있는 페이지 (스캔 PDF)
-        has_text = any(
-            not isinstance(b, ImageBlock)
-            for b in page_blocks
-        )
-        if not has_text and page_blocks and not ocr_available():
-            loss_records.append(BlockLoss(
-                block_id=page_blocks[0].id,
-                loss_type=LossCategory.FORMAT_LIMIT,
-                description=f"page {page_num}: scan PDF detected but OCR not available. "
-                "Install with: pip install udfp[ocr]",
-            ))
-        if not has_text and page_blocks and ocr_available():
-            page_obj = reader.pages[page_num - 1]
-            ph = float(page_obj.mediabox.height) if page_obj.mediabox else 842.0
-            ocr_results = ocr_page(
-                path, page_num - 1, block_counter, ph,
-            )
-            for ocr_item in ocr_results:
-                ocr_block = ocr_item["block"]
-                v_id = f"v_pdf_{next(verbatim_id_counter)}"
-                verbatim_blocks[v_id] = VerbatimBlock(
-                    decoded={
-                        "bbox": list(ocr_item["bbox"]),
-                        "object_type": f"ocr_{ocr_item['block_type']}",
-                        "confidence": ocr_item["confidence"],
-                        "page": page_num,
-                    },
-                )
-                try:
-                    ocr_block = ocr_block.model_copy(update={"verbatim_ref": v_id})
-                except Exception:
-                    pass
-                page_blocks.append(ocr_block)
-                page_ebs.append(_ExtractedBlock(
-                    block=ocr_block,
-                    bbox=ocr_item["bbox"],
-                    verbatim_data={
-                        "bbox": list(ocr_item["bbox"]),
-                        "object_type": f"ocr_{ocr_item['block_type']}",
-                        "page": page_num,
-                    },
-                ))
 
         # 하이퍼링크 → LinkInline 변환 (post-processing)
         page_links = link_map.get(page_num, [])

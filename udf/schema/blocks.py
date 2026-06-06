@@ -124,8 +124,6 @@ class TableCell(_Base):
     col_span: int = 1
     width: float | None = None
     height: float | None = None
-    fixed_width: bool = False
-    fixed_height: bool = False
     content: list[Block] = []
     format: CellFormat | None = None
     is_header: bool | None = None
@@ -173,32 +171,6 @@ class TableBlock(BlockBase):
                     parts.append(block.text_content())
         return " ".join(parts)
 
-    def freeze_columns(self) -> None:
-        """Fix all cell widths to their current values."""
-        for row in self.rows:
-            for cell in row.cells:
-                cell.fixed_width = True
-
-    def freeze_rows(self, row_indices: list[int] | None = None) -> None:
-        """Fix row heights. If row_indices is None, freeze all rows."""
-        for ri, row in enumerate(self.rows):
-            if row_indices is None or ri in row_indices:
-                for cell in row.cells:
-                    cell.fixed_height = True
-
-    def freeze_cell(self, row: int, col: int) -> None:
-        """Fix a specific cell's width and height."""
-        cell = self.rows[row].cells[col]
-        cell.fixed_width = True
-        cell.fixed_height = True
-
-    def freeze_labels(self, label_col: int = 0) -> None:
-        """Fix label column width and height (keeps form layout intact)."""
-        for row in self.rows:
-            if label_col < len(row.cells):
-                row.cells[label_col].fixed_width = True
-                row.cells[label_col].fixed_height = True
-
 
 # ---------------------------------------------------------------------------
 # 미디어
@@ -236,8 +208,6 @@ class EquationBlock(BlockBase):
     hwp_script: str | None = None
     display: bool = True
     mathml: str | None = None
-    width: float | None = None
-    height: float | None = None
 
     def text_content(self) -> str:
         """Return the LaTeX source, or empty string."""

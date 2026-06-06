@@ -97,14 +97,6 @@ class EquationInline(_Base):
     latex: str | None = None
     hwp_script: str | None = None
     mathml: str | None = None
-    verbatim_ref: str | None = None
-    _eq_trailing: bytes | None = None
-
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        arbitrary_types_allowed=True,
-    )
 
 
 class RubyInline(_Base):

@@ -304,4 +304,3 @@ class VerbatimLayer(_Base):
     unknown_chunks: list[Any] = []
     section_streams: dict[str, str] = {}
     bindata_streams: dict[str, str] = {}
-    docinfo_stream: str | None = None

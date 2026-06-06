@@ -35,7 +35,7 @@ class TestFormatRegistry:
         r = get_registry()
         assert r.can_parse("hwp")
         assert r.can_render("md")
-        assert not r.can_render("pdf")  # PDF renderer removed (BUG-246)
+        assert not r.can_render("pdf")
 
     def test_resolve_parser(self):
         from udf.formats import get_registry
@@ -48,7 +48,7 @@ class TestFormatRegistry:
         from udf.formats import get_registry
         r = get_registry()
         with pytest.raises(ValueError):
-            r.resolve_renderer("xml")
+            r.resolve_renderer("pdf")
 
 
 # ---------------------------------------------------------------------------
@@ -410,91 +410,3 @@ class TestDocumentBuilder:
         )
         doc.replace_text("old", "new")
         assert doc.paragraphs[0].inlines[0].text == "new text"
-
-    # ------------------------------------------------------------------
-    # Phase 15h: 새 Builder 메서드
-    # ------------------------------------------------------------------
-
-    def test_field(self):
-        doc = DocumentBuilder().field("clickhere", value="입력하세요").build()
-        b = doc.blocks[0]
-        assert b.type == "field"
-        assert b.field_type == "clickhere"
-        assert b.value == "입력하세요"
-
-    def test_field_with_options(self):
-        doc = DocumentBuilder().field(
-            "dropdown", options=["A", "B", "C"], default_value="A",
-        ).build()
-        b = doc.blocks[0]
-        assert b.options == ["A", "B", "C"]
-        assert b.default_value == "A"
-
-    def test_text_box(self):
-        from udf.core.schema import ParagraphBlock, TextInline
-        inner = ParagraphBlock(
-            type="paragraph", id="inner_1",
-            inlines=[TextInline(text="박스 내부")],
-        )
-        doc = DocumentBuilder().text_box(inner, width=200, height=100).build()
-        b = doc.blocks[0]
-        assert b.type == "text_box"
-        assert b.width == 200
-        assert b.height == 100
-        assert len(b.content) == 1
-        assert b.content[0].inlines[0].text == "박스 내부"
-
-    def test_text_box_empty(self):
-        doc = DocumentBuilder().text_box().build()
-        assert doc.blocks[0].type == "text_box"
-        assert len(doc.blocks[0].content) == 0
-
-    def test_footnote(self):
-        doc = (
-            DocumentBuilder()
-            .paragraph("본문 텍스트")
-            .footnote("각주 내용")
-            .build()
-        )
-        assert len(doc.blocks) == 2
-        para = doc.blocks[0]
-        fn = doc.blocks[1]
-        assert fn.type == "footnote"
-        assert fn.content[0].inlines[0].text == "각주 내용"
-        # FootnoteRefInline이 이전 단락에 삽입됨
-        ref = para.inlines[-1]
-        assert ref.type == "footnote_ref"
-        assert ref.ref_id == fn.id
-
-    def test_footnote_no_previous_block(self):
-        doc = DocumentBuilder().footnote("독립 각주").build()
-        assert len(doc.blocks) == 1
-        assert doc.blocks[0].type == "footnote"
-
-    def test_bookmark(self):
-        doc = DocumentBuilder().bookmark("section-1").build()
-        b = doc.blocks[0]
-        assert b.type == "bookmark"
-        assert b.name == "section-1"
-
-    def test_link(self):
-        doc = DocumentBuilder().link("구글", "https://google.com").build()
-        b = doc.blocks[0]
-        assert b.type == "paragraph"
-        assert b.inlines[0].type == "link"
-        assert b.inlines[0].text == "구글"
-        assert b.inlines[0].url == "https://google.com"
-
-    def test_new_methods_chaining(self):
-        doc = (
-            DocumentBuilder()
-            .heading(1, "제목")
-            .paragraph("본문")
-            .footnote("각주")
-            .field("clickhere", value="입력")
-            .bookmark("bk1")
-            .link("링크", "https://example.com")
-            .build()
-        )
-        types = [b.type for b in doc.blocks]
-        assert types == ["heading", "paragraph", "footnote", "field", "bookmark", "paragraph"]

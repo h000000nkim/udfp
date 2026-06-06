@@ -21,15 +21,10 @@ from __future__ import annotations
 
 import itertools
 
-from typing import Any
-
 from udf.schema.blocks import (
     Block,
-    BookmarkBlock,
     CodeBlock,
     EquationBlock,
-    FieldBlock,
-    FootnoteBlock,
     HeadingBlock,
     HorizontalRuleBlock,
     ImageBlock,
@@ -41,10 +36,9 @@ from udf.schema.blocks import (
     TableBlock,
     TableCell,
     TableRow,
-    TextBoxBlock,
 )
 from udf.schema.formats import BlockFormat
-from udf.schema.inlines import FootnoteRefInline, LinkInline, TextInline
+from udf.schema.inlines import TextInline
 from udf.schema.metadata import DocumentMetadata
 from udf.pipeline.document import UdfDocument
 
@@ -351,113 +345,6 @@ class DocumentBuilder:
         self._blocks.append(PageBreakBlock(
             type="page_break",
             id=self._next_id(),
-        ))
-        return self
-
-    def field(
-        self,
-        field_type: str,
-        value: str | None = None,
-        **opts: Any,
-    ) -> "DocumentBuilder":
-        """Append a form field block.
-
-        Parameters
-        ----------
-        field_type : str
-            Field type (e.g. "clickhere", "checkbox", "dropdown").
-        value : str or None, optional
-            Current field value.
-        **opts
-            Additional FieldBlock options (options, default_value, required, max_length).
-        """
-        self._blocks.append(FieldBlock(
-            type="field",
-            id=self._next_id(),
-            field_type=field_type,
-            value=value,
-            **opts,
-        ))
-        return self
-
-    def text_box(
-        self,
-        *blocks: Block,
-        width: float | None = None,
-        height: float | None = None,
-    ) -> "DocumentBuilder":
-        """Append a text box block containing nested blocks.
-
-        Parameters
-        ----------
-        *blocks : Block
-            Content blocks inside the text box.
-        width, height : float or None, optional
-            Dimensions in points.
-        """
-        self._blocks.append(TextBoxBlock(
-            type="text_box",
-            id=self._next_id(),
-            content=list(blocks),
-            width=width,
-            height=height,
-        ))
-        return self
-
-    def footnote(self, content: str) -> "DocumentBuilder":
-        """Append a footnote block and link it to the previous paragraph.
-
-        Parameters
-        ----------
-        content : str
-            Footnote text content.
-        """
-        fn_id = self._next_id()
-        if self._blocks:
-            last = self._blocks[-1]
-            if hasattr(last, "inlines") and last.inlines is not None:
-                last.inlines.append(FootnoteRefInline(ref_id=fn_id))
-        self._blocks.append(FootnoteBlock(
-            type="footnote",
-            id=fn_id,
-            ref=fn_id,
-            content=[ParagraphBlock(
-                type="paragraph",
-                id=self._next_id(),
-                inlines=[TextInline(text=content)],
-            )],
-        ))
-        return self
-
-    def bookmark(self, name: str) -> "DocumentBuilder":
-        """Append a named bookmark block.
-
-        Parameters
-        ----------
-        name : str
-            Bookmark name for cross-references.
-        """
-        self._blocks.append(BookmarkBlock(
-            type="bookmark",
-            id=self._next_id(),
-            name=name,
-        ))
-        return self
-
-    def link(self, text: str, url: str) -> "DocumentBuilder":
-        """Append a paragraph containing a single hyperlink.
-
-        Parameters
-        ----------
-        text : str
-            Display text for the hyperlink.
-        url : str
-            Target URL.
-        """
-        self._blocks.append(ParagraphBlock(
-            type="paragraph",
-            id=self._next_id(),
-            inlines=[LinkInline(text=text, url=url)],
         ))
         return self
 

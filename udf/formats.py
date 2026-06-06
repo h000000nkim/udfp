@@ -213,7 +213,7 @@ def _init_registry() -> None:
         extensions=[".html", ".htm"],
         mime_types=["text/html"],
         parser="udf.parsers.html.parse.parse_html",
-        renderer="udf.renderers.html.render_html",
+        renderer="udf.renderers.md.render_html",
         is_binary=False,
         roundtrip=False,
         schema_version=2,

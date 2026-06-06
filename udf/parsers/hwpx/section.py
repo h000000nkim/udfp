@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import re
-import struct
-import unicodedata
 from typing import Any
 
 from lxml import etree
@@ -14,17 +12,13 @@ from udf.schema import (
     Block,
     BlockFormat,
     CellFormat,
-    DrawingBlock,
     EndnoteBlock,
-    EquationBlock,
     EquationInline,
-    FieldBlock,
     FooterBlock,
     FootnoteBlock,
     FootnoteRefInline,
     HeaderBlock,
     HeadingBlock,
-    ImageBlock,
     ImageInline,
     LinkInline,
     ListBlock,
@@ -38,7 +32,6 @@ from udf.schema import (
     TextBoxBlock,
     TextInline,
 )
-from udf.schema.formats import normalize_position
 from udf.schema.types import Ratio, hwpunit_to_pt
 from udf.pipeline.verbatim import VerbatimBlock
 from udf.parsers.hwp.doc_info import DocInfoResult
@@ -131,8 +124,7 @@ def parse_section_xml(
     if list_acc:
         blocks.append(_flush_list(list_acc, info))
 
-    # header/footer는 _parse_paragraph 내에서 위치에 맞게 추출됨 (ctrl > header/footer 경로)
-    # secPr > headerFooter 경로는 fallback으로 유지 (위치 정보 없으므로 끝에 추가)
+    # secPr에서 header/footer 추출
     hf_blocks = _extract_header_footer(root, info, verbatim_map)
     blocks.extend(hf_blocks)
 
@@ -177,38 +169,12 @@ def _parse_paragraph(
             if page_break:
                 pb_id = _next_block_id()
                 result.append(PageBreakBlock(type="page_break", id=pb_id))
-            # 테이블 외에 텍스트가 있으면 단락도 추가
-            has_text = False
-            for r2 in p_el.iterfind("hp:run", NS):
-                if r2.find("hp:tbl", NS) is not None:
-                    continue
-                for child in r2:
-                    if child.tag.split("}")[-1] == "t" and child.text and child.text.strip():
-                        has_text = True
-                        break
-                if has_text:
-                    break
-            if has_text:
-                text_inlines = _collect_inlines(p_el, info)
-                text_inlines = _merge_adjacent_text_inlines(text_inlines)
-                text_only = [il for il in text_inlines if not hasattr(il, 'rows')]
-                if text_only:
-                    result.append(ParagraphBlock(
-                        type="paragraph",
-                        id=_next_block_id(),
-                        inlines=text_only,
-                        format=_build_para_format(para_pr_id, info),
-                    ))
-            # Emit table and header/footer in XML run order
-            _collect_tbl_and_hf_in_order(p_el, tbl, info, verbatim_map, result)
+            result.append(_parse_table(tbl, info, verbatim_map))
             return result if len(result) > 1 else result[0]
 
     # 텍스트 인라인 수집 (extra_blocks for footnotes/endnotes)
     extra_blocks: list[Block] = []
-    # ctrl > header/footer 추출 (테이블 없는 단락에서)
-    _collect_hf_from_paragraph(p_el, info, verbatim_map, extra_blocks)
     inlines = _collect_inlines(p_el, info, extra_blocks=extra_blocks)
-    inlines = _merge_adjacent_text_inlines(inlines)
 
     # 포맷 결정
     fmt = _build_para_format(para_pr_id, info)
@@ -219,12 +185,7 @@ def _parse_paragraph(
     block_id = _next_block_id()
     vid = _next_verbatim_id()
 
-    pls_bytes = _extract_lineseg_bytes(p_el)
-    vb_decoded: dict = {"paraPrIDRef": para_pr_id, "styleIDRef": style_id_ref}
-    if pls_bytes:
-        import base64
-        vb_decoded["pls_bytes"] = base64.b64encode(pls_bytes).decode()
-    verbatim_map[vid] = VerbatimBlock(decoded=vb_decoded)
+    verbatim_map[vid] = VerbatimBlock(decoded={"paraPrIDRef": para_pr_id, "styleIDRef": style_id_ref})
 
     result_blocks: list[Block] = []
 
@@ -244,62 +205,13 @@ def _parse_paragraph(
             verbatim_ref=vid,
         ))
     else:
-        gso_eqs = [i for i in inlines if isinstance(i, EquationInline) and getattr(i, '_from_gso', False)]
-        img_inlines = [i for i in inlines if isinstance(i, ImageInline)]
-        text_content = "".join(
-            i.text for i in inlines if isinstance(i, TextInline) and i.text
-        )
-        if gso_eqs and not text_content:
-            for eq_il in gso_eqs:
-                result_blocks.append(EquationBlock(
-                    type="equation",
-                    id=_next_block_id(),
-                    hwp_script=eq_il.hwp_script,
-                ))
-        elif img_inlines and not text_content:
-            for img_il in img_inlines:
-                result_blocks.append(ImageBlock(
-                    type="image",
-                    id=_next_block_id(),
-                    src=img_il.src,
-                    width=img_il.width,
-                    height=img_il.height,
-                ))
-        elif img_inlines and text_content and (
-            isinstance(inlines[0], ImageInline) or isinstance(inlines[-1], ImageInline)
-        ):
-            text_only = [i for i in inlines if not isinstance(i, ImageInline)]
-            result_blocks.append(ParagraphBlock(
-                type="paragraph",
-                id=block_id,
-                inlines=text_only,
-                format=fmt,
-                verbatim_ref=vid,
-            ))
-            for img_il in img_inlines:
-                result_blocks.append(ImageBlock(
-                    type="image",
-                    id=_next_block_id(),
-                    src=img_il.src,
-                    width=img_il.width,
-                    height=img_il.height,
-                ))
-        elif img_inlines and text_content:
-            result_blocks.append(ParagraphBlock(
-                type="paragraph",
-                id=block_id,
-                inlines=inlines,
-                format=fmt,
-                verbatim_ref=vid,
-            ))
-        else:
-            result_blocks.append(ParagraphBlock(
-                type="paragraph",
-                id=block_id,
-                inlines=inlines,
-                format=fmt,
-                verbatim_ref=vid,
-            ))
+        result_blocks.append(ParagraphBlock(
+            type="paragraph",
+            id=block_id,
+            inlines=inlines,
+            format=fmt,
+            verbatim_ref=vid,
+        ))
 
     result_blocks.extend(extra_blocks)
 
@@ -317,13 +229,10 @@ def _collect_inlines(
 
     hp:t (텍스트), hp:pic (이미지), hp:eqEdit (수식), hp:ctrl (하이퍼링크 등),
     hp:footNote, hp:endNote, hp:container (텍스트박스) 를 처리한다.
-    fieldBegin/fieldEnd: HYPERLINK, CLICK_HERE, FORMULA 필드를 처리한다.
 
     extra_blocks가 주어지면, 각주/미주 블록을 해당 리스트에 추가한다.
     """
     inlines: list[Any] = []
-    active_field_url: str | None = None
-    field_text_parts: list[str] = []
 
     for run in p_el.iterfind("hp:run", NS):
         char_pr_id = int(run.get("charPrIDRef", "0"))
@@ -333,19 +242,7 @@ def _collect_inlines(
             tag = _local_tag(child)
 
             if tag == "t":
-                if active_field_url is not None:
-                    text = child.text or ""
-                    if child.tail:
-                        text += child.tail
-                    for sub in child:
-                        if sub.text:
-                            text += sub.text
-                        if sub.tail:
-                            text += sub.tail
-                    if text:
-                        field_text_parts.append(unicodedata.normalize("NFC", text))
-                else:
-                    _collect_text_inlines(child, cs, info, inlines)
+                _collect_text_inlines(child, cs, info, inlines)
             elif tag == "pic":
                 img = _parse_pic(child)
                 if img is not None:
@@ -354,45 +251,12 @@ def _collect_inlines(
                 eq = _parse_equation(child)
                 if eq is not None:
                     inlines.append(eq)
-            elif tag == "equation":
-                eq_il = _parse_equation_gso_inline(child)
-                if eq_il is not None:
-                    inlines.append(eq_il)
             elif tag == "ctrl":
                 ctrl_id = child.get("ctrlID", "")
                 if ctrl_id == "hlnk":
                     link = _parse_hyperlink_ctrl(child, info)
                     if link is not None:
                         inlines.append(link)
-                else:
-                    fb = child.find("hp:fieldBegin", NS)
-                    if fb is not None:
-                        ft = fb.get("type", "")
-                        if ft == "HYPERLINK":
-                            url = _extract_field_param(fb, "Path")
-                            if url:
-                                active_field_url = url
-                                field_text_parts = []
-                        elif ft == "CLICK_HERE":
-                            direction = _extract_field_param(fb, "Direction") or ""
-                            if direction and extra_blocks is not None:
-                                fb_block = FieldBlock(
-                                    type="field",
-                                    id=_next_block_id(),
-                                    field_type="click_here",
-                                    value=direction,
-                                    inlines=[TextInline(text=direction)],
-                                )
-                                extra_blocks.append(fb_block)
-                    fe = child.find("hp:fieldEnd", NS)
-                    if fe is not None and active_field_url is not None:
-                        link_text = "".join(field_text_parts)
-                        inlines.append(LinkInline(
-                            text=link_text or active_field_url,
-                            url=active_field_url,
-                        ))
-                        active_field_url = None
-                        field_text_parts = []
             elif tag == "footNote" or tag == "endNote":
                 ref_inline, note_block = _parse_note(child, tag, info)
                 if ref_inline is not None:
@@ -400,91 +264,11 @@ def _collect_inlines(
                 if note_block is not None and extra_blocks is not None:
                     extra_blocks.append(note_block)
             elif tag == "container":
-                result = _parse_textbox_from_container(child, info)
-                if result is not None and extra_blocks is not None:
-                    if isinstance(result, list):
-                        extra_blocks.extend(result)
-                    else:
-                        extra_blocks.append(result)
-            elif tag in ("rect", "ellipse", "arc", "polygon", "curve", "connectLine"):
-                draw_blocks = _collect_draw_content(child, info)
-                bg = _extract_fill_color(child)
-                bg_img = _extract_fill_image(child)
-                lc, lw_val = _extract_line_color(child)
-                pos_info = _extract_position_info(child)
-                sz_el = child.find("hp:curSz", NS)
-                if sz_el is None:
-                    sz_el = child.find("hp:orgSz", NS)
-                shape_w = float(sz_el.get("width", "0")) / 100 if sz_el is not None else None
-                shape_h = float(sz_el.get("height", "0")) / 100 if sz_el is not None else None
-                if shape_w and shape_w <= 0:
-                    shape_w = None
-                if shape_h and shape_h <= 0:
-                    shape_h = None
-                if draw_blocks and extra_blocks is not None:
-                    for db in draw_blocks:
-                        if isinstance(db, TextBoxBlock):
-                            if bg:
-                                db.background_color = db.background_color or bg
-                            if bg_img:
-                                db.background_image = db.background_image or bg_img
-                            if lc:
-                                db.line_color = db.line_color or lc
-                            if lw_val:
-                                db.line_width = db.line_width or lw_val
-                            if shape_w:
-                                db.width = db.width or shape_w
-                            if shape_h:
-                                db.height = db.height or shape_h
-                            if pos_info and not db.position:
-                                db.position = pos_info
-                    extra_blocks.extend(draw_blocks)
-                elif bg_img and extra_blocks is not None:
-                    sz = child.find("hp:curSz", NS)
-                    if sz is None:
-                        sz = child.find("hp:orgSz", NS)
-                    iw = float(sz.get("width", "0")) / 100 if sz is not None else None
-                    ih = float(sz.get("height", "0")) / 100 if sz is not None else None
-                    if iw and iw <= 0:
-                        iw = None
-                    if ih and ih <= 0:
-                        ih = None
-                    img_inline = ImageInline(src=bg_img, width=iw, height=ih)
-                    p_id = _next_block_id()
-                    extra_blocks.append(ParagraphBlock(
-                        type="paragraph", id=p_id, inlines=[img_inline],
-                    ))
-                elif (bg or lc) and extra_blocks is not None:
-                    extra_blocks.append(DrawingBlock(
-                        type="drawing",
-                        id=_next_block_id(),
-                        width=shape_w,
-                        height=shape_h,
-                        background_color=bg,
-                        line_color=lc,
-                        line_width=lw_val,
-                        position=pos_info,
-                    ))
-
-    if active_field_url is not None:
-        link_text = "".join(field_text_parts)
-        inlines.append(LinkInline(
-            text=link_text or active_field_url,
-            url=active_field_url,
-        ))
+                tb = _parse_textbox_from_container(child, info)
+                if tb is not None and extra_blocks is not None:
+                    extra_blocks.append(tb)
 
     return inlines
-
-
-def _extract_field_param(field_el: etree._Element, param_name: str) -> str | None:
-    """fieldBegin의 parameters에서 특정 이름의 stringParam 값을 추출."""
-    params = field_el.find("hp:parameters", NS)
-    if params is None:
-        return None
-    for sp in params.iterfind("hp:stringParam", NS):
-        if sp.get("name", "") == param_name:
-            return sp.text or sp.get("value", "")
-    return None
 
 
 def _local_tag(el: etree._Element) -> str:
@@ -528,14 +312,11 @@ def _collect_text_inlines(
             underline_color=cs.get("underline_color"),
             strikeout_type=cs.get("strikeout_type"),
             strikeout_color=cs.get("strikeout_color"),
-            superscript=cs.get("superscript"),
-            subscript=cs.get("subscript"),
         )
 
     # 직접 텍스트
     text = t_el.text or ""
     if text:
-        text = unicodedata.normalize("NFC", text)
         inlines.append(_make_text_inline(text))
 
     # 하위 요소 (tab, lineBreak 등)
@@ -547,8 +328,7 @@ def _collect_text_inlines(
             inlines.append(TextInline(text="\n"))
         # tail 텍스트 (하위 요소 뒤의 텍스트)
         if sub.tail:
-            tail = unicodedata.normalize("NFC", sub.tail)
-            inlines.append(_make_text_inline(tail))
+            inlines.append(_make_text_inline(sub.tail))
 
 
 def _resolve_font_name(cs: dict[str, Any], info: DocInfoResult) -> str | None:
@@ -583,8 +363,6 @@ def _parse_pic(pic_el: etree._Element) -> ImageInline | None:
     이미지 소스는 hp:img 요소의 binaryItemIDRef 속성에서 가져온다.
     """
     sz_el = pic_el.find("hp:sz", NS)
-    if sz_el is None:
-        sz_el = pic_el.find("hp:curSz", NS)
     width: float | None = None
     height: float | None = None
     if sz_el is not None:
@@ -594,21 +372,9 @@ def _parse_pic(pic_el: etree._Element) -> ImageInline | None:
             width = hwpunit_to_pt(w)
         if h:
             height = hwpunit_to_pt(h)
-    if not width or not height:
-        org_el = pic_el.find("hp:orgSz", NS)
-        if org_el is not None:
-            ow = int(org_el.get("width", "0"))
-            oh = int(org_el.get("height", "0"))
-            if ow and not width:
-                width = hwpunit_to_pt(ow)
-            if oh and not height:
-                height = hwpunit_to_pt(oh)
 
-    # img 요소는 hc (core) 네임스페이스에 있음
-    img_el = pic_el.find(".//hc:img", NS)
-    if img_el is None:
-        # fallback: hp 네임스페이스로도 시도
-        img_el = pic_el.find(".//hp:img", NS)
+    # hp:img는 여러 경로에 있을 수 있음
+    img_el = pic_el.find(".//hp:img", NS)
     if img_el is None:
         return None
 
@@ -618,55 +384,6 @@ def _parse_pic(pic_el: etree._Element) -> ImageInline | None:
 
     src = f"bindata:{binary_item_id}"
     return ImageInline(src=src, width=width, height=height)
-
-
-def _extract_lineseg_bytes(p_el: etree._Element) -> bytes | None:
-    """<hp:linesegarray> → HWP PLS binary (36 bytes per entry)."""
-    lsa = p_el.find("hp:linesegarray", NS)
-    if lsa is None:
-        return None
-    entries = lsa.findall("hp:lineseg", NS)
-    if not entries:
-        return None
-    buf = bytearray()
-    for ls in entries:
-        tpos = int(ls.get("textpos", "0"))
-        vpos = int(ls.get("vertpos", "0"))
-        vsize = int(ls.get("vertsize", "0"))
-        texth = int(ls.get("textheight", "0"))
-        baseline = int(ls.get("baseline", "0"))
-        spacing = int(ls.get("spacing", "0"))
-        hpos = int(ls.get("horzpos", "0"))
-        hsize = int(ls.get("horzsize", "0"))
-        flags = int(ls.get("flags", "0"))
-        buf += struct.pack("<iiiiiiiii", tpos, vpos, vsize, texth, baseline, spacing, hpos, hsize, flags)
-    return bytes(buf)
-
-
-def _merge_adjacent_text_inlines(inlines: list) -> list:
-    """Merge consecutive TextInlines with identical formatting."""
-    if not inlines:
-        return inlines
-    result = []
-    for il in inlines:
-        if (
-            isinstance(il, TextInline)
-            and result
-            and isinstance(result[-1], TextInline)
-        ):
-            prev = result[-1]
-            pd = prev.model_dump(exclude_none=True)
-            cd = il.model_dump(exclude_none=True)
-            pd.pop("text", None)
-            pd.pop("type", None)
-            cd.pop("text", None)
-            cd.pop("type", None)
-            if pd == cd:
-                kwargs = {k: v for k, v in il.model_dump(exclude_none=True).items() if k not in ("text", "type")}
-                result[-1] = TextInline(text=(prev.text or "") + (il.text or ""), **kwargs)
-                continue
-        result.append(il)
-    return result
 
 
 def _parse_equation(eq_el: etree._Element) -> EquationInline | None:
@@ -683,19 +400,6 @@ def _parse_equation(eq_el: etree._Element) -> EquationInline | None:
         if script_el is not None:
             script = script_el.text or ""
     return EquationInline(hwp_script=script if script else None)
-
-
-def _parse_equation_gso_inline(eq_el: etree._Element) -> EquationInline | None:
-    """<hp:equation> → EquationInline (GSO-style, may be promoted to block later)."""
-    script_el = eq_el.find("hp:script", NS)
-    script = script_el.text if script_el is not None and script_el.text else ""
-    if not script:
-        script = eq_el.get("script", "")
-    if not script:
-        return None
-    ei = EquationInline(hwp_script=script)
-    ei._from_gso = True  # type: ignore[attr-defined]
-    return ei
 
 
 def _parse_hyperlink_ctrl(
@@ -774,512 +478,31 @@ def _parse_note(
 
 def _parse_textbox_from_container(
     container_el: etree._Element, info: DocInfoResult
-) -> TextBoxBlock | list[Block] | None:
-    """<hp:container> → TextBoxBlock or list[Block].
+) -> TextBoxBlock | None:
+    """<hp:container> → TextBoxBlock.
 
-    컨테이너 내부의 모든 drawText (rect, ellipse 등 도형 내부)에서
-    텍스트를 추출한다. 중첩 컨테이너도 재귀적으로 처리한다.
-    컨테이너의 sz/curSz에서 크기 정보를 추출하여 설정한다.
-    컨테이너의 pos에서 위치 정보를 추출하여 자식에 전파한다.
+    drawText > subList 안의 단락들을 파싱한다.
     """
-    blocks = _collect_draw_content(container_el, info)
-    if not blocks:
-        child_shapes = []
-        for child in container_el:
-            tag = _local_tag(child)
-            if tag in ("rect", "ellipse", "arc", "polygon", "curve", "connectLine"):
-                bg = _extract_fill_color(child)
-                lc, lw_val = _extract_line_color(child)
-                if bg or lc:
-                    sz_el = child.find("hp:curSz", NS)
-                    if sz_el is None:
-                        sz_el = child.find("hp:orgSz", NS)
-                    sw = float(sz_el.get("width", "0")) / 100 if sz_el is not None else None
-                    sh = float(sz_el.get("height", "0")) / 100 if sz_el is not None else None
-                    child_shapes.append(DrawingBlock(
-                        type="drawing", id=_next_block_id(),
-                        width=sw if sw and sw > 0 else None,
-                        height=sh if sh and sh > 0 else None,
-                        background_color=bg, line_color=lc, line_width=lw_val,
-                    ))
-        return child_shapes if child_shapes else None
-
-    container_bg = _extract_fill_color(container_el)
-    container_lc, container_lw = _extract_line_color(container_el)
-    if container_bg or container_lc:
-        for b in blocks:
-            if isinstance(b, TextBoxBlock):
-                if container_bg:
-                    b.background_color = b.background_color or container_bg
-                if container_lc:
-                    b.line_color = b.line_color or container_lc
-                if container_lw:
-                    b.line_width = b.line_width or container_lw
-
-    container_pos = _extract_position_info(container_el)
-
-    sz = container_el.find("hp:sz", NS)
-    if sz is None:
-        sz = container_el.find("hp:curSz", NS)
-    if sz is not None:
-        cw = float(sz.get("width", "0")) / 100
-        ch = float(sz.get("height", "0")) / 100
-        if cw > 0 and ch > 0:
-            for b in blocks:
-                if isinstance(b, TextBoxBlock) and not b.width:
-                    b.width = cw
-                if isinstance(b, TextBoxBlock) and not b.height:
-                    b.height = ch
-
-    if container_pos:
-        for b in blocks:
-            if isinstance(b, TextBoxBlock) and b.position:
-                b.position.hrelto = b.position.hrelto or container_pos.hrelto
-                b.position.vrelto = b.position.vrelto or container_pos.vrelto
-
-    _clip_overlapping_widths(blocks)
-
-    _TYPE_ORDER = {"image": 0, "text_box": 1, "paragraph": 2, "drawing": 3}
-    blocks.sort(key=lambda b: _TYPE_ORDER.get(getattr(b, "type", ""), 9))
-
-    if len(blocks) == 1:
-        return blocks[0]
-    return blocks
-
-
-def _clip_overlapping_widths(blocks: list[Block]) -> None:
-    """Clip TextBoxBlock widths to prevent horizontal overlap at same Y."""
-    positioned = [
-        b for b in blocks
-        if isinstance(b, TextBoxBlock) and b.position and b.position.x is not None and b.width
-        and not getattr(b, "_scaled", False)
-    ]
-    if len(positioned) < 2:
-        return
-    for i, a in enumerate(positioned):
-        a_end = a.position.x + a.width
-        for b in positioned:
-            if b is a:
-                continue
-            if b.position.y is None or a.position.y is None:
-                continue
-            if abs(b.position.y - a.position.y) > 5:
-                continue
-            if b.position.x > a.position.x and b.position.x < a_end:
-                a.width = b.position.x - a.position.x
-
-
-def _extract_fill_color(shape_el: etree._Element) -> str | None:
-    """Extract background color from a shape's fillBrush > winBrush."""
-    fb = shape_el.find("hp:fillBrush", NS)
-    if fb is None:
-        fb = shape_el.find("hc:fillBrush", NS)
-    if fb is None:
-        return None
-    wb = fb.find("hp:winBrush", NS)
-    if wb is None:
-        wb = fb.find("hc:winBrush", NS)
-    if wb is not None:
-        color = wb.get("faceColor", "")
-        alpha = wb.get("alpha", "0")
-        if color and color.upper() != "#FFFFFF" and alpha != "255":
-            return color
-    return None
-
-
-def _extract_fill_image(shape_el: etree._Element) -> str | None:
-    """Extract background image source from a shape's fillBrush > imgFill > img.
-
-    Returns a 'bindata:<binaryItemIDRef>' string if an image fill is found.
-    """
-    fb = shape_el.find("hp:fillBrush", NS)
-    if fb is None:
-        fb = shape_el.find("hc:fillBrush", NS)
-    if fb is None:
-        return None
-    img_fill = fb.find("hp:imgFill", NS)
-    if img_fill is None:
-        img_fill = fb.find("hc:imgFill", NS)
-    if img_fill is None:
-        return None
-    img_el = img_fill.find("hp:img", NS)
-    if img_el is None:
-        img_el = img_fill.find("hc:img", NS)
-    if img_el is None:
-        return None
-    binary_ref = img_el.get("binaryItemIDRef", "")
-    if not binary_ref:
-        return None
-    return f"bindata:{binary_ref}"
-
-
-def _extract_line_color(shape_el: etree._Element) -> tuple[str | None, float | None]:
-    """Extract line color and width from a shape's lineShape element."""
-    ls = shape_el.find("hp:lineShape", NS)
-    if ls is None:
-        return None, None
-    color = ls.get("color", "")
-    if not color or color == "#000000":
-        return None, None
-    width_raw = ls.get("width", "0")
-    width_pt = float(width_raw) / 100 if width_raw else None
-    return color, width_pt
-
-
-_HRELTO_MAP = {"PAPER": "paper", "PAGE": "page", "COLUMN": "column", "PARA": "paragraph"}
-_VRELTO_MAP = {"PAPER": "paper", "PAGE": "page", "PARA": "paragraph"}
-_FLOW_MAP = {"BLOCK": "block", "BACK": "back", "FRONT": "front", "TIGHT": "tight", "THROUGH": "through"}
-
-
-def _to_signed32(val: int) -> int:
-    """Convert unsigned 32-bit integer to signed."""
-    if val >= 0x80000000:
-        return val - 0x100000000
-    return val
-
-
-def _extract_offset_as_position(shape_el: etree._Element) -> PositionInfo | None:
-    """Extract offset element from a shape inside a container as position info."""
-    off = shape_el.find("hp:offset", NS)
-    if off is None:
-        off = shape_el.find("hc:offset", NS)
-    if off is None:
-        return None
-    x_val = off.get("x", "")
-    y_val = off.get("y", "")
-    if not x_val and not y_val:
-        return None
-    x = _to_signed32(int(x_val)) / _HWPUNIT_PER_PT if x_val else 0.0
-    y = _to_signed32(int(y_val)) / _HWPUNIT_PER_PT if y_val else 0.0
-    if x < 0:
-        x = 0.0
-    if y < 0:
-        y = 0.0
-    pos = PositionInfo(
-        x=x, y=y,
-        hrelto="paper", vrelto="paper",
-        overlap_others=True,
-        flow="front",
-    )
-    normalize_position(pos)
-    return pos
-
-
-def _extract_position_info(shape_el: etree._Element) -> PositionInfo | None:
-    """Extract position/size info from a shape element's pos/sz children."""
-    pos_el = shape_el.find("hp:pos", NS)
-    sz_el = shape_el.find("hp:sz", NS)
-    if pos_el is None and sz_el is None:
+    # hp:drawText 또는 직접 hp:subList 찾기
+    sub_list = container_el.find(".//hp:subList", NS)
+    if sub_list is None:
         return None
 
-    pi = PositionInfo()
-
-    if pos_el is not None:
-        pi.like_char = pos_el.get("treatAsChar") == "1"
-        pi.overlap_others = pos_el.get("allowOverlap") == "1"
-        pi.affect_line_spacing = pos_el.get("affectLSpacing") == "1"
-
-        h_off = pos_el.get("horzOffset", "")
-        v_off = pos_el.get("vertOffset", "")
-        if h_off:
-            pi.x = int(h_off) / _HWPUNIT_PER_PT
-        if v_off:
-            pi.y = int(v_off) / _HWPUNIT_PER_PT
-
-        pi.hrelto = _HRELTO_MAP.get(pos_el.get("horzRelTo", ""), None)
-        pi.vrelto = _VRELTO_MAP.get(pos_el.get("vertRelTo", ""), None)
-
-        h_align = pos_el.get("horzAlign", "")
-        if h_align and h_align != "LEFT":
-            pi.halign = h_align.lower()
-        v_align = pos_el.get("vertAlign", "")
-        if v_align and v_align != "TOP":
-            pi.valign = v_align.lower()
-
-        text_flow = pos_el.get("textFlow", "")
-        if text_flow and text_flow in _FLOW_MAP:
-            pi.flow = _FLOW_MAP[text_flow]
-        elif pos_el.get("flowWithText", "0") == "1" and not pi.like_char:
-            pi.flow = "float"
-
-    if sz_el is not None:
-        w = int(sz_el.get("width", "0"))
-        h = int(sz_el.get("height", "0"))
-        if w > 0:
-            pi.width = w / _HWPUNIT_PER_PT
-        if h > 0:
-            pi.height = h / _HWPUNIT_PER_PT
-        pi.width_relto = sz_el.get("widthRelTo", "").lower() or None
-        pi.height_relto = sz_el.get("heightRelTo", "").lower() or None
-
-    normalize_position(pi)
-    return pi
-
-
-def _collect_draw_content(
-    el: etree._Element, info: DocInfoResult
-) -> list[Block]:
-    """도형 요소 트리에서 모든 텍스트/이미지/테이블 블록을 수집한다.
-
-    hp:rect, hp:ellipse, hp:polygon 등의 도형에서 hp:drawText > hp:subList를
-    파싱하고, hp:container (그룹)은 재귀 탐색한다. hp:pic, hp:tbl도 처리한다.
-    """
-    blocks: list[Block] = []
+    content: list[Block] = []
     dummy_verbatim: dict[str, VerbatimBlock] = {}
+    for sub_p in sub_list.iterfind("hp:p", NS):
+        block = _parse_paragraph(sub_p, info, dummy_verbatim)
+        if block is not None:
+            if isinstance(block, list):
+                content.extend(block)
+            else:
+                content.append(block)
 
-    for child in el:
-        tag = _local_tag(child)
+    if not content:
+        return None
 
-        if tag == "drawText":
-            # drawText > subList 안의 단락 파싱
-            sub_list = child.find("hp:subList", NS)
-            if sub_list is not None:
-                tb_content: list[Block] = []
-                for sub_p in sub_list.iterfind("hp:p", NS):
-                    block = _parse_paragraph(sub_p, info, dummy_verbatim)
-                    if block is not None:
-                        if isinstance(block, list):
-                            tb_content.extend(block)
-                        else:
-                            tb_content.append(block)
-                if tb_content:
-                    nested_drawings = [
-                        b for b in tb_content
-                        if getattr(b, "type", "") == "drawing"
-                        and not getattr(b, "background_color", None)
-                    ]
-                    if nested_drawings:
-                        tb_content = [b for b in tb_content if b not in nested_drawings]
-                    has_text = any(
-                        getattr(il, "text", "").strip()
-                        for cb in tb_content
-                        for il in (getattr(cb, "inlines", None) or [])
-                    )
-                    has_complex = any(
-                        getattr(cb, "type", "") in ("table", "text_box", "image")
-                        for cb in tb_content
-                    )
-                    if not tb_content:
-                        continue
-                    tb_id = _next_block_id()
-                    if not has_text and not has_complex and len(tb_content) <= 2:
-                        parent_bg_d = _extract_fill_color(el)
-                        parent_lc_d, parent_lw_d = _extract_line_color(el)
-                        pos_d = _extract_position_info(el)
-                        if pos_d is None:
-                            pos_d = _extract_offset_as_position(el)
-                        blocks.append(DrawingBlock(
-                            type="drawing", id=tb_id, shape_type="$rec",
-                            position=pos_d,
-                            background_color=parent_bg_d,
-                            line_color=parent_lc_d,
-                            line_width=parent_lw_d,
-                        ))
-                        if nested_drawings:
-                            blocks.extend(nested_drawings)
-                        continue
-                    tb = TextBoxBlock(type="text_box", id=tb_id, content=tb_content)
-                    parent_bg = _extract_fill_color(el)
-                    parent_lc, parent_lw = _extract_line_color(el)
-                    if parent_bg:
-                        tb.background_color = parent_bg
-                    if parent_lc:
-                        tb.line_color = parent_lc
-                    if parent_lw:
-                        tb.line_width = parent_lw
-                    blocks.append(tb)
-                    if nested_drawings:
-                        blocks.extend(nested_drawings)
-
-        elif tag in ("rect", "ellipse", "arc", "polygon", "curve", "connectLine"):
-            shape_blocks = _collect_draw_content(child, info)
-            bg = _extract_fill_color(child)
-            bg_img = _extract_fill_image(child)
-            lc, lw = _extract_line_color(child)
-            pos_info = _extract_position_info(child)
-            if pos_info is None:
-                pos_info = _extract_offset_as_position(child)
-            sz = child.find("hp:curSz", NS)
-            if sz is None:
-                sz = child.find("hp:orgSz", NS)
-            w = float(sz.get("width", "0")) / 100 if sz is not None else None
-            h = float(sz.get("height", "0")) / 100 if sz is not None else None
-            if w and w <= 0:
-                w = None
-            if h and h <= 0:
-                h = None
-            # Apply scaMatrix scaling to size + position offset
-            _was_scaled = False
-            ri = child.find("hp:renderingInfo", NS)
-            if ri is not None and w and h:
-                tx_sum = 0.0
-                ty_sum = 0.0
-                has_scale = False
-                for sca_el in ri:
-                    if sca_el.tag.endswith("}scaMatrix") or sca_el.tag == "scaMatrix":
-                        sx = float(sca_el.get("e1", "1"))
-                        sy = float(sca_el.get("e5", "1"))
-                        tx = float(sca_el.get("e3", "0"))
-                        ty = float(sca_el.get("e6", "0"))
-                        if abs(tx) > 0.1 or abs(ty) > 0.1:
-                            tx_sum += tx / 100.0
-                            ty_sum += ty / 100.0
-                        if sx > 1.01 or sy > 1.01:
-                            w = w * sx
-                            h = h * sy
-                            has_scale = True
-                if has_scale:
-                    _was_scaled = True
-                if pos_info and (abs(tx_sum) > 1 or abs(ty_sum) > 1):
-                    pos_info.x = (pos_info.x or 0) + tx_sum
-                    pos_info.y = (pos_info.y or 0) + ty_sum
-            for sb in shape_blocks:
-                if isinstance(sb, TextBoxBlock):
-                    if bg:
-                        sb.background_color = sb.background_color or bg
-                    if bg_img:
-                        sb.background_image = sb.background_image or bg_img
-                    if lc:
-                        sb.line_color = sb.line_color or lc
-                    if lw:
-                        sb.line_width = sb.line_width or lw
-                    if w:
-                        sb.width = sb.width or w
-                    if h:
-                        sb.height = sb.height or h
-                    if pos_info and not sb.position:
-                        sb.position = pos_info
-                    if _was_scaled:
-                        sb._scaled = True
-            # Shape with fill image but no content — emit as standalone image
-            if bg_img and not shape_blocks:
-                img_inline = ImageInline(src=bg_img, width=w, height=h)
-                p_id = _next_block_id()
-                shape_blocks = [ParagraphBlock(
-                    type="paragraph", id=p_id, inlines=[img_inline],
-                )]
-            blocks.extend(shape_blocks)
-
-        elif tag == "container":
-            # 중첩 그룹 컨테이너 재귀 탐색
-            blocks.extend(_collect_draw_content(child, info))
-
-        elif tag == "pic":
-            img = _parse_pic(child)
-            if img is not None:
-                pos_info = _extract_position_info(child)
-                if pos_info is None:
-                    pos_info = _extract_offset_as_position(child)
-                if pos_info and img.width and img.height and img.width > 400 and img.height > 600:
-                    pos_info.flow = "back"
-                p_id = _next_block_id()
-                img_block = ImageBlock(
-                    type="image", id=p_id,
-                    src=img.src, width=img.width, height=img.height,
-                    position=pos_info,
-                )
-                blocks.append(img_block)
-
-        elif tag == "tbl":
-            blocks.append(_parse_table(child, info, dummy_verbatim))
-
-    return blocks
-
-
-def _collect_tbl_and_hf_in_order(
-    p_el: etree._Element,
-    tbl: etree._Element,
-    info: DocInfoResult,
-    verbatim_map: dict[str, VerbatimBlock],
-    out: list[Block],
-) -> None:
-    """테이블과 header/footer를 XML run 순서에 맞게 out에 추가."""
-    _APPLY_MAP = {
-        "BOTH": "all",
-        "EVEN": "even",
-        "ODD": "odd",
-        "FIRST": "first",
-    }
-    tbl_emitted = False
-    for run in p_el.iterfind("hp:run", NS):
-        # table
-        if not tbl_emitted and run.find("hp:tbl", NS) is not None:
-            out.append(_parse_table(tbl, info, verbatim_map))
-            tbl_emitted = True
-        # header/footer in ctrl
-        for ctrl_el in run.iterfind("hp:ctrl", NS):
-            for child in ctrl_el:
-                child_tag = _local_tag(child)
-                if child_tag not in ("header", "footer"):
-                    continue
-                apply_page = child.get("applyPageType", "BOTH")
-                apply_to = _APPLY_MAP.get(apply_page, "all")
-                sub_list = child.find("hp:subList", NS)
-                content: list[Block] = []
-                if sub_list is not None:
-                    for sub_p in sub_list.iterfind("hp:p", NS):
-                        block = _parse_paragraph(sub_p, info, verbatim_map)
-                        if block is not None:
-                            if isinstance(block, list):
-                                content.extend(block)
-                            else:
-                                content.append(block)
-                hf_id = _next_block_id()
-                if child_tag == "header":
-                    out.append(HeaderBlock(
-                        type="header", id=hf_id, apply_to=apply_to, content=content
-                    ))
-                else:
-                    out.append(FooterBlock(
-                        type="footer", id=hf_id, apply_to=apply_to, content=content
-                    ))
-    if not tbl_emitted:
-        out.append(_parse_table(tbl, info, verbatim_map))
-
-
-def _collect_hf_from_paragraph(
-    p_el: etree._Element,
-    info: DocInfoResult,
-    verbatim_map: dict[str, VerbatimBlock],
-    out: list[Block],
-) -> None:
-    """단락 내 ctrl > header/footer 요소를 찾아 HeaderBlock/FooterBlock을 out에 추가."""
-    _APPLY_MAP = {
-        "BOTH": "all",
-        "EVEN": "even",
-        "ODD": "odd",
-        "FIRST": "first",
-    }
-    for run in p_el.iterfind("hp:run", NS):
-        for ctrl_el in run.iterfind("hp:ctrl", NS):
-            for child in ctrl_el:
-                child_tag = _local_tag(child)
-                if child_tag not in ("header", "footer"):
-                    continue
-
-                apply_page = child.get("applyPageType", "BOTH")
-                apply_to = _APPLY_MAP.get(apply_page, "all")
-
-                sub_list = child.find("hp:subList", NS)
-                content: list[Block] = []
-                if sub_list is not None:
-                    for sub_p in sub_list.iterfind("hp:p", NS):
-                        block = _parse_paragraph(sub_p, info, verbatim_map)
-                        if block is not None:
-                            if isinstance(block, list):
-                                content.extend(block)
-                            else:
-                                content.append(block)
-
-                hf_id = _next_block_id()
-                if child_tag == "header":
-                    out.append(HeaderBlock(
-                        type="header", id=hf_id, apply_to=apply_to, content=content
-                    ))
-                else:
-                    out.append(FooterBlock(
-                        type="footer", id=hf_id, apply_to=apply_to, content=content
-                    ))
+    tb_id = _next_block_id()
+    return TextBoxBlock(type="text_box", id=tb_id, content=content)
 
 
 def _extract_header_footer(
@@ -1287,19 +510,10 @@ def _extract_header_footer(
     info: DocInfoResult,
     verbatim_map: dict[str, VerbatimBlock],
 ) -> list[Block]:
-    """secPr > headerFooter 경로의 header/footer를 추출 (fallback).
-
-    ctrl > header/footer 경로는 _collect_hf_from_paragraph()에서 인라인 처리됨.
-    """
+    """section XML의 secPr에서 headerFooter 요소를 찾아 HeaderBlock/FooterBlock을 생성한다."""
     blocks: list[Block] = []
 
-    _APPLY_MAP = {
-        "BOTH": "all",
-        "EVEN": "even",
-        "ODD": "odd",
-        "FIRST": "first",
-    }
-
+    # secPr은 hp:p > hp:run > hp:secPr 경로에 있음
     for p_el in root.iterfind("hp:p", NS):
         for run in p_el.iterfind("hp:run", NS):
             sec_pr = run.find("hp:secPr", NS)
@@ -1311,10 +525,18 @@ def _extract_header_footer(
                 if hf_tag != "headerFooter":
                     continue
 
-                hf_type = hf_el.get("type", "BOTH")
+                hf_type = hf_el.get("type", "BOTH")  # BOTH, EVEN, ODD, FIRST
                 header_or_footer = hf_el.get("headerFooter", "HEADER")
-                apply_to = _APPLY_MAP.get(hf_type, "all")
 
+                apply_to_map = {
+                    "BOTH": "all",
+                    "EVEN": "even",
+                    "ODD": "odd",
+                    "FIRST": "first",
+                }
+                apply_to = apply_to_map.get(hf_type, "all")
+
+                # subList 안의 단락 파싱
                 sub_list = hf_el.find("hp:subList", NS)
                 content: list[Block] = []
                 if sub_list is not None:
@@ -1368,14 +590,10 @@ def _build_para_format(para_pr_id: int, info: DocInfoResult) -> BlockFormat | No
     page_break_before = True if ps.get("start_new_page") else None
     widow_orphan = True if ps.get("protect") else None
 
-    indent_first_raw = ps.get("indent_first_hwp", 0)
-    indent_first = hwpunit_to_pt(indent_first_raw) if indent_first_raw else None
-
     fmt = BlockFormat(
         alignment=align if align in _VALID_ALIGNS else None,
         indent_left=_to_pt(ps.get("indent_left_hwp", 0)),
         indent_right=_to_pt(ps.get("indent_right_hwp", 0)),
-        indent_first=indent_first,
         space_before=_to_pt(ps.get("space_before_hwp", 0)),
         space_after=_to_pt(ps.get("space_after_hwp", 0)),
         line_spacing=line_spacing,
@@ -1488,27 +706,12 @@ def _parse_table(
         row = _parse_table_row(tr_el, info, verbatim_map)
         rows.append(row)
 
-    # 테이블 폭 + 컬럼 폭 추출
-    tbl_width: float | None = None
-    if sz_el is not None:
-        w = int(sz_el.get("width", "0"))
-        if w:
-            tbl_width = w / _HWPUNIT_PER_PT
-    from udf.schema.blocks import TableColumnDef
-    col_widths: list[TableColumnDef] = []
-    if rows:
-        for cell in rows[0].cells:
-            if cell.width:
-                col_widths.append(TableColumnDef(width=cell.width))
-
     verbatim_map[vid] = VerbatimBlock(decoded={"rowCnt": row_cnt, "colCnt": col_cnt})
 
     return TableBlock(
         type="table",
         id=block_id,
         rows=rows,
-        width=tbl_width,
-        col_widths=col_widths,
         position=position,
         cell_spacing=hwpunit_to_pt(cell_spacing) if cell_spacing else None,
         border_fill_id=int(border_fill_id_ref) if border_fill_id_ref else None,
@@ -1558,7 +761,7 @@ def _parse_table_cell(
             height = h / _HWPUNIT_PER_PT
 
     # format
-    bf_id_ref = tc_el.get("borderFillIDRef")
+    tc_el.get("borderFillIDRef")
     cell_margin_el = tc_el.find("hp:cellMargin", NS)
     sub_list_el = tc_el.find("hp:subList", NS)
 
@@ -1590,34 +793,12 @@ def _parse_table_cell(
         if pb:
             padding_bottom = hwpunit_to_pt(pb)
 
-    bg_color: str | None = None
-    cell_borders: dict[str, str] = {}
-    if bf_id_ref:
-        bf_key = str(int(bf_id_ref) - 1) if bf_id_ref.isdigit() and int(bf_id_ref) > 0 else bf_id_ref
-        bf_def = info.global_resources.border_fills.get(bf_key)
-        if bf_def:
-            if bf_def.fill_color:
-                bg_color = bf_def.fill_color
-            _CSS_BORDER = {"dash": "dashed", "dot": "dotted", "dash_dot": "dashed"}
-            for side in ("top", "bottom", "left", "right"):
-                sc = getattr(bf_def, f"border_{side}_color", None)
-                ss = getattr(bf_def, f"border_{side}_style", None)
-                sw = getattr(bf_def, f"border_{side}_width", None)
-                if sc and ss and ss != "none":
-                    w_pt = round((sw if sw else 0.1) * 2.835, 1)
-                    cell_borders[side] = f"{w_pt}pt {_CSS_BORDER.get(ss, 'solid')} {sc}"
-
     cell_format = CellFormat(
         vertical_align=vert_align,
         padding_left=padding_left,
         padding_right=padding_right,
         padding_top=padding_top,
         padding_bottom=padding_bottom,
-        background_color=bg_color,
-        border_top=cell_borders.get("top"),
-        border_bottom=cell_borders.get("bottom"),
-        border_left=cell_borders.get("left"),
-        border_right=cell_borders.get("right"),
     )
 
     # 셀 내용 (subList 안의 단락들)
@@ -1717,28 +898,3 @@ def _extract_from_page_pr(page_pr: etree._Element) -> dict[str, Any]:
             result["column_same_width"] = same_width
 
     return result
-
-
-def parse_masterpage_xml(
-    mp_bytes: bytes, info: DocInfoResult
-) -> list[Block]:
-    """Parse a masterpage XML and extract drawable content (images, shapes)."""
-    root = etree.fromstring(mp_bytes)
-    blocks: list[Block] = []
-    sub_list = root.find("hp:subList", NS)
-    if sub_list is None:
-        return blocks
-
-    for p_el in sub_list.iterfind("hp:p", NS):
-        extra_blocks: list[Block] = []
-        inlines = _collect_inlines(p_el, info, extra_blocks=extra_blocks)
-        if inlines:
-            has_image = any(isinstance(il, ImageInline) for il in inlines)
-            if has_image:
-                block_id = _next_block_id()
-                blocks.append(ParagraphBlock(
-                    type="paragraph", id=block_id, inlines=inlines
-                ))
-        blocks.extend(extra_blocks)
-
-    return blocks

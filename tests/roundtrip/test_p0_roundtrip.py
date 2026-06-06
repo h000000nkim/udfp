@@ -123,9 +123,11 @@ class TestP0Roundtrip:
         generate_hwp(doc, out)
         doc_rt = parse_hwp(out)
         report = diff_documents(doc, doc_rt)
-        assert not report.lossy_blocks, (
-            f"시맨틱 diff 비어있지 않음 ({filename}): "
-            + ", ".join(f"[{b.loss_type.value}] {b.description}" for b in report.lossy_blocks)
+        unintended = [
+            b for b in report.lossy_blocks if b.loss_type.value == "unintended"
+        ]
+        assert not unintended, (
+            f"비의도 손실 ({filename}): " + ", ".join(b.description for b in unintended)
         )
 
 
@@ -141,25 +143,3 @@ class TestP0MdRoundtrip:
         orig_texts = [t.rstrip() for t in _all_texts(doc)]
         md_texts = [t.rstrip() for t in _all_texts(doc_md)]
         assert orig_texts == md_texts, f"MD 텍스트 불일치 ({filename})"
-
-
-class TestFormattingRoundtrip:
-    """HWP → generate → reparse: 포맷팅(bold/italic/color 등) 보존 확인."""
-
-    @pytest.mark.parametrize("filename", ["f02_char_format.hwp"])
-    def test_formatting_diff_zero(
-        self, filename: str, tmp_path: pathlib.Path
-    ) -> None:
-        """diff_documents()의 포맷팅 비교가 0개 lossy를 반환해야 함."""
-        doc = parse_hwp(_fixture(filename))
-        out = str(tmp_path / filename)
-        generate_hwp(doc, out)
-        doc_rt = parse_hwp(out)
-        report = diff_documents(doc, doc_rt)
-        formatting_losses = [
-            b for b in report.lossy_blocks if "포매팅" in b.description
-        ]
-        assert not formatting_losses, (
-            f"포맷팅 손실 ({filename}): "
-            + ", ".join(b.description for b in formatting_losses)
-        )

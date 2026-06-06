@@ -89,8 +89,6 @@ class EquationInline(_Base):
     latex: str | None = None
     hwp_script: str | None = None
     mathml: str | None = None
-    verbatim_ref: str | None = None
-    _eq_trailing: bytes | None = None
 
 
 class RubyInline(_Base):

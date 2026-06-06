@@ -1,9 +1,9 @@
 """DocInfo stream binary patcher for Seed Patch mode.
 
-Supports finding or adding CharShape/BinData records and updating
-ID_MAPPINGS counts without rebuilding the entire DocInfo stream. Used
-by the HWP renderer to apply CharShape overrides and image additions
-during Seed Patch rendering.
+Supports finding or adding CharShape records and updating ID_MAPPINGS
+counts without rebuilding the entire DocInfo stream. Used by the HWP
+renderer to apply CharShape overrides (e.g., changing text color from
+gray to black) during Seed Patch rendering.
 """
 
 from __future__ import annotations
@@ -11,14 +11,12 @@ from __future__ import annotations
 import struct
 
 from udf.parsers.hwp.records import (
-    HWPTAG_BIN_DATA,
     HWPTAG_CHAR_SHAPE,
     HWPTAG_ID_MAPPINGS,
     HwpRecord,
     iter_records,
 )
 
-_IDMAP_BINDATA_OFFSET = 0
 _IDMAP_CS_OFFSET = 36
 
 
@@ -146,48 +144,3 @@ def get_charshape_color(docinfo_bytes: bytes, cs_id: int) -> str | None:
     g = (bgr >> 8) & 0xFF
     b = (bgr >> 16) & 0xFF
     return f"#{r:02x}{g:02x}{b:02x}"
-
-
-def add_bindata_record(
-    docinfo_bytes: bytes,
-    extension: str,
-) -> tuple[bytes, int]:
-    """Add a BIN_DATA record to DocInfo and update ID_MAPPINGS.
-
-    Mirrors the ``add_charshape_clone`` pattern for BinData.
-
-    Returns
-    -------
-    tuple[bytes, int]
-        (new_docinfo_bytes, new_bin_item_id) where bin_item_id is 1-based.
-    """
-    from udf.renderers.hwp.docinfo_builder import BinDataSpec, pack_bin_data
-
-    records = list(iter_records(docinfo_bytes))
-    bd_indices = [(i, r) for i, r in enumerate(records) if r.tag_id == HWPTAG_BIN_DATA]
-
-    new_bin_item_id = len(bd_indices) + 1
-    spec = BinDataSpec(bin_data_id=new_bin_item_id, extension=extension)
-    new_payload = pack_bin_data(spec)
-
-    if bd_indices:
-        insert_after = bd_indices[-1][0]
-        level = bd_indices[-1][1].level
-    else:
-        insert_after = next(
-            (i for i, r in enumerate(records) if r.tag_id == HWPTAG_ID_MAPPINGS), 0
-        )
-        level = 1
-
-    records.insert(insert_after + 1, HwpRecord(HWPTAG_BIN_DATA, level, new_payload, 0))
-
-    for i, rec in enumerate(records):
-        if rec.tag_id == HWPTAG_ID_MAPPINGS:
-            idmap = bytearray(rec.payload)
-            if len(idmap) >= _IDMAP_BINDATA_OFFSET + 4:
-                old_count = struct.unpack_from("<I", idmap, _IDMAP_BINDATA_OFFSET)[0]
-                struct.pack_into("<I", idmap, _IDMAP_BINDATA_OFFSET, old_count + 1)
-                records[i] = HwpRecord(rec.tag_id, rec.level, bytes(idmap), rec.offset)
-            break
-
-    return b"".join(_serialize_record(r) for r in records), new_bin_item_id
