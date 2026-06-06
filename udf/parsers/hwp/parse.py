@@ -59,10 +59,8 @@ def parse_hwp(path: str) -> UdfDocument:
             original_container = ole.original_container
 
             # DocInfo 파싱
-            doc_info_data = ole.read_stream(
-                [_BODY_TEXT_PREFIX.replace("BodyText", "DocInfo")]
-            )
             doc_info_data = ole.read_stream(["DocInfo"])
+            docinfo_b64 = base64.b64encode(doc_info_data).decode()
             info = parse_doc_info(doc_info_data)
 
             # BodyText 섹션 스트림 목록 탐색
@@ -77,6 +75,8 @@ def parse_hwp(path: str) -> UdfDocument:
             all_section_streams: dict[str, str] = {}
             page_def: dict[str, Any] | None = None
             columns_def: dict[str, Any] | None = None
+            _block_start = 0
+            _verb_start = 0
 
             for stream_path in section_streams:
                 try:
@@ -85,9 +85,14 @@ def parse_hwp(path: str) -> UdfDocument:
                     continue
                 section_name = stream_path[-1]
                 all_section_streams[section_name] = base64.b64encode(data).decode()
-                blocks, verb_map = parse_section(data, info, section=section_name)
+                blocks, verb_map = parse_section(
+                    data, info, section=section_name,
+                    block_start=_block_start, verb_start=_verb_start,
+                )
                 all_blocks.extend(blocks)
                 all_verbatim.update(verb_map)
+                _block_start += len(blocks)
+                _verb_start += len(verb_map)
                 if page_def is None:
                     page_def = extract_page_def(data)
                 if columns_def is None:
@@ -119,6 +124,7 @@ def parse_hwp(path: str) -> UdfDocument:
         global_resources=info.global_resources,
         section_streams=all_section_streams,
         bindata_streams=bindata_map,
+        docinfo_stream=docinfo_b64,
     )
 
     sections: list[SectionDef] = []

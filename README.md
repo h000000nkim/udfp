@@ -245,4 +245,6 @@ mypy udf/                     # type check
 
 ## License
 
-MIT
+Business Source License 1.1 (BUSL-1.1) — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+Non-commercial, academic, and personal use is free. For commercial or production use, contact h000000nkim@gmail.com.

@@ -477,8 +477,41 @@ def _pack_face_name(name: str) -> bytes:
 _ALIGN_FROM_ATTR = {0: "justify", 1: "left", 2: "right", 3: "center", 4: "distribute", 5: "divide"}
 
 
+def _read_face_names(seed_docinfo_bytes: bytes) -> list[list[str]]:
+    """Parse FaceName records from seed DocInfo into per-category name lists.
+
+    Returns 7 lists (hangul, latin, hanja, japanese, other, symbol, user),
+    each containing font name strings indexed by face_id.
+    """
+    faces_per_cat = _count_seed_faces(seed_docinfo_bytes)
+    if faces_per_cat == 0:
+        return [[] for _ in range(7)]
+    names: list[str] = []
+    for rec in iter_records(seed_docinfo_bytes):
+        if rec.tag_id != HWPTAG_FACE_NAME:
+            continue
+        p = rec.payload
+        if len(p) < 3:
+            names.append("")
+            continue
+        name_len = struct.unpack_from("<H", p, 1)[0]
+        if len(p) >= 3 + name_len * 2:
+            names.append(p[3:3 + name_len * 2].decode("utf-16-le", "replace"))
+        else:
+            names.append("")
+    result: list[list[str]] = [[] for _ in range(7)]
+    for cat in range(7):
+        start = cat * faces_per_cat
+        end = start + faces_per_cat
+        result[cat] = names[start:end]
+    return result
+
+
 def read_seed_charshapes(seed_docinfo_bytes: bytes) -> list[CharShapeSpec]:
     """Parse CharShape records from seed DocInfo into CharShapeSpec list.
+
+    Reads all fields that participate in _charshape_key comparison,
+    including font name resolution via FaceName records.
 
     Parameters
     ----------
@@ -490,15 +523,45 @@ def read_seed_charshapes(seed_docinfo_bytes: bytes) -> list[CharShapeSpec]:
     list[CharShapeSpec]
         Parsed character shape specifications.
     """
+    face_names = _read_face_names(seed_docinfo_bytes)
+    hangul_names = face_names[0] if face_names else []
+
     result: list[CharShapeSpec] = []
     for rec in iter_records(seed_docinfo_bytes):
         if rec.tag_id != HWPTAG_CHAR_SHAPE or len(rec.payload) < 56:
             continue
         p = rec.payload
+        face_hangul = struct.unpack_from("<H", p, 0)[0]
+        face_latin = struct.unpack_from("<H", p, 2)[0]
+        ratio_hangul = p[14] if len(p) > 14 else 100
+        spacing_hangul = struct.unpack_from("<b", p, 21)[0] if len(p) > 21 else 0
+        offset_hangul = struct.unpack_from("<b", p, 35)[0] if len(p) > 35 else 0
         base_size = struct.unpack_from("<i", p, 42)[0]
         attr = struct.unpack_from("<I", p, 46)[0]
         text_color = struct.unpack_from("<I", p, 52)[0]
+        ul_color = struct.unpack_from("<I", p, 56)[0] if len(p) > 59 else 0
+        shade_color = struct.unpack_from("<I", p, 60)[0] if len(p) > 63 else 0xFFFFFF
+        strike_color = struct.unpack_from("<I", p, 70)[0] if len(p) > 73 else 0
+
+        font_name = None
+        if face_hangul < len(hangul_names) and hangul_names[face_hangul]:
+            font_name = hangul_names[face_hangul]
+
+        outline = bool((attr >> 8) & 0x07)
+        shadow_type = (attr >> 11) & 0x03
+        emboss = bool(attr & (1 << 13))
+        engrave = bool(attr & (1 << 14))
+        superscript = False
+        subscript = False
+        rel_hangul = p[28] if len(p) > 28 else 100
+        if rel_hangul < 100 and offset_hangul > 0:
+            superscript = True
+        elif rel_hangul < 100 and offset_hangul < 0:
+            subscript = True
+
         result.append(CharShapeSpec(
+            face_hangul=face_hangul,
+            face_latin=face_latin,
             size_pt=base_size / 100.0,
             bold=bool(attr & 0x02),
             italic=bool(attr & 0x01),
@@ -507,6 +570,25 @@ def read_seed_charshapes(seed_docinfo_bytes: bytes) -> list[CharShapeSpec]:
             color_r=text_color & 0xFF,
             color_g=(text_color >> 8) & 0xFF,
             color_b=(text_color >> 16) & 0xFF,
+            font_name=font_name,
+            outline=outline,
+            shadow_type=shadow_type,
+            emboss=emboss,
+            engrave=engrave,
+            superscript=superscript,
+            subscript=subscript,
+            char_scale=ratio_hangul,
+            letter_spacing=spacing_hangul,
+            char_offset=offset_hangul,
+            underline_color_r=ul_color & 0xFF,
+            underline_color_g=(ul_color >> 8) & 0xFF,
+            underline_color_b=(ul_color >> 16) & 0xFF,
+            bg_color_r=shade_color & 0xFF,
+            bg_color_g=(shade_color >> 8) & 0xFF,
+            bg_color_b=(shade_color >> 16) & 0xFF,
+            strike_color_r=strike_color & 0xFF,
+            strike_color_g=(strike_color >> 8) & 0xFF,
+            strike_color_b=(strike_color >> 16) & 0xFF,
         ))
     return result
 

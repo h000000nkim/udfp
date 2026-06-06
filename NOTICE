@@ -1,0 +1,10 @@
+UDF / UDFP (Universal Document Format)
+Copyright 2026 Hoon Kim <h000000nkim@gmail.com>
+
+This product includes software developed by Hoon Kim.
+
+UDF is the core library (document model, parsers, renderers).
+UDFP is the protocol layer (MCP server) built on top of UDF.
+Both are distributed under the PyPI package name "udfp".
+
+https://github.com/h000000nkim/udfp

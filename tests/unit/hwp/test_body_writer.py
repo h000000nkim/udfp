@@ -239,3 +239,65 @@ class TestApplyParagraphPatches:
     def test_no_patch_returns_original(self) -> None:
         stream = _make_section_stream("hello")
         assert apply_paragraph_patches(stream, []) is stream
+
+
+class TestPcsMultiEdit:
+    """BUG-215: PCS adjustment with multi-edit (text changed on both sides of ctrl)."""
+
+    def test_ctrl_anchor_preserves_pcs_at_ctrl(self):
+        """PCS entry at ctrl position maps to new ctrl position."""
+        from udf.renderers.hwp.body_writer import _adjust_pcs_positions
+
+        # Old: "AB" + [16B ctrl] + "CD" + CR = 2+8+2+1 = 13 chars
+        ctrl = _ctrl16(0x000B)
+        old_pt = _utf16("AB") + ctrl + _utf16("CD") + b"\x0d\x00"
+        # New: "XYZ" + [16B ctrl] + "W" + CR = 3+8+1+1 = 13 chars
+        new_pt = _utf16("XYZ") + ctrl + _utf16("W") + b"\x0d\x00"
+
+        # PCS: pos=0 → cs0, pos=2 → cs1 (at ctrl start)
+        pcs = [
+            struct.pack("<II", 0, 10),
+            struct.pack("<II", 2, 20),
+        ]
+        result = _adjust_pcs_positions(old_pt, new_pt, pcs)
+
+        positions = [struct.unpack_from("<I", e, 0)[0] for e in result]
+        cs_ids = [struct.unpack_from("<I", e, 4)[0] for e in result]
+        assert positions[0] == 0
+        assert positions[1] == 3  # ctrl moved from pos 2 to pos 3
+        assert cs_ids == [10, 20]
+
+    def test_both_sides_changed_different_lengths(self):
+        """Text changes on both sides with different length deltas."""
+        from udf.renderers.hwp.body_writer import _adjust_pcs_positions
+
+        # Old: "AB" + [ctrl] + "CD" + CR = 2+8+2+1 = 13 chars (26 bytes)
+        ctrl = _ctrl16(0x000B)
+        old_pt = _utf16("AB") + ctrl + _utf16("CD") + b"\x0d\x00"
+        # New: "XYZW" + [ctrl] + "V" + CR = 4+8+1+1 = 14 chars (28 bytes)
+        new_pt = _utf16("XYZW") + ctrl + _utf16("V") + b"\x0d\x00"
+
+        # PCS: pos=0→cs0, pos=2→cs1 (ctrl), pos=10→cs2 (after ctrl)
+        pcs = [
+            struct.pack("<II", 0, 10),
+            struct.pack("<II", 2, 20),
+            struct.pack("<II", 10, 30),
+        ]
+        result = _adjust_pcs_positions(old_pt, new_pt, pcs)
+        positions = [struct.unpack_from("<I", e, 0)[0] for e in result]
+        # pos 0 → 0 (start), pos 2 → 4 (ctrl), pos 10 → 12 (after ctrl)
+        assert positions[0] == 0
+        assert positions[1] == 4
+        assert positions[2] == 12
+
+    def test_no_ctrl_falls_back_to_prefix_suffix(self):
+        """Without ctrls, use prefix/suffix matching (backwards compat)."""
+        from udf.renderers.hwp.body_writer import _adjust_pcs_positions
+
+        old_pt = _utf16("Hello world") + b"\x0d\x00"
+        new_pt = _utf16("Hello earth") + b"\x0d\x00"
+
+        pcs = [struct.pack("<II", 0, 10)]
+        result = _adjust_pcs_positions(old_pt, new_pt, pcs)
+        assert len(result) == 1
+        assert struct.unpack_from("<I", result[0], 0)[0] == 0

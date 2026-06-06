@@ -32,6 +32,27 @@ doc.replace_text("old", "new")          # global find and replace
 matches = doc.find_text(r"\d{4}-\d{2}") # regex search → list of (block_id, match)
 ```
 
+### Template Fill
+
+Replace `{{placeholder}}` patterns across the entire document. Works with Seed Patch for lossless form filling.
+
+```python
+# HWP 양식에 {{이름}}, {{학번}} 등을 미리 입력해두고:
+doc = udf.parse("template.hwp")
+result = doc.fill_template({
+    "이름": "김훈",
+    "학번": "30217",
+    "희망진로": "AI 엔지니어",
+})
+doc.to("hwp", "filled.hwp")  # Seed Patch → 양식 100% 보존
+
+# 커스텀 delimiter
+doc.fill_template({"name": "Kim"}, delimiter=("{%", "%}"))
+
+# strict 모드: 미매칭 placeholder가 남으면 ValueError
+doc.fill_template(values, strict=True)
+```
+
 ### Block CRUD
 
 All block operations perform deep tree search (including inside table cells, text boxes, etc.).
@@ -67,6 +88,32 @@ doc.add_table_column("table_id", at=1)
 doc.remove_table_column("table_id", 2)
 doc.merge_cells("table_id", r1=0, c1=0, r2=1, c2=1)
 ```
+
+### Table Layout Control
+
+Fix cell sizes to preserve form layouts when rendering.
+
+```python
+tbl = doc.tables[0]
+
+# 래퍼 메서드 — 자주 쓰는 패턴
+tbl.freeze_columns()           # 모든 열 너비 고정
+tbl.freeze_rows([0, 1, 2])     # 특정 행 높이 고정
+tbl.freeze_cell(0, 0)          # 특정 셀 너비+높이 고정
+tbl.freeze_labels(label_col=0) # 레이블 열 너비+높이 고정
+
+# 저수준 — 셀 단위 제어
+cell = tbl.rows[0].cells[0]
+cell.fixed_width = True        # 이 셀의 width를 최종 값으로 사용
+cell.fixed_height = True       # 이 셀의 height를 고정
+
+# layout_type으로 전체 제어
+tbl.layout_type = "auto"       # 텍스트 기반 자동 크기 (기본은 freeze)
+```
+
+!!! note "기본 동작"
+    `layout_type`이 설정되지 않으면(None) 원본 셀 크기가 자동 보존됩니다.
+    텍스트 기반 자동 크기 조정이 필요하면 `tbl.layout_type = "auto"`로 명시하세요.
 
 ### Rendering
 

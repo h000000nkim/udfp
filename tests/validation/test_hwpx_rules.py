@@ -6,7 +6,6 @@ HX1-HX4 양성(정상 fixture 통과) + 음성(corruption 주입 → 감지) 테
 from __future__ import annotations
 
 import pathlib
-import shutil
 import zipfile
 
 import pytest
@@ -16,6 +15,9 @@ from udf.validation.hwpx.rules import (
     check_hx2,
     check_hx3,
     check_hx4,
+    check_hx5,
+    check_hx6,
+    check_hx7,
     validate_hwpx,
 )
 
@@ -142,6 +144,64 @@ class TestHX4:
         )
         violations = check_hx4(dest)
         assert len(violations) >= 3, f"Expected charPr+paraPr+style+fontface violations, got {len(violations)}"
+
+
+# ---------------------------------------------------------------------------
+# HX5: 네임스페이스 정확성
+# ---------------------------------------------------------------------------
+
+
+class TestHX5:
+    @pytest.mark.parametrize("filename", ALL_FIXTURES)
+    def test_passes_on_fixture(self, filename: str) -> None:
+        violations = check_hx5(_fixture(filename))
+        assert violations == [], f"HX5 violations: {[v.message for v in violations]}"
+
+    def test_detects_wrong_header_namespace(self, tmp_path: pathlib.Path) -> None:
+        dest = str(tmp_path / "bad_ns.hwpx")
+        bad_header = (
+            b'<?xml version="1.0" encoding="UTF-8"?>'
+            b'<hh:head xmlns:hh="http://wrong.namespace/"></hh:head>'
+        )
+        _corrupt_zip(
+            _fixture(ALL_FIXTURES[0]), dest,
+            replace_entries={"Contents/header.xml": bad_header},
+        )
+        violations = check_hx5(dest)
+        assert any("ns=" in v.message for v in violations)
+
+
+# ---------------------------------------------------------------------------
+# HX6: BinData 참조 무결성
+# ---------------------------------------------------------------------------
+
+
+class TestHX6:
+    @pytest.mark.parametrize("filename", ALL_FIXTURES)
+    def test_passes_on_fixture(self, filename: str) -> None:
+        violations = check_hx6(_fixture(filename))
+        assert violations == [], f"HX6 violations: {[v.message for v in violations]}"
+
+
+# ---------------------------------------------------------------------------
+# HX7: XML well-formedness
+# ---------------------------------------------------------------------------
+
+
+class TestHX7:
+    @pytest.mark.parametrize("filename", ALL_FIXTURES)
+    def test_passes_on_fixture(self, filename: str) -> None:
+        violations = check_hx7(_fixture(filename))
+        assert violations == [], f"HX7 violations: {[v.message for v in violations]}"
+
+    def test_detects_malformed_xml(self, tmp_path: pathlib.Path) -> None:
+        dest = str(tmp_path / "bad_xml.hwpx")
+        _corrupt_zip(
+            _fixture(ALL_FIXTURES[0]), dest,
+            replace_entries={"Contents/header.xml": b"<not-closed>"},
+        )
+        violations = check_hx7(dest)
+        assert any("header.xml" in v.message for v in violations)
 
 
 # ---------------------------------------------------------------------------

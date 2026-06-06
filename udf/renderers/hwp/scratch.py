@@ -404,10 +404,21 @@ def _resolve_cs_ids(
     final_map: dict[tuple, int] = {}
     new_specs: list[CharShapeSpec] = []
 
+    _FONT_NAME_IDX = 8
+
     for key, idx in cs_map.items():
         if key in seed_keys:
             final_map[key] = seed_keys[key]
         else:
+            if key[_FONT_NAME_IDX] is None:
+                match_id = None
+                for sk, si in seed_keys.items():
+                    if key[:_FONT_NAME_IDX] == sk[:_FONT_NAME_IDX] and key[_FONT_NAME_IDX + 1:] == sk[_FONT_NAME_IDX + 1:]:
+                        match_id = si
+                        break
+                if match_id is not None:
+                    final_map[key] = match_id
+                    continue
             final_map[key] = seed_count + len(new_specs)
             new_specs.append(cs_list[idx])
 
@@ -669,6 +680,16 @@ class _ImageRef:
 
 
 @dataclass
+class EqTrailing:
+    """EQEDIT trailing fields from verbatim."""
+    base_unit: int
+    text_color: int
+    base_line: int
+    unknown: int = 0
+    version_len: int = 0
+
+
+@dataclass
 class _BuildCtx:
     """블록 빌더들이 공유하는 컨텍스트."""
     cs_map: dict[tuple, int]
@@ -687,6 +708,7 @@ class _BuildCtx:
     doc: UdfDocument | None = None
     unordered_list_ps_id: int = 0
     has_page_bg_image: bool = False
+    eq_trailing_map: dict[str, EqTrailing] = dataclass_field(default_factory=dict)
 
 
 def _extract_text_from_blocks(blocks: list[Block], cs_map: dict[tuple, int]) -> list[TextSpan]:
@@ -757,10 +779,12 @@ def _build_heading(block: HeadingBlock, vpos: int, ctx: _BuildCtx, is_last: bool
     ps = _parashape_from_block(block, default_ls=ctx.line_spacing_pct)
     pk = _parashape_key(ps)
     ps_id = ctx.ps_map.get(pk, 0)
+    orig_pls = _get_original_pls(block, ctx)
     return build_paragraph(
         spans, ps_id=ps_id, style_id=style_id, vpos=vpos,
         content_width=ctx.content_width, font_size_hu=ctx.font_size_hu,
         line_spacing_pct=ctx.line_spacing_pct, is_last=is_last,
+        original_pls=orig_pls,
     )
 
 
@@ -787,6 +811,13 @@ def _get_original_pls(block: ParagraphBlock, ctx: _BuildCtx) -> bytes | None:
 
 def _build_para(block: ParagraphBlock, vpos: int, ctx: _BuildCtx, is_last: bool) -> BuildResult:
     """Build records for a ParagraphBlock."""
+    has_eq = any(isinstance(il, EquationInline) for il in block.inlines)
+    if has_eq:
+        from udf.renderers.hwp.body_builder import _PH_MAGIC
+        return _build_para_with_eqs(
+            block, ctx, rec_level=0, content_width=ctx.content_width,
+            is_last=is_last, vpos=vpos, instance_id=_PH_MAGIC,
+        )
     ps = _parashape_from_block(block, default_ls=ctx.line_spacing_pct)
     pk = _parashape_key(ps)
     ps_id = ctx.ps_map.get(pk, 0)
@@ -856,6 +887,277 @@ def _compute_col_widths_merged(rows: list, n_cols: int) -> list[int] | None:
     return None
 
 
+def _cell_needs_multi_build(cell_content: list[Block]) -> bool:
+    """Check if a cell needs multi-block building (multi-paragraph, equation, or nested table)."""
+    if len(cell_content) > 1:
+        return True
+    for cb in cell_content:
+        if isinstance(cb, (EquationBlock, ListBlock, TableBlock)):
+            return True
+        if isinstance(cb, ParagraphBlock):
+            for il in cb.inlines:
+                if isinstance(il, EquationInline):
+                    return True
+    return False
+
+
+def _build_para_with_eqs(
+    block: ParagraphBlock,
+    ctx: _BuildCtx,
+    rec_level: int,
+    content_width: int,
+    is_last: bool,
+    vpos: int = 0,
+    instance_id: int = 0,
+) -> tuple[bytes, int]:
+    """Build a paragraph with inline equation controls (CTRL_HEADER + EQEDIT).
+
+    Works for both cell paragraphs (instance_id=0) and top-level paragraphs
+    (instance_id=_PH_MAGIC).
+    """
+    eq_inlines: list[EquationInline] = []
+    for il in block.inlines:
+        if isinstance(il, EquationInline):
+            eq_inlines.append(il)
+    if not eq_inlines:
+        spans = _spans_for_paragraph(block, ctx.cs_map)
+        ps = _parashape_from_block(block, default_ls=ctx.line_spacing_pct)
+        pk = _parashape_key(ps)
+        ps_id = ctx.ps_map.get(pk, 0)
+        orig_pls = _get_original_pls(block, ctx)
+        return build_paragraph(
+            spans, ps_id=ps_id, level=rec_level,
+            is_last=is_last, vpos=vpos,
+            content_width=content_width,
+            font_size_hu=ctx.font_size_hu,
+            line_spacing_pct=ctx.line_spacing_pct,
+            original_pls=orig_pls,
+        )
+
+    from udf.renderers.hwp.body_builder import (
+        _pack_record, _build_para_header, _build_pls,
+        _build_inline_ctrl_obj, _sanitize_text,
+        _CTRL_CODE_EQED, _CTRL_ID_EQED,
+        _ctrl_mask_from_text,
+        HWPTAG_PARA_HEADER, HWPTAG_PARA_TEXT, HWPTAG_PARA_CHAR_SHAPE,
+        HWPTAG_PARA_LINE_SEG, HWPTAG_CTRL_HEADER, HWPTAG_EQEDIT,
+    )
+
+    # Build PARA_TEXT with interleaved text and inline ctrl objects
+    pt_payload = b""
+    pcs_entries: list[tuple[int, int]] = []
+    char_pos = 0
+    eq_scripts: list[str] = []
+    eq_trailings: list[bytes | None] = []
+
+    for il in block.inlines:
+        if isinstance(il, EquationInline):
+            inline_obj = _build_inline_ctrl_obj(_CTRL_CODE_EQED, _CTRL_ID_EQED)
+            pt_payload += inline_obj
+            eq_scripts.append(il.hwp_script or il.latex or "")
+            eq_trailings.append(getattr(il, "_eq_trailing", None))
+            char_pos += 8  # inline ctrl = 8 charCnt units
+        elif isinstance(il, TextInline):
+            text = il.text or ""
+            if not text:
+                continue
+            cs = _charshape_from_inline(il)
+            ck = _charshape_key(cs)
+            cs_id = ctx.cs_map.get(ck, 0)
+            pcs_entries.append((char_pos, cs_id))
+            pt_payload += _sanitize_text(text).encode("utf-16-le")
+            char_pos += len(text)
+        else:
+            text = _extract_inline_text(il)
+            if text:
+                pcs_entries.append((char_pos, 0))
+                pt_payload += _sanitize_text(text).encode("utf-16-le")
+                char_pos += len(text)
+
+    pt_payload += b"\x0d\x00"  # CR
+    char_cnt = len(pt_payload) // 2
+
+    if not pcs_entries:
+        pcs_entries = [(0, 0)]
+    pcs_buf = b""
+    for pos, cs_id in pcs_entries:
+        pcs_buf += struct.pack("<II", pos, cs_id)
+
+    pls = _build_pls(char_cnt, vpos=vpos, dist=content_width,
+                     line_spacing_pct=ctx.line_spacing_pct)
+    ls_count = len(pls) // 36
+
+    full_text = "".join(il.text or "" for il in block.inlines if isinstance(il, TextInline))
+    ctrl_mask = _ctrl_mask_from_text(full_text)
+    if eq_scripts:
+        ctrl_mask |= 0x00000800  # inline ctrl bit
+
+    ps = _parashape_from_block(block, default_ls=ctx.line_spacing_pct)
+    pk = _parashape_key(ps)
+    ps_id = ctx.ps_map.get(pk, 0)
+
+    ph = _build_para_header(
+        char_cnt=char_cnt,
+        cs_count=len(pcs_entries),
+        ls_count=ls_count,
+        ps_id=ps_id,
+        control_mask=ctrl_mask,
+        is_last=is_last,
+        instance_id=instance_id,
+    )
+
+    out = _pack_record(HWPTAG_PARA_HEADER, rec_level, ph)
+    out += _pack_record(HWPTAG_PARA_TEXT, rec_level + 1, pt_payload)
+    out += _pack_record(HWPTAG_PARA_CHAR_SHAPE, rec_level + 1, pcs_buf)
+    out += _pack_record(HWPTAG_PARA_LINE_SEG, rec_level + 1, pls)
+
+    for i, script in enumerate(eq_scripts):
+        ctrl_payload = _CTRL_ID_EQED
+        ctrl_payload += struct.pack("<I", 0x0C2A2211)
+        ctrl_payload += struct.pack("<ii", 0, 0)
+        ctrl_payload += struct.pack("<II", ctx.font_size_hu * 4, ctx.font_size_hu * 2)
+        ctrl_payload += struct.pack("<hh", 0, 0)
+        ctrl_payload += struct.pack("<4H", 56, 56, 0, 0)
+        ctrl_payload += struct.pack("<I", 0)
+        ctrl_payload += struct.pack("<IH", 0, 0)  # trailing (6B)
+        out += _pack_record(HWPTAG_CTRL_HEADER, rec_level + 1, ctrl_payload)
+
+        script_bytes = script.encode("utf-16-le")
+        eqedit = struct.pack("<I", 0)
+        eqedit += struct.pack("<H", len(script))
+        eqedit += script_bytes
+        # trailing fields (14B) — 원본 verbatim 우선, fallback 상수
+        raw_trailing = eq_trailings[i] if i < len(eq_trailings) else None
+        if raw_trailing and len(raw_trailing) >= 14:
+            eqedit += raw_trailing[:14]
+        else:
+            # script-based lookup from verbatim section stream
+            tr = ctx.eq_trailing_map.get(f"_script:{script}")
+            if tr:
+                eqedit += struct.pack("<I", tr.base_unit)
+                eqedit += struct.pack("<I", tr.text_color)
+                eqedit += struct.pack("<H", tr.base_line)
+                eqedit += struct.pack("<H", tr.unknown)
+                eqedit += struct.pack("<H", tr.version_len)
+            else:
+                eqedit += struct.pack("<I", ctx.font_size_hu)
+                eqedit += struct.pack("<I", 0x00000000)
+                eqedit += struct.pack("<H", 84)
+                eqedit += struct.pack("<H", 0)
+                eqedit += struct.pack("<H", 0)
+        out += _pack_record(HWPTAG_EQEDIT, rec_level + 2, eqedit)
+
+    line_height = ctx.font_size_hu * ctx.line_spacing_pct // 100
+    return out, max(line_height, ctx.font_size_hu * 2) if eq_scripts else line_height
+
+
+def _build_cell_content(
+    cell_blocks: list[Block],
+    ctx: _BuildCtx,
+    cell_level: int,
+    cell_cw: int,
+) -> tuple[bytes, int]:
+    """Build all records for a cell's content blocks individually.
+
+    Returns (record_bytes, para_count) where para_count counts paragraphs
+    for the LIST_HEADER.
+    """
+    total_bytes = b""
+    para_count = 0
+    n_blocks = len(cell_blocks)
+
+    for bi, cb in enumerate(cell_blocks):
+        (bi == n_blocks - 1)
+
+        if isinstance(cb, ParagraphBlock):
+            has_eq = any(isinstance(il, EquationInline) for il in cb.inlines)
+            if has_eq:
+                rec, h = _build_para_with_eqs(
+                    cb, ctx, cell_level, cell_cw, is_last=False)
+            else:
+                spans = _spans_for_paragraph(cb, ctx.cs_map)
+                ps = _parashape_from_block(cb, default_ls=ctx.line_spacing_pct)
+                pk = _parashape_key(ps)
+                ps_id = ctx.ps_map.get(pk, 0)
+                orig_pls = _get_original_pls(cb, ctx)
+                rec, h = build_paragraph(
+                    spans, ps_id=ps_id, level=cell_level,
+                    is_last=False, vpos=0,
+                    content_width=cell_cw,
+                    font_size_hu=ctx.font_size_hu,
+                    line_spacing_pct=ctx.line_spacing_pct,
+                    original_pls=orig_pls,
+                )
+            total_bytes += rec
+            para_count += 1
+
+        elif isinstance(cb, HeadingBlock):
+            level_h = max(1, min(cb.level, 6))
+            heading_size = _HEADING_SIZE_PT[level_h]
+            cs = CharShapeSpec(size_pt=heading_size, bold=True)
+            ck = _charshape_key(cs)
+            bold_cs_id = ctx.cs_map.get(ck, 0)
+            spans = [TextSpan(cb.text, bold_cs_id)]
+            rec, h = build_paragraph(
+                spans, level=cell_level,
+                is_last=False, vpos=0,
+                content_width=cell_cw,
+                font_size_hu=ctx.font_size_hu,
+                line_spacing_pct=ctx.line_spacing_pct,
+            )
+            total_bytes += rec
+            para_count += 1
+
+        elif isinstance(cb, EquationBlock):
+            script = getattr(cb, "hwp_script", None) or getattr(cb, "latex", "") or ""
+            rec, h = build_equation(
+                script, 0, level=cell_level,
+                font_size_hu=ctx.font_size_hu,
+                line_spacing_pct=ctx.line_spacing_pct,
+            )
+            total_bytes += rec
+            para_count += 1
+
+        elif isinstance(cb, TableBlock):
+            result = _build_table_block(cb, 0, ctx, False)
+            if result:
+                rec, h = result
+                if cell_level > 0:
+                    from udf.renderers.hwp.body_builder import _bump_record_levels
+                    rec = _bump_record_levels(rec, cell_level)
+                total_bytes += rec
+                para_count += 1
+
+        elif isinstance(cb, ImageBlock):
+            continue
+
+        else:
+            spans = _extract_text_from_blocks([cb], ctx.cs_map)
+            if spans and spans != [TextSpan("", 0)]:
+                rec, h = build_paragraph(
+                    spans, level=cell_level,
+                    is_last=False, vpos=0,
+                    content_width=cell_cw,
+                    font_size_hu=ctx.font_size_hu,
+                    line_spacing_pct=ctx.line_spacing_pct,
+                )
+                total_bytes += rec
+                para_count += 1
+
+    if para_count == 0:
+        rec, h = build_paragraph(
+            [TextSpan("", 0)], level=cell_level,
+            is_last=False, vpos=0,
+            content_width=cell_cw,
+            font_size_hu=ctx.font_size_hu,
+            line_spacing_pct=ctx.line_spacing_pct,
+        )
+        total_bytes = rec
+        para_count = 1
+
+    return total_bytes, para_count
+
+
 def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: bool) -> BuildResult:
     """Build records for a TableBlock with cell content."""
     cell_texts: list[list[list[TextSpan]]] = []
@@ -864,17 +1166,25 @@ def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: b
     cell_merges: list[list[tuple[int, int]]] = []
     cell_images: list[list[list[CellImageInfo]]] = []
     cell_valigns: list[list[str]] = []
+    cell_pls_data: list[list[bytes | None]] = []
     has_merges = False
     has_cell_images = False
+    has_cell_pls = False
     for row in block.rows:
         row_spans: list[list[TextSpan]] = []
         row_bfs: list[int] = []
         row_ps: list[int] = []
         row_merges: list[tuple[int, int]] = []
         row_imgs: list[list[CellImageInfo]] = []
+        row_pls: list[bytes | None] = []
         for cell in row.cells:
             spans = _extract_text_from_blocks(cell.content, ctx.cs_map)
             row_spans.append(spans)
+            first_cb = cell.content[0] if cell.content else None
+            cpls = _get_original_pls(first_cb, ctx) if first_cb and isinstance(first_cb, ParagraphBlock) else None
+            row_pls.append(cpls)
+            if cpls:
+                has_cell_pls = True
 
             # Collect ImageBlock/ImageInline from cell content
             imgs: list[CellImageInfo] = []
@@ -977,6 +1287,7 @@ def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: b
         cell_merges.append(row_merges)
         cell_images.append(row_imgs)
         cell_valigns.append(row_valigns)
+        cell_pls_data.append(row_pls)
     n_rows = len(block.rows)
     n_cols = _compute_logical_cols(block.rows) if has_merges else max((len(r.cells) for r in block.rows), default=1)
     from collections import Counter as _Ctr
@@ -988,8 +1299,17 @@ def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: b
                 if _cf and _cf.line_spacing and hasattr(_cf.line_spacing, "percent"):
                     _cell_ls[round(_cf.line_spacing.percent)] += 1
     tbl_ls = _cell_ls.most_common(1)[0][0] if _cell_ls else ctx.line_spacing_pct
+    has_any_fixed_w = any(
+        c.fixed_width for row in block.rows for c in row.cells
+    )
+    is_fixed = block.layout_type != "auto"
+
     col_widths: list[int] | None = None
-    if block.col_widths and len(block.col_widths) == n_cols:
+    if (is_fixed or has_any_fixed_w) and block.rows and len(block.rows[0].cells) == n_cols:
+        col_widths = [round((c.width or 0) * 100) for c in block.rows[0].cells]
+        if not all(w > 0 for w in col_widths):
+            col_widths = None
+    if col_widths is None and block.col_widths and len(block.col_widths) == n_cols:
         col_widths = [round((cd.width or 0) * 100) for cd in block.col_widths]
         if not all(w > 0 for w in col_widths):
             col_widths = None
@@ -1017,13 +1337,46 @@ def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: b
             row_w.append(round((cell.width or 0) * 100))
         cell_w_hint.append(row_w)
 
+    freeze_row_flags: list[bool] = []
     row_h_hint: list[int] = []
-    for row in block.rows:
-        rh = round((row.height or 0) * 100) if row.height else 0
+    for ri, row in enumerate(block.rows):
+        row_frozen = is_fixed or all(c.fixed_height for c in row.cells)
+        freeze_row_flags.append(row_frozen)
+        single_span = [c for c in row.cells if (c.row_span or 1) == 1]
+        if single_span:
+            rh = max(round((c.height or 0) * 100) for c in single_span)
+        else:
+            rh = round((row.height or 0) * 100) if row.height else 0
         if not rh:
-            max_cell_h = max((round((c.height or 0) * 100) for c in row.cells), default=0)
-            rh = max_cell_h
+            rh = max((round((c.height or 0) * 100) for c in row.cells), default=0)
         row_h_hint.append(rh)
+
+    # Pre-build multi-block cell content (multi-paragraph, equations, etc.)
+    cell_cb_data: list[list[tuple[bytes, int]]] | None = None
+    needs_multi = any(
+        _cell_needs_multi_build(cell.content)
+        for row in block.rows for cell in row.cells
+    )
+    if needs_multi:
+        from udf.renderers.hwp.body_builder import _DEFAULT_CELL_PADDING_H
+        # Compute col_widths for cell content width (fallback to equal distribution)
+        effective_cw = col_widths
+        if effective_cw is None:
+            from udf.renderers.hwp.body_builder import _auto_col_widths
+            effective_cw = _auto_col_widths(n_cols, cell_texts, ctx.content_width, ctx.font_size_hu)
+        cell_cb_data = []
+        for ri, row in enumerate(block.rows):
+            row_cb: list[tuple[bytes, int]] = []
+            logical_ci = 0
+            for di, cell in enumerate(row.cells):
+                cs_span = getattr(cell, "col_span", 1) or 1
+                cw_sum = sum(effective_cw[logical_ci:logical_ci + cs_span]) if logical_ci + cs_span <= len(effective_cw) else effective_cw[0] if effective_cw else ctx.content_width
+                cell_cw = max(1, cw_sum - 2 * _DEFAULT_CELL_PADDING_H)
+                cb_bytes, cb_pc = _build_cell_content(
+                    cell.content, ctx, cell_level=2, cell_cw=cell_cw)
+                row_cb.append((cb_bytes, cb_pc))
+                logical_ci += cs_span
+            cell_cb_data.append(row_cb)
 
     return build_table(
         n_rows, n_cols, cell_texts, ctx.content_width, vpos,
@@ -1036,13 +1389,27 @@ def _build_table_block(block: TableBlock, vpos: int, ctx: _BuildCtx, _is_last: b
         cell_merges=cell_merges if has_merges else None,
         cell_images=cell_images if has_cell_images else None,
         row_heights_hint=row_h_hint if any(h > 0 for h in row_h_hint) else None,
+        freeze_row_heights=freeze_row_flags if any(freeze_row_flags) else None,
         cell_valigns=cell_valigns if any(va != "top" for row_va in cell_valigns for va in row_va) else None,
         tbl_cell_spacing=round((block.cell_spacing or 0) * 100),
         tbl_padding=_tbl_padding(block),
+        cell_original_pls=cell_pls_data if has_cell_pls else None,
+        cell_content_bytes=cell_cb_data,
+        freeze_layout=block.layout_type != "auto",
     )
 
 
 def _tbl_padding(block) -> tuple[int, int, int, int] | None:
+    if block.rows:
+        cell = block.rows[0].cells[0] if block.rows[0].cells else None
+        cf = getattr(cell, "format", None) if cell else None
+        if cf:
+            pl = getattr(cf, "padding_left", None)
+            pr = getattr(cf, "padding_right", None)
+            pt = getattr(cf, "padding_top", None)
+            pb = getattr(cf, "padding_bottom", None)
+            if pl is not None and pr is not None and pt is not None and pb is not None:
+                return (round(pl * 100), round(pr * 100), round(pt * 100), round(pb * 100))
     dp = block.default_padding
     if dp is None:
         return None
@@ -1053,9 +1420,18 @@ def _tbl_padding(block) -> tuple[int, int, int, int] | None:
 def _build_equation_block(block: EquationBlock, vpos: int, ctx: _BuildCtx, _is_last: bool) -> BuildResult:
     """Build records for an EquationBlock."""
     script = getattr(block, "hwp_script", None) or getattr(block, "latex", "") or ""
+    # verbatim trailing lookup (verbatim_ref 또는 script 기반)
+    vref = getattr(block, "verbatim_ref", None)
+    tr = ctx.eq_trailing_map.get(vref) if vref else None
+    if not tr:
+        tr = ctx.eq_trailing_map.get(f"_script:{script}")
+    trailing_bytes: bytes | None = None
+    if tr:
+        trailing_bytes = struct.pack("<IIHhH", tr.base_unit, tr.text_color, tr.base_line, tr.unknown, tr.version_len)
     return build_equation(
         script, vpos,
         font_size_hu=ctx.font_size_hu, line_spacing_pct=ctx.line_spacing_pct,
+        eq_trailing=trailing_bytes,
     )
 
 
@@ -1168,7 +1544,8 @@ def _sample_bg_image_color(doc: UdfDocument | None, x: float, y: float, w: float
         page_w = meta.sections[0].page_width or page_w
         page_h = meta.sections[0].page_height or page_h
     try:
-        import io, base64
+        import io
+        import base64
         from PIL import Image
         for bv in vl.bindata_streams.values():
             raw = base64.b64decode(bv)
@@ -1388,6 +1765,132 @@ def _build_horizontal_rule(_block: HorizontalRuleBlock, vpos: int, ctx: _BuildCt
     )
 
 
+def _get_verbatim_section_bytes(doc: UdfDocument) -> bytes | None:
+    """원본 verbatim section stream (Section0)을 디코딩하여 반환."""
+    vl = getattr(doc, "verbatim", None)
+    if not vl:
+        return None
+    section_streams = getattr(vl, "section_streams", None)
+    if not section_streams:
+        return None
+    raw = section_streams.get("Section0")
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        raw = base64.b64decode(raw)
+    return raw
+
+
+def _extract_aux_section_ctrls(doc: UdfDocument) -> tuple[bytes, bool]:
+    """원본 verbatim section stream에서 dloc/pngp/onwn 보조 컨트롤을 추출.
+
+    Returns
+    -------
+    tuple[bytes, bool]
+        (ctrl records bytes, has_verbatim_dloc)
+        has_verbatim_dloc이 True이면 seed의 dloc을 제거해야 함.
+    """
+    from udf.parsers.hwp.records import iter_records as _iter_recs, HWPTAG_CTRL_HEADER
+    from udf.renderers.hwp.body_builder import _pack_record
+
+    raw = _get_verbatim_section_bytes(doc)
+    if not raw:
+        return b"", False
+
+    # dloc: seed와 다를 수 있으므로 verbatim에서 추출하여 seed 것을 교체
+    # toof/daeh: _build_hf_ctrl_records()에서 처리
+    _AUX_CTRL_IDS = {b"dloc", b"pngp", b"onwn"}
+    result = b""
+    has_dloc = False
+    in_aux = False
+    aux_level = 0
+    for rec in _iter_recs(raw):
+        if rec.tag_id == HWPTAG_CTRL_HEADER and rec.level == 1 and len(rec.payload) >= 4:
+            cid = rec.payload[:4]
+            if cid in _AUX_CTRL_IDS:
+                in_aux = True
+                aux_level = rec.level
+                result += _pack_record(rec.tag_id, rec.level, rec.payload)
+                if cid == b"dloc":
+                    has_dloc = True
+                continue
+            else:
+                in_aux = False
+        elif rec.level <= 1 and in_aux:
+            in_aux = False
+        if in_aux and rec.level > aux_level:
+            result += _pack_record(rec.tag_id, rec.level, rec.payload)
+
+    return result, has_dloc
+
+
+def _build_eq_trailing_map(doc: UdfDocument) -> dict[str, EqTrailing]:
+    """verbatim section stream에서 모든 EQEDIT trailing 필드를 추출.
+
+    두 가지 키로 인덱싱:
+    - verbatim_ref (EquationBlock용)
+    - "_script:{script_text}" (EquationInline용 — verbatim_ref가 없으므로 스크립트 텍스트로 매칭)
+    """
+    from udf.parsers.hwp.records import iter_records as _iter_recs
+
+    raw = _get_verbatim_section_bytes(doc)
+    if not raw:
+        return {}
+
+    vl = getattr(doc, "verbatim", None)
+
+    # verbatim_ref → ph_offset 매핑 (EquationBlock용)
+    offset_to_vref: dict[int, str] = {}
+    if vl and hasattr(vl, "blocks") and vl.blocks:
+        for block in doc.blocks:
+            if block.type == "equation" and block.verbatim_ref:
+                vb = vl.blocks.get(block.verbatim_ref)
+                if vb and vb.decoded and "ph_offset" in vb.decoded:
+                    offset_to_vref[vb.decoded["ph_offset"]] = block.verbatim_ref
+
+    # 모든 EQEDIT 레코드를 파싱하여 trailing 추출 (스크립트 텍스트로도 인덱싱)
+    result: dict[str, EqTrailing] = {}
+    current_offset = 0
+    pending_vref: str | None = None
+    for rec in _iter_recs(raw):
+        if rec.level == 0 and current_offset in offset_to_vref:
+            pending_vref = offset_to_vref[current_offset]
+        if rec.tag_id == 88:  # EQEDIT
+            if len(rec.payload) >= 6:
+                script_len = struct.unpack_from("<H", rec.payload, 4)[0]
+                trailing_start = 6 + script_len * 2
+                if trailing_start + 14 <= len(rec.payload):
+                    script_bytes = rec.payload[6:6 + script_len * 2]
+                    script_text = script_bytes.decode("utf-16-le", errors="replace")
+                    bu = struct.unpack_from("<I", rec.payload, trailing_start)[0]
+                    tc = struct.unpack_from("<I", rec.payload, trailing_start + 4)[0]
+                    bl = struct.unpack_from("<H", rec.payload, trailing_start + 8)[0]
+                    unk = struct.unpack_from("<H", rec.payload, trailing_start + 10)[0]
+                    vlen = struct.unpack_from("<H", rec.payload, trailing_start + 12)[0]
+                    tr = EqTrailing(
+                        base_unit=bu, text_color=tc, base_line=bl,
+                        unknown=unk, version_len=vlen,
+                    )
+                    if pending_vref:
+                        result[pending_vref] = tr
+                    # 스크립트 텍��트 기반 인덱싱 (inline equation 매칭용)
+                    script_key = f"_script:{script_text}"
+                    if script_key not in result:
+                        result[script_key] = tr
+            pending_vref = None
+        elif rec.tag_id != 88:
+            if rec.level == 0:
+                pending_vref = None
+        # Track byte offset for PH detection
+        hdr_size = 4
+        payload_size = len(rec.payload)
+        if payload_size >= 0xFFF:
+            hdr_size = 8
+        current_offset += hdr_size + payload_size
+
+    return result
+
+
 def _build_hf_ctrl_records(block: HeaderBlock | FooterBlock, ctx: _BuildCtx) -> bytes:
     """HeaderBlock/FooterBlock → native CTRL_HEADER 'head'/'foot' records.
 
@@ -1582,6 +2085,77 @@ def _dispatch_block(block: Block, vpos: int, ctx: _BuildCtx, is_last: bool) -> B
         description=f"Unknown block type: {block.type}",
     ))
     return None
+
+
+_TBL_INLINE_CTRL = (
+    struct.pack("<H", 0x000B)
+    + b"\x20\x6c\x62\x74"
+    + b"\x00" * 8
+    + struct.pack("<H", 0x000B)
+)
+
+
+def _merge_tbl_into_prev_para(prev_bytes: bytes, tbl_bytes: bytes) -> bytes | None:
+    """Merge table records into a preceding paragraph by injecting tbl inline ctrl.
+
+    Strips the table's host PH/PT/PCS/PLS and injects the tbl inline control
+    into the preceding paragraph's PT. Returns None if merge is not possible.
+    """
+    from udf.parsers.hwp.records import (
+        iter_records as _ir, HWPTAG_PARA_HEADER as _PH,
+        HWPTAG_PARA_TEXT as _PT, HWPTAG_CTRL_HEADER as _CH, HwpRecord,
+    )
+    prev_recs = list(_ir(prev_bytes))
+    tbl_recs = list(_ir(tbl_bytes))
+    if not prev_recs or prev_recs[0].tag_id != _PH:
+        return None
+
+    tbl_ctrl_start = None
+    for ti, tr in enumerate(tbl_recs):
+        if tr.tag_id == _CH:
+            tbl_ctrl_start = ti
+            break
+    if tbl_ctrl_start is None:
+        return None
+
+    prev_ph = prev_recs[0]
+    pt_idx = next((j for j in range(1, len(prev_recs))
+                    if prev_recs[j].tag_id == _PT
+                    and prev_recs[j].level == prev_ph.level + 1), None)
+    if pt_idx is None:
+        return None
+
+    old_pt = prev_recs[pt_idx].payload
+    if old_pt.endswith(b"\x0d\x00"):
+        new_pt = old_pt[:-2] + _TBL_INLINE_CTRL + b"\x0d\x00"
+    else:
+        new_pt = old_pt + _TBL_INLINE_CTRL
+    new_cc = len(new_pt) // 2
+
+    ph_pay = bytearray(prev_ph.payload)
+    old_dw = struct.unpack_from("<I", ph_pay, 0)[0]
+    msb = old_dw & 0x80000000
+    struct.pack_into("<I", ph_pay, 0, msb | (new_cc & 0x3FFFFFFF))
+    if len(ph_pay) > 11:
+        old_cm = struct.unpack_from("<I", ph_pay, 8)[0]
+        struct.pack_into("<I", ph_pay, 8, old_cm | 0x00000800)
+
+    from udf.renderers.hwp.body_writer import _serialize_record
+    out = _serialize_record(HwpRecord(prev_ph.tag_id, prev_ph.level, bytes(ph_pay), 0))
+    for j in range(1, len(prev_recs)):
+        r = prev_recs[j]
+        if j == pt_idx:
+            out += _serialize_record(HwpRecord(r.tag_id, r.level, new_pt, 0))
+        else:
+            out += _serialize_record(r)
+
+    base_level = prev_ph.level + 1
+    for ti in range(tbl_ctrl_start, len(tbl_recs)):
+        tr = tbl_recs[ti]
+        delta = base_level - tbl_recs[tbl_ctrl_start].level
+        out += _serialize_record(HwpRecord(tr.tag_id, tr.level + delta, tr.payload, 0))
+
+    return out
 
 
 def _promote_nested_tables(blocks: list[Block]) -> list[Block]:
@@ -1861,8 +2435,6 @@ def generate_hwp_scratch(
     """
     # 0. ImageInline → ImageBlock 변환 (인라인 이미지를 별도 블록으로 분리)
     doc_blocks = _flatten_image_inlines(doc.blocks)
-    # 0b. 중첩 테이블 프로모션 (셀 내부의 단독 테이블을 부모 테이블에 병합)
-    doc_blocks = _promote_nested_tables(doc_blocks)
 
     # 1. OLE 컨테이너 복사
     shutil.copy2(seed_path, output_path)
@@ -1935,7 +2507,6 @@ def generate_hwp_scratch(
 
     # 3. 페이지 배경 이미지 감지 (flow=back + A4 크기)
     page_bg_image: ImageBlock | None = None
-    page_bg_bin_item_id: int | None = None
     _meta = getattr(doc, "metadata", None) if hasattr(doc, "metadata") else None
     _sec = (_meta.sections[0] if _meta and _meta.sections else None) if _meta else None
     _page_w = _sec.page_width if _sec and _sec.page_width else 595
@@ -2020,6 +2591,7 @@ def generate_hwp_scratch(
         _ul_ps_id = ps_map.get(_parashape_key(ul_ps), 0)
 
     losses: list[BlockLoss] = []
+    eq_trailing = _build_eq_trailing_map(doc)
     ctx = _BuildCtx(
         cs_map=cs_map, ps_map=ps_map,
         content_width=content_width,
@@ -2035,11 +2607,11 @@ def generate_hwp_scratch(
         unordered_list_ps_id=_ul_ps_id,
         doc=doc,
         has_page_bg_image=page_bg_image is not None,
+        eq_trailing_map=eq_trailing,
     )
 
     # 첫 텍스트 블록을 secd 단락에 병합 (GAP-1 수정: 원본은 secd+텍스트 동시 보유)
     # 단, 첫 블록이 테이블 등 비텍스트이면 빈 secd를 생성하고 순서를 보존한다.
-    # 다중 스팬(서로 다른 cs_id)이면 secd에 병합하지 않고 별도 단락으로 생성한다.
     first_block_idx = -1
     first_text = ""
     first_cs_id = 0
@@ -2049,9 +2621,6 @@ def generate_hwp_scratch(
     for i, block in enumerate(doc_blocks):
         if isinstance(block, ParagraphBlock):
             spans = _spans_for_paragraph(block, cs_map)
-            unique_cs = set(s.cs_id for s in spans if s.text)
-            if len(unique_cs) > 1:
-                break
             first_text = "".join(s.text for s in spans)
             first_cs_id = spans[0].cs_id if spans else 0
             ps = _parashape_from_block(block, default_ls=default_ls_pct)
@@ -2103,6 +2672,13 @@ def generate_hwp_scratch(
                 build_hf_inline_anchor(is_footer=isinstance(block, FooterBlock))
             )
 
+    first_block_pls: bytes | None = None
+    if first_block_idx >= 0:
+        first_block_pls = _get_original_pls(doc_blocks[first_block_idx], ctx)
+
+    # 보조 섹션 컨트롤 (dloc/pngp/onwn) — 원본 verbatim에서 추출
+    aux_ctrls, has_verbatim_dloc = _extract_aux_section_ctrls(doc)
+
     secd_prefix = build_secd_paragraph(
         seed_section, page_meta=page_meta,
         text=first_text, cs_id=first_cs_id,
@@ -2111,7 +2687,11 @@ def generate_hwp_scratch(
         dist=content_width, line_spacing_pct=first_ls_pct,
         extra_inline_ctrls=hf_inline_anchors or None,
         page_bg_bf_id=None,
+        original_pls=first_block_pls,
+        skip_seed_dloc=has_verbatim_dloc,
     )
+
+    secd_prefix += aux_ctrls
 
     for block in doc_blocks:
         if isinstance(block, (HeaderBlock, FooterBlock)):
@@ -2121,26 +2701,19 @@ def generate_hwp_scratch(
     para_records: list[bytes] = []
     current_vpos = _EFFECTIVE_PARA_HEIGHT  # secd 단락이 vpos=0 을 차지
 
-    # 종결 단락 전략: 마지막 빈 블록이 있으면 별도 term 추가, 없으면 마지막 단락에 MSB
+    # 종결 단락 전략: 복합 블록이 마지막이면 별도 term 추가, 아니면 마지막 단락에 MSB
+    # (빈 ParagraphBlock은 _build_para가 처리 — verbatim PLS 보존을 위해 스킵하지 않음)
     last_block_idx = -1
     need_term = False
-    if doc_blocks:
-        lb = doc_blocks[-1]
-        if isinstance(lb, ParagraphBlock) and not any(
-            _extract_inline_text(il) for il in lb.inlines
-        ):
-            last_block_idx = len(doc_blocks) - 1
-            need_term = True
 
     # 마지막으로 생성될 블록 인덱스 계산 (is_last 마킹용)
     last_effective_idx = -1
     last_effective_block: Block | None = None
-    if not need_term:
-        for idx in range(len(doc_blocks) - 1, -1, -1):
-            if idx != first_block_idx and idx != last_block_idx:
-                last_effective_idx = idx
-                last_effective_block = doc_blocks[idx]
-                break
+    for idx in range(len(doc_blocks) - 1, -1, -1):
+        if idx != first_block_idx:
+            last_effective_idx = idx
+            last_effective_block = doc_blocks[idx]
+            break
 
     # 복합 블록(테이블/각주/미주/수식/이미지)이 마지막이면 종결 단락 필요
     # (MSB를 host PH에 설정하면 한컴이 CTRL 자식을 무시하고 손상 판정)
@@ -2172,15 +2745,32 @@ def generate_hwp_scratch(
         if blk_fmt and blk_fmt.space_before:
             current_vpos += pt_to_hwpunit(blk_fmt.space_before)
 
-        result = _dispatch_block(block, current_vpos, ctx, is_last_para)
-        if result:
-            rec, height = result
-            if rec:
-                para_records.append(rec)
-            current_vpos += height
-            # Account for space_after in vpos
-            if blk_fmt and blk_fmt.space_after:
-                current_vpos += pt_to_hwpunit(blk_fmt.space_after)
+        if (isinstance(block, TableBlock)
+                and para_records
+                and isinstance(doc_blocks[i - 1] if i > 0 else None, (ParagraphBlock, HeadingBlock))):
+            result = _build_table_block(block, current_vpos, ctx, False)
+            if result:
+                tbl_rec, tbl_h = result
+                merged = _merge_tbl_into_prev_para(para_records[-1], tbl_rec)
+                if merged is not None:
+                    para_records[-1] = merged
+                    current_vpos += tbl_h
+                    if blk_fmt and blk_fmt.space_after:
+                        current_vpos += pt_to_hwpunit(blk_fmt.space_after)
+                    continue
+                para_records.append(tbl_rec)
+                current_vpos += tbl_h
+                if blk_fmt and blk_fmt.space_after:
+                    current_vpos += pt_to_hwpunit(blk_fmt.space_after)
+        else:
+            result = _dispatch_block(block, current_vpos, ctx, is_last_para)
+            if result:
+                rec, height = result
+                if rec:
+                    para_records.append(rec)
+                current_vpos += height
+                if blk_fmt and blk_fmt.space_after:
+                    current_vpos += pt_to_hwpunit(blk_fmt.space_after)
 
     if need_term:
         section_bytes = secd_prefix + build_section(para_records, term_vpos=current_vpos)

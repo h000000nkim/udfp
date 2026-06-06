@@ -29,7 +29,6 @@ from udf.schema import (
     EndnoteRefInline,
     EquationBlock,
     EquationInline,
-    FieldBlock,
     FooterBlock,
     FootnoteBlock,
     FootnoteRefInline,
@@ -50,6 +49,7 @@ from udf.schema import (
     RubyInline,
     TableBlock,
     TableCell,
+    TableColumnDef,
     TableRow,
     TextArtBlock,
     TextBoxBlock,
@@ -117,7 +117,7 @@ class _TreeBuilder(HTMLParser):
         node.parent = self._stack[-1]
         self._stack[-1].children.append(node)
         self._last_closed = None
-        if tag not in ("br", "img", "hr", "meta", "link", "input"):
+        if tag not in ("br", "img", "hr", "meta", "link", "input", "col", "source", "track", "wbr", "embed", "area", "base", "param"):
             self._stack.append(node)
         else:
             self._last_closed = node
@@ -225,7 +225,7 @@ def _extract_inlines(node: _Node, *, bold: bool = False, italic: bool = False,
                 nc = sty["color"]
             cls = child.get("class", "")
             if "field" in cls:
-                ft = child.get("data-field-type", "")
+                child.get("data-field-type", "")
                 ft_text = _collect_text(child).strip()
                 result.append(TextInline(text=ft_text, font_name=font_name,
                                          font_size=_parse_pt(font_size) if font_size else None,
@@ -619,6 +619,10 @@ def _parse_cell_format(sty: dict[str, str]) -> CellFormat | None:
         for i, s in enumerate(sides):
             if i < len(pad_parts):
                 parts[f"padding_{s}"] = _parse_pt(pad_parts[i])
+    for side in ("top", "right", "bottom", "left"):
+        key = f"padding-{side}"
+        if key in sty:
+            parts[f"padding_{side}"] = _parse_pt(sty[key])
     return CellFormat(**parts) if parts else None
 
 
@@ -846,7 +850,26 @@ def _parse_table_node(
         if cells:
             rows.append(TableRow(cells=cells))
 
-    return TableBlock(type="table", id=bid, rows=rows)
+    tbl_sty = _parse_style(node.get("style"))
+    tbl_width = _parse_pt(tbl_sty.get("width")) or None
+    col_widths_list: list[TableColumnDef] = []
+    for child in node.children:
+        if child.tag.lower() == "colgroup":
+            for col_node in child.children:
+                if col_node.tag.lower() == "col":
+                    col_sty = _parse_style(col_node.get("style"))
+                    cw = _parse_pt(col_sty.get("width"))
+                    if cw:
+                        col_widths_list.append(TableColumnDef(width=cw))
+    tbl = TableBlock(type="table", id=bid, rows=rows, width=tbl_width, col_widths=col_widths_list)
+    split_id = node.get("data-udf-split-id")
+    if split_id:
+        tbl._split_source_id = split_id  # type: ignore[attr-defined]
+        try:
+            tbl._split_index = int(node.get("data-udf-split-index", "0"))  # type: ignore[attr-defined]
+        except ValueError:
+            tbl._split_index = 0  # type: ignore[attr-defined]
+    return tbl
 
 
 def _extract_cell_content(
@@ -1109,6 +1132,36 @@ def _parse_footnote_node(
 _CONTAINER_TAGS = frozenset(("section", "article", "main", "details"))
 
 
+def _merge_split_tables(blocks: list[Block]) -> list[Block]:
+    """Merge consecutive TableBlocks that were split by the HTML renderer.
+
+    Tables with matching ``_split_source_id`` are reunited into a single
+    TableBlock with all rows concatenated.
+    """
+    merged: list[Block] = []
+    i = 0
+    while i < len(blocks):
+        b = blocks[i]
+        split_id = getattr(b, "_split_source_id", None)
+        if not isinstance(b, TableBlock) or split_id is None:
+            merged.append(b)
+            i += 1
+            continue
+        combined_rows = list(b.rows)
+        j = i + 1
+        while j < len(blocks):
+            nxt = blocks[j]
+            if (isinstance(nxt, TableBlock)
+                    and getattr(nxt, "_split_source_id", None) == split_id):
+                combined_rows.extend(nxt.rows)
+                j += 1
+            else:
+                break
+        merged.append(b.model_copy(update={"rows": combined_rows}))
+        i = j
+    return merged
+
+
 def _extract_content_blocks(
     parent: _Node,
     counter: itertools.count[int],
@@ -1167,13 +1220,18 @@ def parse_html(html: str) -> UdfDocument:
         for page in page_divs:
             content_divs = [
                 c for c in page.children
-                if c.tag == "div" and "content" in (c.get("class", ""))
+                if c.tag == "div" and (
+                    "content" in (c.get("class", ""))
+                    or "page-flow" in (c.get("class", ""))
+                )
             ]
             if not content_divs:
                 content_divs = [page]
 
             for content in content_divs:
                 blocks.extend(_extract_content_blocks(content, counter))
+
+    blocks = _merge_split_tables(blocks)
 
     return UdfDocument(
         source_format="html",

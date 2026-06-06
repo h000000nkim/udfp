@@ -300,9 +300,9 @@ class TestFaceName7Fallback:
         return bytes([0x01]) + struct.pack("<H", len(name)) + encoded
 
     def _make_id_mappings(self, counts: list[int]) -> bytes:
-        buf = bytearray(len(counts) * 2)
+        buf = bytearray(len(counts) * 4)
         for i, cnt in enumerate(counts):
-            struct.pack_into("<H", buf, i * 2, cnt)
+            struct.pack_into("<I", buf, i * 4, cnt)
         return bytes(buf)
 
     def test_7fallback_mapping(self) -> None:

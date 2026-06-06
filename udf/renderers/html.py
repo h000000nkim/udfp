@@ -37,7 +37,7 @@ from udf.schema.blocks import (
     TextBoxBlock,
     UnknownBlock,
 )
-from udf.renderers.font_map import lookup as _font_lookup, collect_google_fonts
+from udf.renderers.font_map import lookup as _font_lookup
 from udf.schema.formats import BlockFormat, CellFormat, PositionInfo
 from udf.schema.inlines import (
     CodeInline,
@@ -151,13 +151,13 @@ def _parse_spacing_pt(val: Any) -> float:
     return 0.0
 
 
-def _build_pls_height_map(doc: UdfDocument) -> dict[str, float]:
+def _build_pls_line_counts(doc: UdfDocument) -> dict[str, int]:
+    """Extract exact line counts from PLS data for paragraph blocks."""
     import base64
-    import struct as _st
 
     if not doc.verbatim or not doc.verbatim.blocks:
         return {}
-    height_map: dict[str, float] = {}
+    line_counts: dict[str, int] = {}
     vblocks = doc.verbatim.blocks
     for block in doc.blocks:
         vref = getattr(block, "verbatim_ref", None)
@@ -182,18 +182,13 @@ def _build_pls_height_map(doc: UdfDocument) -> dict[str, float]:
                 entry_size = esz
                 break
         n_lines = len(pls_data) // entry_size
-        if n_lines == 0:
-            continue
-        last_y = _st.unpack_from("<I", pls_data, (n_lines - 1) * entry_size + 4)[0]
-        last_h = _st.unpack_from("<I", pls_data, (n_lines - 1) * entry_size + 8)[0]
-        first_y = _st.unpack_from("<I", pls_data, 4)[0]
-        total_hu = (last_y - first_y) + last_h
-        height_map[block.id] = total_hu / 100.0
-    return height_map
+        if n_lines > 0:
+            line_counts[block.id] = n_lines
+    return line_counts
 
 
 def _estimate_block_height(
-    b: Block, cw: float, pls_map: dict[str, float],
+    b: Block, cw: float, pls_map: dict[str, int],
 ) -> float:
     fmt = getattr(b, "format", None)
     spacing = 0.0
@@ -201,25 +196,18 @@ def _estimate_block_height(
         spacing += _parse_spacing_pt(getattr(fmt, "space_before", None))
         spacing += _parse_spacing_pt(getattr(fmt, "space_after", None))
 
-    if b.id in pls_map:
-        h = pls_map[b.id]
-        if h > 0:
-            return h + spacing
-
     if isinstance(b, TableBlock):
         total = 0.0
-        css_cell_pad = 6.0
         for row in (b.rows or []):
             max_h = 0.0
             for cell in row.cells:
-                if cell.height and cell.height > 0:
-                    ch = cell.height / max(cell.row_span, 1)
-                else:
-                    ch = sum(
-                        _estimate_block_height(cb, cw, pls_map) for cb in cell.content
-                    ) if cell.content else 16.0
-                max_h = max(max_h, ch)
-            total += max(max_h, 16.0) + css_cell_pad
+                ch_spec = (cell.height / max(cell.row_span, 1)) if (cell.height and cell.height > 0) else 0.0
+                ch_content = (sum(
+                    _estimate_block_height(cb, cw, pls_map) for cb in cell.content
+                ) if cell.content else 16.0)
+                max_h = max(max_h, ch_spec, ch_content)
+            pad = 6.0 if max_h < 20.0 else 0.0
+            total += max(max_h, 16.0) + pad
         return max(total, 16.0)
 
     if isinstance(b, HeadingBlock):
@@ -260,7 +248,12 @@ def _estimate_block_height(
                 pass
         char_width_factor = 1.2 if has_cjk else 0.55
         chars_per_line = max(10, cw / (fs * char_width_factor))
-        lines = max(1, len(text) / chars_per_line)
+        heur_lines = max(1, len(text) / chars_per_line)
+        pls_n = pls_map.get(b.id, 0)
+        if pls_n > 0 and heur_lines >= 2.0:
+            lines = max(heur_lines, float(pls_n))
+        else:
+            lines = heur_lines
         line_height = fs * ls
         text_h = lines * line_height
         return max(text_h, max_inline_h) + spacing
@@ -313,7 +306,7 @@ def _estimate_block_height(
 
 def _split_table_across_pages(
     table: TableBlock, remaining: float, page_h: float, cw: float,
-    pls_map: dict[str, float],
+    pls_map: dict[str, int],
 ) -> list[TableBlock]:
     if not table.rows or len(table.rows) <= 1:
         return [table]
@@ -322,15 +315,15 @@ def _split_table_across_pages(
     n_rows = len(table.rows)
     row_heights: list[float] = []
     for row in table.rows:
-        rh = 16.0
+        max_h = 0.0
         for cell in row.cells:
-            if cell.height and cell.height > 0:
-                rh = max(rh, cell.height / max(cell.row_span, 1))
-            elif cell.content:
-                rh = max(rh, sum(
-                    _estimate_block_height(cb, cw, pls_map) for cb in cell.content
-                ))
-        row_heights.append(max(rh, 16.0))
+            ch_spec = (cell.height / max(cell.row_span, 1)) if (cell.height and cell.height > 0) else 0.0
+            ch_content = (sum(
+                _estimate_block_height(cb, cw, pls_map) for cb in cell.content
+            ) if cell.content else 16.0)
+            max_h = max(max_h, ch_spec, ch_content)
+        pad = 6.0 if max_h < 20.0 else 0.0
+        row_heights.append(max(max_h, 16.0) + pad)
 
     rowspan_end = [0] * n_rows
     for ri, row in enumerate(table.rows):
@@ -357,7 +350,14 @@ def _split_table_across_pages(
         rh = row_heights[ri]
         limit = remaining if not parts else page_h
         if cursor > 0 and cursor + rh > limit and _can_split_before(ri):
-            if current_rows:
+            orphan_h = sum(row_heights[r] for r in range(ri - len(current_rows), ri)) if current_rows else 0
+            if rh > page_h and parts and current_rows and orphan_h < page_h * 0.10:
+                parts[-1] = TableBlock(
+                    type="table", id=table.id,
+                    rows=list(parts[-1].rows) + current_rows,
+                    caption=parts[-1].caption,
+                )
+            elif current_rows:
                 parts.append(TableBlock(
                     type="table", id=table.id, rows=current_rows,
                     caption=table.caption if not parts else None,
@@ -420,14 +420,64 @@ def _reassign_positioned_blocks(
     return [p for p in new_pages if p] or [[]]
 
 
+
+def _detect_pls_page_breaks(doc: UdfDocument) -> dict[str, int]:
+    """Detect page breaks from PLS Y-coordinate resets."""
+    import base64
+    import struct as _st
+
+    if not doc.verbatim or not doc.verbatim.blocks:
+        return {}
+    vblocks = doc.verbatim.blocks
+    break_counts: dict[str, int] = {}
+    prev_bottom = -1
+    for block in doc.blocks:
+        vref = getattr(block, "verbatim_ref", None)
+        if not vref or vref not in vblocks:
+            continue
+        vb = vblocks[vref]
+        decoded = vb.decoded if hasattr(vb, "decoded") and vb.decoded else None
+        if not decoded or not isinstance(decoded, dict):
+            continue
+        pls_b64 = decoded.get("pls_bytes")
+        if not pls_b64:
+            continue
+        try:
+            pls_data = base64.b64decode(pls_b64)
+        except Exception:
+            continue
+        if len(pls_data) < 24:
+            continue
+        entry_size = 36
+        for esz in (36, 32, 28, 24):
+            if len(pls_data) % esz == 0:
+                entry_size = esz
+                break
+        n_lines = len(pls_data) // entry_size
+        if n_lines == 0:
+            continue
+        first_y = _st.unpack_from("<I", pls_data, 4)[0]
+        last_y = _st.unpack_from("<I", pls_data, (n_lines - 1) * entry_size + 4)[0]
+        last_h = _st.unpack_from("<I", pls_data, (n_lines - 1) * entry_size + 8)[0]
+        breaks = 0
+        if first_y < prev_bottom and prev_bottom > 0:
+            drop = prev_bottom - first_y
+            if drop > 10000:
+                breaks += 1
+        if breaks > 0:
+            break_counts[block.id] = breaks
+        prev_bottom = last_y + last_h
+    return break_counts
+
 def _split_into_pages(
     blocks: list[Block], content_h: float, cw: float,
-    pls_map: dict[str, float],
+    pls_map: dict[str, int],
+    pls_page_breaks: dict[str, int] | None = None,
 ) -> list[list[Block]]:
     if not blocks or content_h <= 0:
         return [blocks] if blocks else []
 
-    safe_h = content_h * 0.97
+    safe_h = content_h
 
     pages: list[list[Block]] = [[]]
     cursor = 0.0
@@ -439,21 +489,43 @@ def _split_into_pages(
                 cursor = 0.0
             continue
 
-        h = _estimate_block_height(b, cw, pls_map)
-
-        if isinstance(b, TableBlock) and len(b.rows) > 1 and cursor + h > safe_h:
-            remaining = safe_h - cursor
-            parts = _split_table_across_pages(b, remaining, safe_h, cw, pls_map)
-            for j, part in enumerate(parts):
-                if j > 0:
+        pls_broke = False
+        if pls_page_breaks and b.id in pls_page_breaks:
+            n_breaks = pls_page_breaks[b.id]
+            for _ in range(n_breaks):
+                if pages[-1] and cursor > safe_h * 0.8:
                     pages.append([])
                     cursor = 0.0
-                pages[-1].append(part)
-                cursor += _estimate_block_height(part, cw, pls_map)
-            continue
+                    pls_broke = True
 
-        if cursor > 0 and cursor + h > safe_h:
-            if cursor >= safe_h * 0.15:
+        h = _estimate_block_height(b, cw, pls_map)
+
+        _tbl_lc = getattr(b, "position", None) and getattr(b.position, "like_char", False)
+        if isinstance(b, TableBlock) and len(b.rows) > 1 and cursor + h > safe_h and not _tbl_lc:
+            remaining = safe_h - cursor
+            parts = _split_table_across_pages(b, remaining, safe_h, cw, pls_map)
+            if len(parts) > 1:
+                first_part_h = _estimate_block_height(parts[0], cw, pls_map)
+                if cursor > 0 and cursor + first_part_h > safe_h and cursor < safe_h * 0.2:
+                    prev_blocks = pages[-1][:]
+                    pages[-1] = []
+                    pages.append(prev_blocks)
+                    cursor = sum(_estimate_block_height(pb, cw, pls_map) for pb in prev_blocks)
+                    remaining = safe_h - cursor
+                    parts = _split_table_across_pages(b, remaining, safe_h, cw, pls_map)
+                for j, part in enumerate(parts):
+                    part_h = _estimate_block_height(part, cw, pls_map)
+                    if j > 0 or (cursor > 0 and cursor + part_h > safe_h):
+                        pages.append([])
+                        cursor = 0.0
+                    pages[-1].append(part)
+                    cursor += part_h
+                continue
+
+        is_like_char = getattr(b, "position", None) and getattr(b.position, "like_char", False)
+        if cursor > 0 and cursor + h > safe_h and not pls_broke:
+            skip = is_like_char
+            if cursor >= safe_h * 0.15 and not skip:
                 pages.append([])
                 cursor = 0.0
 
@@ -568,9 +640,17 @@ def render_html(
         ctx.paginated = True
         cw = pw - ml - mr
         real_content_h = ph - mt - mb
-        content_h = real_content_h * 0.90
-        pls_map: dict[str, float] = {}
-        pages = _split_into_pages(body_blocks, content_h, cw, pls_map)
+        content_h = real_content_h
+        _col_count = 1
+        if doc.metadata and doc.metadata.sections:
+            _sec0 = doc.metadata.sections[0]
+            _col = getattr(_sec0, "columns", None)
+            if _col and _col.count > 1:
+                _col_count = _col.count
+        pls_map: dict[str, int] = _build_pls_line_counts(doc) if _col_count == 1 else {}
+        _pls_pb: dict[str, int] = _detect_pls_page_breaks(doc) if _col_count == 1 else {}
+        effective_h = content_h
+        pages = _split_into_pages(body_blocks, effective_h, cw, pls_map, _pls_pb)
         pages = _reassign_positioned_blocks(pages, ph, mt)
 
         def _pick_hf(hf_list, page_idx):
@@ -612,7 +692,7 @@ def render_html(
                 f"width:{_px(pw)}px;"
                 f"height:{_px(ph)}px;"
                 f"padding:{_px(mt)}px {_px(mr)}px {_px(mb)}px {_px(ml)}px"
-                f"{col_css}{sec_bg_css}"
+                f"{sec_bg_css}"
                 f'">'
             )
             hdr = _pick_hf(all_headers, page_idx)
@@ -644,7 +724,7 @@ def render_html(
                     if html:
                         flow_parts.append(html)
             parts.append(
-                f'<div class="page-flow" style="max-height:{_px(content_h)}px;overflow:hidden">'
+                f'<div class="page-flow" style="max-height:{_px(content_h)}px;overflow:hidden{col_css}">'
             )
             parts.extend(flow_parts)
             parts.append("</div>")
@@ -888,7 +968,12 @@ def _position_strategy(
         z = -1
         parts.append("pointer-events:none")
     elif pos.flow == "front":
-        z = 10
+        is_fullpage = (pos.width and pos.width > 400) or (pos.height and pos.height > 400)
+        if is_fullpage:
+            z = -1
+            parts.append("pointer-events:none")
+        else:
+            z = 10
     elif pos.z_order is not None:
         z = pos.z_order
 
@@ -981,12 +1066,47 @@ def _render_heading(b: HeadingBlock, ctx: _Ctx) -> str:
     return f"<h{lvl}{bid}{style}>{prefix}{content}</h{lvl}>"
 
 
+def _infer_para_bg(
+    inlines: list[Any] | None, fmt: BlockFormat | None,
+) -> BlockFormat | None:
+    if not inlines:
+        return fmt
+    total_len = 0
+    bg_len = 0
+    dominant_bg = None
+    bg_counts: dict[str, int] = {}
+    for il in inlines:
+        t = getattr(il, "text", "") or ""
+        tl = len(t)
+        total_len += tl
+        bg = getattr(il, "background_color", None) or getattr(il, "highlight_color", None)
+        if bg and tl > 0:
+            key = bg.to_hex() if hasattr(bg, "to_hex") else str(bg)
+            bg_counts[key] = bg_counts.get(key, 0) + tl
+            bg_len += tl
+    if total_len > 0 and bg_len / total_len >= 0.4 and bg_counts:
+        dominant_bg = max(bg_counts, key=bg_counts.get)  # type: ignore[arg-type]
+        if fmt:
+            return fmt.model_copy(update={"background_color": dominant_bg})
+        return BlockFormat(background_color=dominant_bg)
+    return fmt
+
+
 # -- Paragraph --------------------------------------------------------------
 
 def _render_paragraph(b: ParagraphBlock, ctx: _Ctx) -> str:
     content = _render_inlines(b.inlines, ctx)
     bid = _bid(b.id, ctx)
-    style = _block_format_css(b.format)
+    fmt = b.format
+    inferred_bg = False
+    if not fmt or not getattr(fmt, "background_color", None):
+        new_fmt = _infer_para_bg(b.inlines, fmt)
+        if new_fmt is not fmt:
+            fmt = new_fmt
+            inferred_bg = True
+    style = _block_format_css(fmt)
+    if inferred_bg and fmt and getattr(fmt, "background_color", None):
+        style = style.rstrip('"') + ';padding:2pt 7pt"' if style.endswith('"') else ' style="padding:2pt 7pt"'
     if not content.strip():
         return f"<p{bid}{style}>&nbsp;</p>"
     return f"<p{bid}{style}>{content}</p>"
@@ -1081,7 +1201,8 @@ def _render_image(b: ImageBlock, ctx: _Ctx) -> str:
         cr = b.crop_right or 0
         cb = b.crop_bottom or 0
         cl = b.crop_left or 0
-        img_style_parts.append(f"clip-path:inset({ct}% {cr}% {cb}% {cl}%)")
+        if all(v <= 100 for v in (ct, cr, cb, cl)) and any(v > 0 for v in (ct, cr, cb, cl)):
+            img_style_parts.append(f"clip-path:inset({ct}% {cr}% {cb}% {cl}%)")
     if b.brightness and b.brightness != 0:
         img_style_parts.append(f"filter:brightness({100 + b.brightness}%)")
     if b.contrast and b.contrast != 0:
@@ -1482,8 +1603,14 @@ def _block_format_css(fmt: BlockFormat | None) -> str:
     if fmt.alignment:
         parts.append(f"text-align:{fmt.alignment}")
     if fmt.line_spacing is not None:
-        ratio = _parse_line_spacing(fmt.line_spacing)
-        parts.append(f"line-height:{ratio:.2f}")
+        lh = _parse_line_spacing(
+            fmt.line_spacing, for_css=True,
+            font_name=fmt.font_name, line_spacing_type=fmt.line_spacing_type,
+        )
+        if isinstance(lh, str):
+            parts.append(f"line-height:{lh}")
+        else:
+            parts.append(f"line-height:{lh:.2f}")
     if fmt.space_before is not None:
         parts.append(f"margin-top:{fmt.space_before}pt")
     else:
@@ -1520,8 +1647,8 @@ def _block_format_css(fmt: BlockFormat | None) -> str:
     if fmt.drop_cap_lines and fmt.drop_cap_lines > 1:
         parts.append(f"initial-letter:{fmt.drop_cap_lines}")
     if fmt.tab_stops:
-        stops = " ".join(f"{ts.position}pt" for ts in fmt.tab_stops)
-        parts.append(f"tab-size:8ch")
+        " ".join(f"{ts.position}pt" for ts in fmt.tab_stops)
+        parts.append("tab-size:8ch")
 
     if not parts:
         return ""
@@ -1672,13 +1799,28 @@ def _font_letter_spacing(name: str) -> float:
     return _font_lookup(name).letter_spacing_em
 
 
-def _parse_line_spacing(ls: Any) -> float:
+def _parse_line_spacing(
+    ls: Any,
+    *,
+    for_css: bool = False,
+    font_name: str | None = None,
+    line_spacing_type: str | None = None,
+) -> float | str:
+    if for_css and line_spacing_type == "fixed" and isinstance(ls, (int, float)):
+        return f"{float(ls)}pt"
+
     if isinstance(ls, Ratio):
-        return ls.factor
-    if isinstance(ls, (int, float)):
+        raw = ls.factor
+    elif isinstance(ls, (int, float)):
         v = float(ls)
-        return v / 100 if v > 5 else v
-    return 1.6
+        raw = v / 100 if v > 5 else v
+    else:
+        raw = 1.6
+    if for_css and raw > 1.0:
+        from udf.renderers._font_utils import compute_css_line_height_correction
+        correction = compute_css_line_height_correction(font_name or "")
+        return raw * correction
+    return raw
 
 
 def _add_padding(

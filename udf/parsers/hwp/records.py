@@ -98,6 +98,47 @@ def iter_records(stream: bytes) -> Iterator[HwpRecord]:
         off += size
 
 
+def extract_plain_text(pt_payload: bytes) -> str:
+    """Extract plain-text characters from a PARA_TEXT payload.
+
+    Handles surrogate pairs, tab (0x0009→\\t), newline (0x000A→\\n),
+    and inline object control codes (16-byte skip). Stops at CR (0x000D).
+    """
+    chars: list[str] = []
+    off = 0
+    n = len(pt_payload)
+    while off + 2 <= n:
+        (code,) = struct.unpack_from("<H", pt_payload, off)
+        if code == 0x000D:
+            break
+        if code > 0x001F:
+            if code != 0xFFFF:
+                if 0xD800 <= code <= 0xDBFF and off + 4 <= n:
+                    (lo,) = struct.unpack_from("<H", pt_payload, off + 2)
+                    if 0xDC00 <= lo <= 0xDFFF:
+                        cp = 0x10000 + ((code - 0xD800) << 10) + (lo - 0xDC00)
+                        chars.append(chr(cp))
+                        off += 4
+                        continue
+                chars.append(chr(code))
+            off += 2
+        elif code in _PT_CTRL_2BYTE:
+            if code == 0x0009:
+                chars.append('\t')
+                if off + 14 <= n:
+                    w1 = struct.unpack_from("<H", pt_payload, off + 4)[0]
+                    w2 = struct.unpack_from("<H", pt_payload, off + 6)[0]
+                    if w1 == 0 and w2 == 0x0203:
+                        off += 14
+                        continue
+            elif code == 0x000A:
+                chars.append('\n')
+            off += 2
+        else:
+            off += 16
+    return "".join(chars)
+
+
 def ctrl_id_from_payload(payload: bytes) -> str:
     """CTRL_HEADER 페이로드에서 4바이트 ctrlId를 ASCII 문자열로 반환한다.
 

@@ -32,6 +32,7 @@ from udf.core.schema import (
     FootnoteBlock,
     HeaderBlock,
     HeadingBlock,
+    ImageBlock,
     LossReport,
     ParagraphBlock,
     QuoteBlock,
@@ -41,12 +42,18 @@ from udf.core.schema import (
     TextInline,
     UdfDocument,
 )
+from udf.parsers.hwp.records import extract_plain_text
 from udf.renderers.hwp.body_writer import (
-    apply_paragraph_patches,
+    apply_paragraph_patches as apply_paragraph_patches,
     apply_section_patches,
+    inject_image_gso,
 )
-from udf.renderers.hwp.docinfo_patch import find_or_add_charshape, get_charshape_color
-from udf.renderers.hwp.ole_patch import patch_hwp_stream
+from udf.renderers.hwp.docinfo_patch import (
+    add_bindata_record,
+    find_or_add_charshape,
+    get_charshape_color,
+)
+from udf.renderers.hwp.ole_patch import add_hwp_stream, patch_hwp_stream as patch_hwp_stream, patch_hwp_streams
 
 _FILE_HEADER_STREAM = "FileHeader"
 _FLAGS_OFFSET = 36
@@ -129,8 +136,6 @@ def _match_table_cell_patches(
         ):
             for ci, (ocell, ecell) in enumerate(zip(orow.cells, erow.cells)):
                 orig_ct = _cell_text(ocell)
-                if not orig_ct.strip():
-                    continue
                 edited_ct = _cell_text(ecell)
                 if orig_ct.rstrip() == edited_ct.rstrip():
                     continue
@@ -216,8 +221,6 @@ def _match_block_patches(
         orig_text = orig_text_by_id[blk_id]
         if new_text.rstrip() == orig_text.rstrip():
             continue
-        if not orig_text.strip():
-            continue
         if blk_id not in orig_ph_offset_by_id:
             continue
 
@@ -234,19 +237,7 @@ def _match_block_patches(
 
 def _extract_text_from_pt_bytes(pt_b64: str) -> str:
     """verbatim pt_bytes(base64)에서 순수 텍스트를 추출한다 (인라인 오브젝트 제외)."""
-    pt = base64.b64decode(pt_b64)
-    chars: list[str] = []
-    i = 0
-    while i + 2 <= len(pt):
-        ch = struct.unpack_from("<H", pt, i)[0]
-        if ch == 0x000D:
-            break
-        if ch <= 0x001F:
-            i += 2 if ch in (0x0000, 0x0009, 0x000A) else 16
-        else:
-            chars.append(chr(ch))
-            i += 2
-    return "".join(chars)
+    return extract_plain_text(base64.b64decode(pt_b64))
 
 
 def _iter_all_blocks(blocks: list[Block]) -> Iterator[Block]:
@@ -350,12 +341,16 @@ def _get_pcs_first_cs_id(pcs_b64: str | None) -> int | None:
     return None
 
 
-def _apply_ast_patches(doc: UdfDocument) -> dict[str, list[tuple[int, int]]]:
+def _apply_ast_patches(
+    doc: UdfDocument,
+) -> tuple[dict[str, list[tuple[int, int]]], bytes | None, set[str]]:
     """Compare current AST to verbatim originals and patch changed blocks.
 
     Modifies verbatim.section_streams in-place.
-    Returns a dict of {section: [(ph_offset, target_cs_id), ...]} for
-    paragraphs that need CharShape overrides (style changes).
+    Returns (cs_override_result, pending_docinfo_patch, modified_sections) where:
+    - cs_override_result: {section: [(ph_offset, target_cs_id), ...]}
+    - pending_docinfo_patch: compressed DocInfo bytes if modified, else None.
+    - modified_sections: set of section names that were actually patched.
     """
     if not doc.verbatim or not doc.verbatim.section_streams:
         return {}
@@ -364,6 +359,7 @@ def _apply_ast_patches(doc: UdfDocument) -> dict[str, list[tuple[int, int]]]:
     eq_patches: dict[str, list[tuple[int, str]]] = {}
     tbl_attr_patches: dict[str, list[tuple[int, dict[str, bool]]]] = {}
     multi_style_requests: list[tuple[str, int, list[tuple[int, str, int]]]] = []
+    pcs_remap_by_section: dict[str, dict[int, bytes]] = {}
 
     for block in _iter_all_blocks(doc.blocks):
         ref = getattr(block, "verbatim_ref", None)
@@ -410,6 +406,24 @@ def _apply_ast_patches(doc: UdfDocument) -> dict[str, list[tuple[int, int]]]:
                 text_patches.setdefault(section, []).append(
                     (int(ph_offset), curr_text)
                 )
+                if isinstance(block, ParagraphBlock):
+                    pcs_entries_t = _get_pcs_entries(decoded.get("pcs_bytes"))
+                    if len(pcs_entries_t) > 1:
+                        pcs_to_inline_t = _map_pcs_to_inlines(pt_b64 or "", pcs_entries_t)
+                        text_ils = [i for i in block.inlines if isinstance(i, TextInline)]
+                        if pcs_to_inline_t and len(text_ils) >= len(pcs_to_inline_t):
+                            cum = [0]
+                            for til in text_ils:
+                                cum.append(cum[-1] + len(til.text))
+                            new_pcs_bytes = b""
+                            for pi, (_, cs_id) in enumerate(pcs_entries_t):
+                                il_idx = pcs_to_inline_t.get(pi)
+                                if il_idx is not None and il_idx < len(cum):
+                                    new_pos = cum[il_idx]
+                                else:
+                                    new_pos = 0
+                                new_pcs_bytes += struct.pack("<II", new_pos, cs_id)
+                            pcs_remap_by_section.setdefault(section, {})[int(ph_offset)] = new_pcs_bytes
                 if per_inline_colors:
                     multi_style_requests.append((section, int(ph_offset), per_inline_colors))
             elif per_inline_colors:
@@ -443,15 +457,20 @@ def _apply_ast_patches(doc: UdfDocument) -> dict[str, list[tuple[int, int]]]:
 
     cs_override_result: dict[str, list[tuple[int, int]]] = {}
     cs_overrides_by_section: dict[str, dict[int, dict[int, int]]] = {}
+    pending_docinfo_result: bytes | None = None
 
     if multi_style_requests and doc.original_container:
         import zlib
-        from udf.parsers.hwp.ole import OleReader
-        try:
-            with OleReader.open(doc.original_container.path) as ole:
-                docinfo_raw = ole.read_stream(["DocInfo"])
-        except Exception:
-            docinfo_raw = None
+        docinfo_raw = None
+        if doc.verbatim and doc.verbatim.docinfo_stream:
+            docinfo_raw = base64.b64decode(doc.verbatim.docinfo_stream)
+        if docinfo_raw is None:
+            from udf.parsers.hwp.ole import OleReader
+            try:
+                with OleReader.open(doc.original_container.path) as ole:
+                    docinfo_raw = ole.read_stream(["DocInfo"])
+            except Exception:
+                pass
 
         if docinfo_raw is not None:
             docinfo_modified = docinfo_raw
@@ -496,8 +515,9 @@ def _apply_ast_patches(doc: UdfDocument) -> dict[str, list[tuple[int, int]]]:
                     docinfo_bytes = comp.compress(docinfo_modified) + comp.flush()
                 else:
                     docinfo_bytes = docinfo_modified
-                doc._pending_docinfo_patch = docinfo_bytes
+                pending_docinfo_result = docinfo_bytes
 
+    modified_sections: set[str] = set()
     all_sections = set(text_patches) | set(eq_patches) | set(tbl_attr_patches)
     for section_name in all_sections:
         b64 = doc.verbatim.section_streams.get(section_name)
@@ -510,12 +530,144 @@ def _apply_ast_patches(doc: UdfDocument) -> dict[str, list[tuple[int, int]]]:
             eq_patches=eq_patches.get(section_name),
             tbl_attr_patches=tbl_attr_patches.get(section_name),
             cs_overrides=cs_overrides_by_section.get(section_name),
+            pcs_remap=pcs_remap_by_section.get(section_name),
         )
-        doc.verbatim.section_streams[section_name] = base64.b64encode(
-            patched
-        ).decode()
+        if patched != decompressed:
+            doc.verbatim.section_streams[section_name] = base64.b64encode(
+                patched
+            ).decode()
+            modified_sections.add(section_name)
 
-    return cs_override_result
+    return cs_override_result, pending_docinfo_result, modified_sections
+
+
+def _collect_new_images(doc: UdfDocument) -> list[dict]:
+    """Identify new ImageBlocks without verbatim_ref and resolve insertion context.
+
+    Returns a list of dicts with keys:
+      block, section, anchor_ph_offset, extension, data
+    """
+    if not doc.verbatim:
+        return []
+
+    result = []
+    blocks = doc.blocks
+    for idx, block in enumerate(blocks):
+        if not isinstance(block, ImageBlock):
+            continue
+        if getattr(block, "verbatim_ref", None):
+            continue
+
+        anchor_section = "Section0"
+        anchor_ph_offset: int | None = None
+        for prev_idx in range(idx - 1, -1, -1):
+            prev = blocks[prev_idx]
+            ref = getattr(prev, "verbatim_ref", None)
+            if ref and ref in doc.verbatim.blocks:
+                decoded = doc.verbatim.blocks[ref].decoded or {}
+                anchor_section = decoded.get("section", "Section0")
+                anchor_ph_offset = decoded.get("ph_offset")
+                if anchor_ph_offset is not None:
+                    anchor_ph_offset = int(anchor_ph_offset)
+                break
+
+        src = block.src or ""
+        ext = "jpg"
+        if "." in src:
+            ext = src.rsplit(".", 1)[-1].lower()
+        if ext not in ("jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "wmf", "emf"):
+            ext = "jpg"
+
+        from udf.renderers.hwp.scratch import _read_image_data
+        data = _read_image_data(src, doc=doc)
+
+        result.append({
+            "block": block,
+            "section": anchor_section,
+            "anchor_ph_offset": anchor_ph_offset,
+            "extension": ext,
+            "data": data,
+        })
+
+    return result
+
+
+def _apply_image_patches(
+    doc: UdfDocument,
+    new_images: list[dict],
+    pending_docinfo: bytes | None,
+    modified_sections: set[str],
+    compressed: bool,
+) -> tuple[bytes | None, set[str]]:
+    """Apply image insertions: add BIN_DATA to DocInfo, inject GSO into sections."""
+    from udf.parsers.hwp.ole import OleReader
+    from udf.renderers.hwp.body_builder import build_image_gso_records
+    from udf.schema.types import pt_to_hwpunit
+
+    docinfo_raw = None
+    if pending_docinfo:
+        docinfo_raw = zlib.decompress(pending_docinfo, -15) if compressed else pending_docinfo
+    elif doc.verbatim and doc.verbatim.docinfo_stream:
+        docinfo_raw = base64.b64decode(doc.verbatim.docinfo_stream)
+    if docinfo_raw is None and doc.original_container:
+        try:
+            with OleReader.open(doc.original_container.path) as ole:
+                docinfo_raw = ole.read_stream(["DocInfo"])
+        except Exception:
+            pass
+    if docinfo_raw is None:
+        return pending_docinfo, modified_sections
+
+    docinfo_modified = docinfo_raw
+
+    image_injections: dict[str, list[tuple[int, list]]] = {}
+
+    for img_info in new_images:
+        if img_info["data"] is None:
+            continue
+
+        docinfo_modified, bin_item_id = add_bindata_record(
+            docinfo_modified, img_info["extension"],
+        )
+        img_info["bin_item_id"] = bin_item_id
+
+        block = img_info["block"]
+        img_w = pt_to_hwpunit(block.width or 100.0)
+        img_h = pt_to_hwpunit(block.height or 100.0)
+        orig_w = pt_to_hwpunit(block.original_width) if block.original_width else img_w
+        orig_h = pt_to_hwpunit(block.original_height) if block.original_height else img_h
+
+        gso_records = build_image_gso_records(
+            bin_item_id, img_w, img_h,
+            orig_width=orig_w, orig_height=orig_h,
+            position=getattr(block, "position", None),
+        )
+
+        section = img_info["section"]
+        ph_offset = img_info["anchor_ph_offset"]
+        if ph_offset is not None:
+            image_injections.setdefault(section, []).append((ph_offset, gso_records))
+
+    if docinfo_modified != docinfo_raw:
+        if compressed:
+            comp = zlib.compressobj(zlib.Z_DEFAULT_COMPRESSION, zlib.DEFLATED, -15)
+            pending_docinfo = comp.compress(docinfo_modified) + comp.flush()
+        else:
+            pending_docinfo = docinfo_modified
+
+    for section_name, injections in image_injections.items():
+        b64 = doc.verbatim.section_streams.get(section_name)
+        if not b64:
+            continue
+        decompressed = base64.b64decode(b64)
+        for ph_offset, gso_records in injections:
+            decompressed = inject_image_gso(decompressed, ph_offset, gso_records)
+        doc.verbatim.section_streams[section_name] = base64.b64encode(
+            decompressed,
+        ).decode()
+        modified_sections.add(section_name)
+
+    return pending_docinfo, modified_sections
 
 
 def render_hwp(
@@ -524,6 +676,7 @@ def render_hwp(
     *,
     validate: bool = True,
     seed_path: str | None = None,
+    _force_modified_sections: set[str] | None = None,
 ) -> None:
     """Render a UdfDocument to an HWP 5.x binary file.
 
@@ -555,9 +708,10 @@ def render_hwp(
         and doc.original_container.format == "ole2"
     )
 
+    new_images = _collect_new_images(doc)
     has_structural_change = any(
         not getattr(b, "verbatim_ref", None)
-        for b in doc.blocks
+        for b in _iter_all_blocks(doc.blocks)
     )
 
     if not has_verbatim or not has_container or has_structural_change:
@@ -576,12 +730,19 @@ def render_hwp(
 
     compressed = _read_compress_flag(original_path)
 
-    _apply_ast_patches(doc)
+    orig_streams = dict(doc.verbatim.section_streams)
+    _, pending_docinfo, modified_sections = _apply_ast_patches(doc)
+    for sn, b64 in doc.verbatim.section_streams.items():
+        if orig_streams.get(sn) != b64:
+            modified_sections.add(sn)
+    if _force_modified_sections:
+        modified_sections |= _force_modified_sections
 
-    pending_docinfo = getattr(doc, "_pending_docinfo_patch", None)
-    if pending_docinfo:
-        patch_hwp_stream(output_path, output_path, ["DocInfo"], pending_docinfo)
-        del doc._pending_docinfo_patch
+    # --- Seed Patch image insertion ---
+    if new_images:
+        pending_docinfo, modified_sections = _apply_image_patches(
+            doc, new_images, pending_docinfo, modified_sections, compressed,
+        )
 
     if validate:
         from udf.validation.validation_loop import validate_and_fix
@@ -593,7 +754,34 @@ def render_hwp(
             )
             raise HwpRenderError(f"검증 자동수정 후에도 R-규칙 위반: {violations}")
 
-    for section_name, b64_bytes in doc.verbatim.section_streams.items():
+    if validate and pending_docinfo:
+        from udf.validation.hwp.integrity import (
+            check_i3_body,
+            check_i3_docinfo,
+            validate_hwp_integrity,
+        )
+        di_raw = pending_docinfo
+        if compressed:
+            di_raw = zlib.decompress(pending_docinfo, -15)
+        i1i2_violations = validate_hwp_integrity(di_raw)
+        if i1i2_violations:
+            msgs = ", ".join(v.message for v in i1i2_violations)
+            raise HwpRenderError(f"DocInfo I1/I2 위반: {msgs}")
+        cs_count, ps_count, bf_count = check_i3_docinfo(di_raw)
+        for _sn, _b64 in doc.verbatim.section_streams.items():
+            i3_violations = check_i3_body(base64.b64decode(_b64), cs_count, ps_count, bf_count)
+            if i3_violations:
+                msgs = ", ".join(v.message for v in i3_violations)
+                raise HwpRenderError(f"I3 위반 ({_sn}): {msgs}")
+
+    # Batch all stream patches into a single read-write cycle (BUG-216).
+    ole_patches: dict[tuple[str, ...], bytes] = {}
+    if pending_docinfo:
+        ole_patches[("DocInfo",)] = pending_docinfo
+    for section_name in modified_sections:
+        b64_bytes = doc.verbatim.section_streams.get(section_name)
+        if not b64_bytes:
+            continue
         decompressed = base64.b64decode(b64_bytes)
 
         if compressed:
@@ -602,150 +790,152 @@ def render_hwp(
         else:
             stream_bytes = decompressed
 
-        stream_path = ["BodyText", section_name]
-        patch_hwp_stream(output_path, output_path, stream_path, stream_bytes)
+        ole_patches[("BodyText", section_name)] = stream_bytes
+    if ole_patches:
+        patch_hwp_streams(output_path, output_path, ole_patches)
+
+    # --- OLE BinData streams for new images ---
+    if new_images:
+        for img_info in new_images:
+            if img_info.get("data") and img_info.get("bin_item_id"):
+                stream_name = f"BIN{img_info['bin_item_id']:04X}.{img_info['extension']}"
+                add_hwp_stream(output_path, ["BinData", stream_name], img_info["data"])
+
+    if validate:
+        from udf.validation.hwp.integrity import validate_hwp_file
+        file_violations = validate_hwp_file(output_path)
+        if file_violations:
+            errors = [v for v in file_violations if v.severity == "error"]
+            if errors:
+                msgs = ", ".join(f"{v.rule_id}:{v.message}" for v in errors)
+                raise HwpRenderError(f"출력 파일 검증 실패: {msgs}")
 
 generate_hwp = render_hwp
+
+
+def _apply_text_to_ast(
+    original_doc: UdfDocument,
+    edited_doc: UdfDocument,
+    orig_text_by_id: dict[str, str],
+) -> None:
+    """Update AST block text in original_doc to match edited_doc."""
+    edited_text_by_id: dict[str, str] = {}
+    for block in _iter_text_blocks(edited_doc.blocks):
+        if isinstance(block, ParagraphBlock):
+            edited_text_by_id[block.id] = "".join(
+                i.text for i in block.inlines if isinstance(i, TextInline)
+            )
+        elif isinstance(block, HeadingBlock):
+            edited_text_by_id[block.id] = block.text
+
+    for block in _iter_text_blocks(original_doc.blocks):
+        bid = block.id
+        if bid not in edited_text_by_id or bid not in orig_text_by_id:
+            continue
+        new_text = edited_text_by_id[bid]
+        if new_text.rstrip() == orig_text_by_id[bid].rstrip():
+            continue
+        if isinstance(block, ParagraphBlock):
+            if block.inlines and isinstance(block.inlines[0], TextInline):
+                block.inlines[0] = block.inlines[0].model_copy(
+                    update={"text": new_text}
+                )
+                block.inlines[:] = block.inlines[:1]
+            else:
+                block.inlines = [TextInline(type="text", text=new_text)]
+        elif isinstance(block, HeadingBlock):
+            block.text = new_text
+
+    for block in _iter_all_blocks(edited_doc.blocks):
+        if not isinstance(block, TableBlock):
+            continue
+        orig_tbl = next(
+            (b for b in _iter_all_blocks(original_doc.blocks)
+             if isinstance(b, TableBlock) and b.id == block.id), None
+        )
+        if not orig_tbl:
+            continue
+        for orow, erow in zip(orig_tbl.rows, block.rows):
+            for ocell, ecell in zip(orow.cells, erow.cells):
+                orig_ct = _cell_text(ocell)
+                edited_ct = _cell_text(ecell)
+                if orig_ct.rstrip() == edited_ct.rstrip():
+                    continue
+                for b in ocell.content:
+                    if isinstance(b, ParagraphBlock) and b.inlines:
+                        if isinstance(b.inlines[0], TextInline):
+                            b.inlines[0] = b.inlines[0].model_copy(
+                                update={"text": edited_ct}
+                            )
+                            b.inlines[:] = b.inlines[:1]
+                        break
+
+
+def _patch_hwp_from_parsed(
+    original_path: str,
+    edited_doc: UdfDocument,
+    output_path: str,
+    format_label: str,
+) -> LossReport:
+    """Common patch logic for MD/HTML → HWP Seed Patch."""
+    from udf.parsers.hwp.parse import parse_hwp
+
+    original_doc = parse_hwp(original_path)
+
+    orig_text_by_id, orig_ph_offset_by_id, orig_section_by_id = (
+        _collect_orig_text_info(original_doc)
+    )
+
+    patches_by_section: dict[str, list[tuple[int, str]]] = {}
+    lossy: list[BlockLoss] = []
+
+    edited_ids: set[str] = set()
+    _match_block_patches(
+        edited_doc, orig_text_by_id, orig_ph_offset_by_id, orig_section_by_id,
+        patches_by_section, lossy, edited_ids,
+    )
+
+    _match_table_cell_patches(
+        original_doc, edited_doc, orig_ph_offset_by_id, orig_section_by_id,
+        patches_by_section, lossy, edited_ids,
+    )
+
+    for blk_id in orig_text_by_id:
+        if blk_id not in edited_ids:
+            lossy.append(format_limit_loss(
+                blk_id, f"{format_label}에 미포함 (seed patch로 보존)"
+            ))
+
+    if not patches_by_section:
+        render_hwp(original_doc, output_path)
+        return build_loss_report(original_doc, lossy)
+
+    _apply_text_to_ast(original_doc, edited_doc, orig_text_by_id)
+
+    render_hwp(original_doc, output_path)
+    return build_loss_report(original_doc, lossy)
 
 
 def patch_hwp_from_md(
     original_path: str, md_content: str, output_path: str
 ) -> LossReport:
-    """Patch an HWP file with text changes from edited Markdown content.
-
-    Parses the original HWP and the edited Markdown, diffs the text
-    blocks, and applies only the changed paragraphs back to the HWP
-    binary via Seed Patch mode.
-
-    Parameters
-    ----------
-    original_path : str
-        Path to the original HWP file.
-    md_content : str
-        Edited Markdown string.
-    output_path : str
-        Destination path for the patched HWP file.
-
-    Returns
-    -------
-    LossReport
-        Report detailing which blocks were modified, missing, or lossy.
-    """
-    from udf.parsers.hwp.parse import parse_hwp
+    """Patch an HWP file with text changes from edited Markdown content."""
     from udf.parsers.md.parse import parse_md
 
-    original_doc = parse_hwp(original_path)
-    edited_doc = parse_md(md_content)
-
-    orig_text_by_id, orig_ph_offset_by_id, orig_section_by_id = (
-        _collect_orig_text_info(original_doc)
+    return _patch_hwp_from_parsed(
+        original_path, parse_md(md_content), output_path, "MD"
     )
-
-    patches_by_section: dict[str, list[tuple[int, str]]] = {}
-    lossy: list[BlockLoss] = []
-
-    edited_ids: set[str] = set()
-    _match_block_patches(
-        edited_doc, orig_text_by_id, orig_ph_offset_by_id, orig_section_by_id,
-        patches_by_section, lossy, edited_ids,
-    )
-
-    _match_table_cell_patches(
-        original_doc, edited_doc, orig_ph_offset_by_id, orig_section_by_id,
-        patches_by_section, lossy, edited_ids,
-    )
-
-    for blk_id in orig_text_by_id:
-        if blk_id not in edited_ids:
-            lossy.append(format_limit_loss(blk_id, "MD에 미포함 (seed patch로 보존)"))
-
-    if not patches_by_section:
-        render_hwp(original_doc, output_path)
-        return build_loss_report(original_doc, lossy)
-
-    assert original_doc.verbatim is not None
-    for section_name, patch_list in patches_by_section.items():
-        b64 = original_doc.verbatim.section_streams.get(section_name)
-        if b64 is None:
-            continue
-        decompressed = base64.b64decode(b64)
-        patched = apply_paragraph_patches(decompressed, patch_list)
-        original_doc.verbatim.section_streams[section_name] = base64.b64encode(
-            patched
-        ).decode()
-
-    render_hwp(original_doc, output_path)
-    return build_loss_report(original_doc, lossy)
 
 
 def patch_hwp_from_html(
     original_path: str, html_content: str, output_path: str
 ) -> LossReport:
-    """Patch an HWP file with text changes from edited HTML content.
-
-    Parses the original HWP and the edited HTML, diffs the text
-    blocks, and applies only the changed paragraphs back to the HWP
-    binary via Seed Patch mode.
-
-    Parameters
-    ----------
-    original_path : str
-        Path to the original HWP file.
-    html_content : str
-        Edited HTML string.
-    output_path : str
-        Destination path for the patched HWP file.
-
-    Returns
-    -------
-    LossReport
-        Report detailing which blocks were modified, missing, or lossy.
-    """
+    """Patch an HWP file with text changes from edited HTML content."""
     from udf.parsers.html.parse import parse_html
-    from udf.parsers.hwp.parse import parse_hwp
 
-    original_doc = parse_hwp(original_path)
-    edited_doc = parse_html(html_content)
-
-    orig_text_by_id, orig_ph_offset_by_id, orig_section_by_id = (
-        _collect_orig_text_info(original_doc)
+    return _patch_hwp_from_parsed(
+        original_path, parse_html(html_content), output_path, "HTML"
     )
-
-    patches_by_section: dict[str, list[tuple[int, str]]] = {}
-    lossy: list[BlockLoss] = []
-
-    edited_ids: set[str] = set()
-    _match_block_patches(
-        edited_doc, orig_text_by_id, orig_ph_offset_by_id, orig_section_by_id,
-        patches_by_section, lossy, edited_ids,
-    )
-
-    _match_table_cell_patches(
-        original_doc, edited_doc, orig_ph_offset_by_id, orig_section_by_id,
-        patches_by_section, lossy, edited_ids,
-    )
-
-    for blk_id in orig_text_by_id:
-        if blk_id not in edited_ids:
-            lossy.append(format_limit_loss(blk_id, "HTML에 미포함 (seed patch로 보존)"))
-
-    if not patches_by_section:
-        render_hwp(original_doc, output_path)
-        return build_loss_report(original_doc, lossy)
-
-    assert original_doc.verbatim is not None
-    for section_name, patch_list in patches_by_section.items():
-        b64 = original_doc.verbatim.section_streams.get(section_name)
-        if b64 is None:
-            continue
-        decompressed = base64.b64decode(b64)
-        patched = apply_paragraph_patches(decompressed, patch_list)
-        original_doc.verbatim.section_streams[section_name] = base64.b64encode(
-            patched
-        ).decode()
-
-    render_hwp(original_doc, output_path)
-    return build_loss_report(original_doc, lossy)
 
 
 def _read_compress_flag(path: str) -> bool:

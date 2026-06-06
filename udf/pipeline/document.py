@@ -220,6 +220,60 @@ class UdfDocument(BaseModel):
     # 텍스트 검색/치환
     # ------------------------------------------------------------------
 
+    def fill_template(
+        self,
+        values: dict[str, str],
+        *,
+        delimiter: tuple[str, str] = ("{{", "}}"),
+        strict: bool = False,
+    ) -> dict[str, int]:
+        """Replace template placeholders with values across all blocks.
+
+        Searches for ``{{key}}`` patterns (or custom delimiters) in all
+        text content and replaces them with the corresponding values.
+        Works with Seed Patch mode for lossless form filling.
+
+        Parameters
+        ----------
+        values : dict[str, str]
+            Mapping from placeholder names to replacement values.
+            Example: ``{"이름": "김훈", "학번": "30217"}``
+        delimiter : tuple[str, str], default ("{{", "}}")
+            Opening and closing delimiter pair.
+        strict : bool, default False
+            If True, raise ValueError when a placeholder in the document
+            has no matching key in *values*.
+
+        Returns
+        -------
+        dict[str, int]
+            Count of replacements per key. Keys with 0 replacements
+            are included so callers can detect unused values.
+
+        Raises
+        ------
+        ValueError
+            If *strict* is True and unmatched placeholders remain.
+        """
+        open_d, close_d = delimiter
+        result: dict[str, int] = {}
+        for key, val in values.items():
+            marker = f"{open_d}{key}{close_d}"
+            count = self.replace_text(marker, val if val is not None else "")
+            result[key] = count
+
+        if strict:
+            import re
+            pattern = re.escape(open_d) + r"(.+?)" + re.escape(close_d)
+            remaining = self.find_text(pattern)
+            if remaining:
+                keys = {m["text"] for m in remaining}
+                raise ValueError(
+                    f"Unmatched template placeholders: {keys}"
+                )
+
+        return result
+
     def replace_text(self, old: str, new: str) -> int:
         """Replace all occurrences of a substring across all blocks.
 

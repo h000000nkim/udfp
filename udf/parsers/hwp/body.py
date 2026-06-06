@@ -55,6 +55,7 @@ from udf.parsers.hwp.records import (
     HwpRecord,
     _PT_CTRL_2BYTE,
     ctrl_id_from_payload,
+    extract_plain_text,
     iter_records,
 )
 
@@ -122,38 +123,7 @@ _HU_TO_PT = 0.01
 
 def _extract_text(pt_payload: bytes) -> str:
     """Extract plain-text characters from a PARA_TEXT payload."""
-    chars: list[str] = []
-    off = 0
-    n = len(pt_payload)
-    while off + 2 <= n:
-        (code,) = struct.unpack_from("<H", pt_payload, off)
-        if code > 0x001F:
-            if code != 0xFFFF:  # BOM/invalid 방어
-                if 0xD800 <= code <= 0xDBFF and off + 4 <= n:
-                    (lo,) = struct.unpack_from("<H", pt_payload, off + 2)
-                    if 0xDC00 <= lo <= 0xDFFF:
-                        cp = 0x10000 + ((code - 0xD800) << 10) + (lo - 0xDC00)
-                        chars.append(chr(cp))
-                        off += 4
-                        continue
-                chars.append(chr(code))
-            off += 2
-        elif code in _PT_CTRL_2BYTE:
-            if code == 0x0009:
-                chars.append('\t')
-                if off + 14 <= n:
-                    w1 = struct.unpack_from("<H", pt_payload, off + 4)[0]
-                    w2 = struct.unpack_from("<H", pt_payload, off + 6)[0]
-                    if w1 == 0 and w2 == 0x0203:
-                        off += 14
-                        continue
-            elif code == 0x000A:
-                chars.append('\n')
-            off += 2
-        else:
-            # hwp.md §5.2: 그 외 모든 ctrl 코드는 인라인 오브젝트 (2+14=16바이트)
-            off += 16
-    return "".join(chars)
+    return extract_plain_text(pt_payload)
 
 
 # ---------------------------------------------------------------------------
@@ -252,10 +222,13 @@ def _build_inlines(
                 buf = []
             eq_idx = inline_eq_map[char_pos]
             eq_data = inline_objects[eq_idx] if inline_objects else {}
-            inlines.append(EquationInline(
+            eq_il = EquationInline(
                 latex=eq_data.get("latex"),
                 hwp_script=eq_data.get("hwp_script"),
-            ))
+            )
+            if eq_data.get("eq_trailing"):
+                eq_il._eq_trailing = eq_data["eq_trailing"]
+            inlines.append(eq_il)
             continue
         this_cs_id = cs_id_at(char_pos)
         if this_cs_id != cur_cs_id:
@@ -677,8 +650,9 @@ def _parse_table(
                            "top": "margin_top", "bottom": "margin_bottom"}
             for side in ("top", "bottom", "left", "right"):
                 pad_val = lh.get(f"padding_{side}", 0)
-                if not pad_val and locals().get('tbl_props'):
-                    pad_val = tbl_props.get(_tbl_pad_map[side], 0)
+                _local_tbl_props = locals().get('tbl_props')
+                if not pad_val and _local_tbl_props:
+                    pad_val = _local_tbl_props.get(_tbl_pad_map[side], 0)
                 if pad_val:
                     setattr(cfmt, f"padding_{side}", hwpunit_to_pt(pad_val))
             bf_id = lh.get("border_fill_id")
@@ -1146,17 +1120,21 @@ def _parse_shape_position(payload: bytes) -> PositionInfo | None:
 def _extract_child_shapes(
     ctrl_children: list[HwpRecord],
     block_counter: itertools.count[int],
+    verb_counter: itertools.count[int],
     info: DocInfoResult | None = None,
     parent_position: PositionInfo | None = None,
-) -> list[Block]:
+    section: str = "",
+) -> tuple[list[Block], dict[str, VerbatimBlock]]:
     """$con 컨테이너에서 기하 도형 및 $pic 이미지 자식을 추출."""
     sc_indices = [
         i for i, r in enumerate(ctrl_children)
         if r.tag_id == HWPTAG_SHAPE_COMPONENT and len(r.payload) >= 4
     ]
     results: list[Block] = []
+    verbatim_map: dict[str, VerbatimBlock] = {}
     for si, idx in enumerate(sc_indices):
-        pay = ctrl_children[idx].payload
+        sc_rec = ctrl_children[idx]
+        pay = sc_rec.payload
         st = pay[:4][::-1].decode("ascii", errors="replace")
         if st == "$con":
             continue
@@ -1188,6 +1166,13 @@ def _extract_child_shapes(
                 h = pos.height if pos and pos.height else None
                 if pos and w and h and w > 400 and h > 600:
                     pos.flow = "back"
+                verb_id = make_verbatim_id(next(verb_counter))
+                verbatim_map[verb_id] = VerbatimBlock(
+                    raw_tag_id=sc_rec.tag_id,
+                    level=sc_rec.level,
+                    raw_bytes=base64.b64encode(sc_rec.payload).decode(),
+                    decoded={"section": section, "ph_offset": sc_rec.offset, "shape_type": st},
+                )
                 results.append(ImageBlock(
                     type="image",
                     id=make_block_id(next(block_counter)),
@@ -1195,9 +1180,17 @@ def _extract_child_shapes(
                     width=w,
                     height=h,
                     position=pos,
+                    verbatim_ref=verb_id,
                 ))
                 continue
         fc, lc, lw = _parse_shape_fill_line(pay)
+        verb_id = make_verbatim_id(next(verb_counter))
+        verbatim_map[verb_id] = VerbatimBlock(
+            raw_tag_id=sc_rec.tag_id,
+            level=sc_rec.level,
+            raw_bytes=base64.b64encode(sc_rec.payload).decode(),
+            decoded={"section": section, "ph_offset": sc_rec.offset, "shape_type": st},
+        )
         results.append(DrawingBlock(
             type="drawing",
             id=make_block_id(next(block_counter)),
@@ -1206,11 +1199,13 @@ def _extract_child_shapes(
             background_color=fc,
             line_color=lc,
             line_width=lw,
+            verbatim_ref=verb_id,
         ))
-    return sorted(results, key=lambda s: (
+    sorted_results = sorted(results, key=lambda s: (
         s.position.y if s.position else 0,
         s.position.x if s.position else 0,
     ))
+    return sorted_results, verbatim_map
 
 
 def _extract_nested_textboxes(
@@ -1289,10 +1284,25 @@ def _extract_nested_textboxes(
                 )
                 if blocks:
                     tb_id = make_block_id(next(block_counter))
+                    tb_verb_id = make_verbatim_id(next(verb_counter))
                     br_pt = None
                     if round_corner and pos and pos.width and pos.height:
                         shorter = min(pos.width, pos.height)
                         br_pt = shorter * round_corner / 100.0
+                    sc_rec = None
+                    for j2 in range(i - 1, -1, -1):
+                        cr2 = ctrl_children[j2]
+                        if cr2.tag_id == HWPTAG_SHAPE_COMPONENT and len(cr2.payload) >= 4:
+                            sc_rec = cr2
+                            break
+                        if cr2.tag_id == HWPTAG_LIST_HEADER:
+                            break
+                    verbatim_map[tb_verb_id] = VerbatimBlock(
+                        raw_tag_id=sc_rec.tag_id if sc_rec else rec.tag_id,
+                        level=sc_rec.level if sc_rec else rec.level,
+                        raw_bytes=base64.b64encode((sc_rec or rec).payload).decode(),
+                        decoded={"section": section, "ph_offset": (sc_rec or rec).offset, "shape_type": "$txt"},
+                    )
                     tb = TextBoxBlock(
                         type="text_box",
                         id=tb_id,
@@ -1304,6 +1314,7 @@ def _extract_nested_textboxes(
                         line_color=line_c,
                         line_width=line_w,
                         border_radius=br_pt,
+                        verbatim_ref=tb_verb_id,
                     )
                     results.append(tb)
                 verbatim_map.update(cv)
@@ -1473,8 +1484,9 @@ def _parse_gso(
             )
             content_blocks.extend(nested)
             verbatim_map.update(nv)
-            geom_children = _extract_child_shapes(ctrl_children, block_counter, info, position)
+            geom_children, gv = _extract_child_shapes(ctrl_children, block_counter, verb_counter, info, position, section)
             content_blocks.extend(geom_children)
+            verbatim_map.update(gv)
         elif lh_idx is not None:
             lh_rec = ctrl_children[lh_idx]
             content_records = ctrl_children[lh_idx + 1:]
@@ -1528,7 +1540,9 @@ def _parse_gso(
         child_drawing: list[DrawingBlock] = []
         child_content: list[Block] = []
         if shape_type == "$con":
-            for cs in _extract_child_shapes(ctrl_children, block_counter, info, position):
+            _cs_list, _cs_vb = _extract_child_shapes(ctrl_children, block_counter, verb_counter, info, position, section)
+            verbatim_map.update(_cs_vb)
+            for cs in _cs_list:
                 if isinstance(cs, DrawingBlock):
                     child_drawing.append(cs)
                 else:
@@ -1600,12 +1614,21 @@ def _parse_equation(
 
     latex = hwp_script_to_latex(hwp_script) if hwp_script else None
 
+    eq_w: float | None = None
+    eq_h: float | None = None
+    pay = ctrl_rec.payload
+    if len(pay) >= 24:
+        eq_w = struct.unpack_from("<I", pay, 16)[0] / 100.0
+        eq_h = struct.unpack_from("<I", pay, 20)[0] / 100.0
+
     return EquationBlock(
         type="equation",
         id=blk_id,
         hwp_script=hwp_script,
         latex=latex,
         display=True,
+        width=eq_w if eq_w and eq_w > 0 else None,
+        height=eq_h if eq_h and eq_h > 0 else None,
         verbatim_ref=verb_id,
     ), verbatim_map
 
@@ -1729,6 +1752,7 @@ def _parse_block_list(
     """Walk a flat record list and group paragraphs into blocks."""
     blocks: list[Any] = []
     verbatim_map: dict[str, VerbatimBlock] = {}
+    _secd_seen = False
     i = 0
 
     while i < len(records):
@@ -1757,14 +1781,66 @@ def _parse_block_list(
                      if c.tag_id == HWPTAG_PARA_TEXT and c.level == base_level + 1),
                     None,
                 )
+                non_tbl_eqed = [
+                    c for c in ctrl_recs
+                    if ctrl_id_from_payload(c.payload) == _CTRL_ID_EQED
+                ]
                 if pt_child is not None:
                     host_text = _extract_text(pt_child.payload)
                     if host_text.strip():
+                        non_tbl_ctrls = [
+                            c for c in ctrl_recs
+                            if ctrl_id_from_payload(c.payload) != _CTRL_ID_TABLE
+                        ]
+                        host_inline_objects = None
+                        if non_tbl_ctrls:
+                            host_inline_objects = []
+                            for ctrl in non_tbl_ctrls:
+                                cid = ctrl_id_from_payload(ctrl.payload)
+                                if cid == _CTRL_ID_EQED:
+                                    cc, _ = _collect_children(
+                                        children, children.index(ctrl) + 1, ctrl.level
+                                    )
+                                    latex, hwp_script = _extract_equation_latex(ctrl, cc)
+                                    obj: dict[str, Any] = {
+                                        "type": "eqed",
+                                        "latex": latex,
+                                        "hwp_script": hwp_script,
+                                    }
+                                    for c in cc:
+                                        if c.tag_id == HWPTAG_EQEDIT and len(c.payload) >= 6:
+                                            sc_len = struct.unpack_from("<H", c.payload, 4)[0]
+                                            t_off = 6 + sc_len * 2
+                                            if t_off + 14 <= len(c.payload):
+                                                obj["eq_trailing"] = c.payload[t_off:t_off + 14]
+                                            break
+                                    host_inline_objects.append(obj)
+                                else:
+                                    host_inline_objects.append({"type": "other"})
                         para, pv = _parse_paragraph(
-                            rec, children, info, block_counter, verb_counter, section
+                            rec, children, info, block_counter, verb_counter, section,
+                            inline_objects=host_inline_objects,
                         )
                         blocks.append(para)
                         verbatim_map.update(pv)
+                    elif non_tbl_eqed:
+                        non_tbl_eqed = []
+
+                for eq_ctrl in non_tbl_eqed:
+                    cc, _ = _collect_children(
+                        children, children.index(eq_ctrl) + 1, eq_ctrl.level
+                    )
+                    eq_blk, ev = _parse_equation(
+                        eq_ctrl, cc, block_counter, verb_counter, section,
+                    )
+                    if eq_blk.verbatim_ref and eq_blk.verbatim_ref in ev:
+                        eq_vb = ev[eq_blk.verbatim_ref]
+                        decoded = dict(eq_vb.decoded) if eq_vb.decoded else {}
+                        decoded["ph_offset"] = rec.offset
+                        decoded["ph_level"] = rec.level
+                        eq_vb.decoded = decoded
+                    blocks.append(eq_blk)
+                    verbatim_map.update(ev)
 
                 ctrl = ctrl_recs[0]
                 ctrl_children, _ = _collect_children(
@@ -1818,11 +1894,19 @@ def _parse_block_list(
                                 children, children.index(ctrl) + 1, ctrl.level
                             )
                             latex, hwp_script = _extract_equation_latex(ctrl, cc)
-                            inline_objects.append({
+                            obj: dict[str, Any] = {
                                 "type": "eqed",
                                 "latex": latex,
                                 "hwp_script": hwp_script,
-                            })
+                            }
+                            for c in cc:
+                                if c.tag_id == HWPTAG_EQEDIT and len(c.payload) >= 6:
+                                    sc_len = struct.unpack_from("<H", c.payload, 4)[0]
+                                    t_off = 6 + sc_len * 2
+                                    if t_off + 14 <= len(c.payload):
+                                        obj["eq_trailing"] = c.payload[t_off:t_off + 14]
+                                    break
+                            inline_objects.append(obj)
                         else:
                             inline_objects.append({"type": "other"})
                 para, pv = _parse_paragraph(
@@ -1844,6 +1928,13 @@ def _parse_block_list(
             # 단락 내 모든 CTRL_HEADER 순회: gso/eqed/fn/en/tbl 추출
             for ctrl in ctrl_recs:
                 cid = ctrl_id_from_payload(ctrl.payload)
+                if cid == _CTRL_ID_SECD:
+                    if _secd_seen:
+                        from udf.schema.blocks import PageBreakBlock as _PBB
+                        pb_id = f"pb-{next(block_counter)}"
+                        blocks.append(_PBB(id=pb_id))
+                    _secd_seen = True
+                    continue
                 if cid in _CTRL_IDS_SKIP:
                     continue
                 if cid == _CTRL_ID_TABLE and handled_primary:
@@ -1880,10 +1971,11 @@ def _parse_block_list(
                     blocks.append(fn_blk)
                     verbatim_map.update(fv)
                 elif cid in (_CTRL_ID_HEADER, _CTRL_ID_FOOTER):
-                    _, hfv = _parse_header_footer(
+                    hf_blk, hfv = _parse_header_footer(
                         ctrl, cc, info, block_counter, verb_counter, section,
                         is_footer=(cid == _CTRL_ID_FOOTER),
                     )
+                    blocks.append(hf_blk)
                     verbatim_map.update(hfv)
                 elif cid == _CTRL_ID_ATNO:
                     f_blk, fv = _parse_field_ctrl(
@@ -1948,10 +2040,11 @@ def _parse_block_list(
                 blocks.append(gso_blk)
                 verbatim_map.update(gv)
             elif ctrl_id in (_CTRL_ID_HEADER, _CTRL_ID_FOOTER):
-                _, hfv = _parse_header_footer(
+                hf_blk, hfv = _parse_header_footer(
                     rec, children, info, block_counter, verb_counter, section,
                     is_footer=(ctrl_id == _CTRL_ID_FOOTER),
                 )
+                blocks.append(hf_blk)
                 verbatim_map.update(hfv)
             elif ctrl_id == _CTRL_ID_ATNO:
                 f_blk, fv = _parse_field_ctrl(
@@ -1969,6 +2062,12 @@ def _parse_block_list(
                     rec, children, info, block_counter, verb_counter, section, ctrl_id,
                 )
                 verbatim_map.update(fv)
+            elif ctrl_id == _CTRL_ID_SECD:
+                if _secd_seen:
+                    from udf.schema.blocks import PageBreakBlock as _PBB
+                    pb_id = f"pb-{next(block_counter)}"
+                    blocks.append(_PBB(id=pb_id))
+                _secd_seen = True
             elif ctrl_id in _CTRL_IDS_SKIP:
                 pass
             else:
@@ -2051,6 +2150,9 @@ def parse_section(
     stream_bytes: bytes,
     info: DocInfoResult,
     section: str = "",
+    *,
+    block_start: int = 0,
+    verb_start: int = 0,
 ) -> tuple[list[Any], dict[str, VerbatimBlock]]:
     """Parse a BodyText section stream into document blocks.
 
@@ -2062,6 +2164,10 @@ def parse_section(
         Parsed DocInfo containing char shapes, para shapes, etc.
     section : str, optional
         Section identifier used for block ID generation.
+    block_start : int
+        Starting index for block ID generation (for multi-section uniqueness).
+    verb_start : int
+        Starting index for verbatim ID generation (for multi-section uniqueness).
 
     Returns
     -------
@@ -2069,8 +2175,8 @@ def parse_section(
         A list of semantic blocks and a map of verbatim preservation data.
     """
     records = list(iter_records(stream_bytes))
-    block_counter: itertools.count[int] = itertools.count()
-    verb_counter: itertools.count[int] = itertools.count()
+    block_counter: itertools.count[int] = itertools.count(block_start)
+    verb_counter: itertools.count[int] = itertools.count(verb_start)
     blocks, verb = _parse_block_list(records, 0, info, block_counter, verb_counter, section)
     blocks = _flatten_con_textboxes(blocks)
     blocks = _absorb_like_char_images(blocks)

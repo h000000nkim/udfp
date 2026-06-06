@@ -444,36 +444,15 @@ def _compact_ministream(
 # ---------------------------------------------------------------------------
 
 
-def patch_hwp_stream(
-    original_path: str,
-    output_path: str,
+def _patch_stream_in_raw(
+    raw: bytearray,
     stream_path: StreamPath,
     new_content: bytes,
 ) -> None:
-    """Replace a single OLE stream in an HWP file, preserving all others.
+    """Replace a single OLE stream in an in-memory bytearray.
 
-    Handles mini-stream, regular-stream, and promotion/demotion between
-    them automatically based on the mini-stream cutoff size.
-
-    Parameters
-    ----------
-    original_path : str
-        Path to the source HWP file.
-    output_path : str
-        Destination path (may be the same as original_path for in-place).
-    stream_path : StreamPath
-        OLE stream path as a list of strings (e.g. ["BodyText", "Section0"]).
-    new_content : bytes
-        New stream content (compressed bytes).
-
-    Raises
-    ------
-    ValueError
-        If the specified stream does not exist.
+    Modifies *raw* in place. Handles mini/regular promotion/demotion.
     """
-    with open(original_path, "rb") as f:
-        raw = bytearray(f.read())
-
     sector_size = 1 << struct.unpack_from("<H", raw, 30)[0]
     mini_sector_size = 1 << struct.unpack_from("<H", raw, 32)[0]
     mini_cutoff = struct.unpack_from("<I", raw, 56)[0]
@@ -696,8 +675,56 @@ def patch_hwp_stream(
         struct.pack_into("<I", entry, 120, len(new_content))
 
     _write_fat(raw, fat, sector_size, original_fat=original_fat)
+
+    root_entry = entries[0]
+    rs = struct.unpack_from("<I", root_entry, 120)[0]
+    if rs > 0 and rs % sector_size != 0:
+        struct.pack_into("<I", root_entry, 120, ((rs + sector_size - 1) // sector_size) * sector_size)
+
     _write_dir(raw, fat, entries, dir_start, sector_size)
 
+
+def patch_hwp_stream(
+    original_path: str,
+    output_path: str,
+    stream_path: StreamPath,
+    new_content: bytes,
+) -> None:
+    """Replace a single OLE stream in an HWP file, preserving all others.
+
+    For multiple streams, use ``patch_hwp_streams`` to avoid repeated
+    file I/O.
+    """
+    with open(original_path, "rb") as f:
+        raw = bytearray(f.read())
+    _patch_stream_in_raw(raw, stream_path, new_content)
+    with open(output_path, "wb") as f:
+        f.write(raw)
+
+
+def patch_hwp_streams(
+    original_path: str,
+    output_path: str,
+    patches: dict[tuple[str, ...], bytes],
+) -> None:
+    """Replace multiple OLE streams in a single read-write cycle.
+
+    Parameters
+    ----------
+    original_path : str
+        Path to the source HWP file.
+    output_path : str
+        Destination path (may be same as *original_path*).
+    patches : dict[tuple[str, ...], bytes]
+        Mapping from stream path tuples to new content bytes.
+        Example: ``{("DocInfo",): di_bytes, ("BodyText", "Section0"): s0_bytes}``
+    """
+    if not patches:
+        return
+    with open(original_path, "rb") as f:
+        raw = bytearray(f.read())
+    for stream_path_tuple, new_content in patches.items():
+        _patch_stream_in_raw(raw, list(stream_path_tuple), new_content)
     with open(output_path, "wb") as f:
         f.write(raw)
 
@@ -913,6 +940,11 @@ def add_hwp_stream(
         fat[new_sid] = _ENDOFCHAIN
         dir_chain.append(new_sid)
         dir_capacity += sector_size
+
+    root_entry = entries[0]
+    rs = struct.unpack_from("<I", root_entry, 120)[0]
+    if rs > 0 and rs % sector_size != 0:
+        struct.pack_into("<I", root_entry, 120, ((rs + sector_size - 1) // sector_size) * sector_size)
 
     _write_fat(raw, fat, sector_size, original_fat=original_fat)
     _write_dir(raw, fat, entries, dir_start, sector_size)

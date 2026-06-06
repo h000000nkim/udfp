@@ -15,11 +15,8 @@ import pytest
 
 from udf.core.schema import (
     HeadingBlock,
-    ImageBlock,
     ParagraphBlock,
-    TableBlock,
     TextInline,
-    UdfDocument,
 )
 
 DOCX_FIXTURES = pathlib.Path(__file__).parent.parent / "fixtures" / "docx"
@@ -113,9 +110,15 @@ class TestImageColorSampling:
 
     def test_no_crash_without_pil(self):
         """PIL 없어도 변환이 성공해야 함 (fallback to #4a2040)."""
+        import os
         import udf
-        doc = udf.parse("dev/fixtures/external/hwpx/11차시_자기_나의 약점과 강점 알기.hwpx")
-        import tempfile, shutil, os
+        fixture = "dev/fixtures/external/hwpx/11차시_자기_나의 약점과 강점 알기.hwpx"
+        if not os.path.exists(fixture):
+            pytest.skip("dev fixture not available")
+        doc = udf.parse(fixture)
+        import tempfile
+        import shutil
+        import os
         seed = "udf/renderers/hwp/seed/empty.hwp"
         out = tempfile.mktemp(suffix=".hwp")
         shutil.copy2(seed, out)
@@ -131,7 +134,9 @@ class TestHwpxToHwpTextFidelity:
     """HWPX→HWP 변환의 전체 텍스트 보존율이 85% 이상이어야 함."""
 
     def test_batch_text_fidelity(self):
-        import os, tempfile, shutil
+        import os
+        import tempfile
+        import shutil
         from udf.parsers.hwpx.parse import parse_hwpx
         from udf.renderers.hwp.scratch import generate_hwp_scratch
         from udf.parsers.hwp.parse import parse_hwp

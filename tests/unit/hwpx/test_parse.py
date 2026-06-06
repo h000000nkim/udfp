@@ -66,11 +66,11 @@ class TestBasicParsing:
 
         Expected
         --------
-        reading_log.hwpx : 57 blocks
+        reading_log.hwpx : 59 blocks (including header + footer)
         report_form.hwpx : 3 blocks
         tac_img.hwpx     : >= 100 blocks (large document)
         """
-        assert len(reading_doc.blocks) == 57
+        assert len(reading_doc.blocks) == 59
         assert len(report_doc.blocks) == 3
         assert len(img_doc.blocks) >= 100
 

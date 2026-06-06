@@ -156,6 +156,16 @@ def _build_pcs(spans: list[TextSpan]) -> bytes:
     return buf
 
 
+def _validate_pls(pls: bytes, char_cnt: int) -> bool:
+    """Validate PLS entries: every tpos must be < char_cnt."""
+    n_entries = len(pls) // 36
+    for i in range(n_entries):
+        tpos = struct.unpack_from("<I", pls, i * 36)[0]
+        if tpos >= char_cnt:
+            return False
+    return True
+
+
 def _build_pls(
     char_cnt: int,
     vpos: int = 0,
@@ -326,8 +336,12 @@ def _build_para_header(
     control_mask: int = 0,
     is_last: bool = False,
     col_split: int = 0,
+    instance_id: int = _PH_MAGIC,
 ) -> bytes:
-    """PARA_HEADER 페이로드 (24 bytes)."""
+    """PARA_HEADER 페이로드 (22 or 24 bytes).
+
+    iid=0 paragraphs (host/cell/footnote) use 22 bytes; iid=_PH_MAGIC use 24.
+    """
     msb = _MSB if is_last else 0
     buf = struct.pack("<I", msb | (char_cnt & 0x3FFFFFFF))  # 0-3
     buf += struct.pack("<I", control_mask)                   # 4-7
@@ -337,9 +351,9 @@ def _build_para_header(
     buf += struct.pack("<H", cs_count)                      # 12-13
     buf += struct.pack("<H", 0)                             # 14-15 rtCount
     buf += struct.pack("<H", ls_count)                      # 16-17
-    buf += struct.pack("<I", 0)                             # 18-21 instanceId
-    buf += struct.pack("<H", 0)                             # 22-23
-    assert len(buf) == 24
+    buf += struct.pack("<I", instance_id)                   # 18-21 instanceId
+    if instance_id != 0:
+        buf += struct.pack("<H", 0)                         # 22-23
     return buf
 
 
@@ -391,13 +405,18 @@ def build_paragraph(
     text = "".join(s.text for s in spans)
     line_height = max(_DEFAULT_LINE_HEIGHT, font_size_hu * line_spacing_pct // 100)
 
+    iid = _PH_MAGIC if level == 0 else 0
+
     if not text:
         char_cnt = 1  # CR 1개
-        ph = _build_para_header(char_cnt, 1, 1, ps_id, style_id, is_last=is_last)
+        ph = _build_para_header(char_cnt, 1, 1, ps_id, style_id, is_last=is_last, instance_id=iid)
         pcs = struct.pack("<II", 0, spans[0].cs_id if spans else 0)
-        pls = _build_pls(char_cnt, vpos=vpos,
-                         dist=content_width or 42520,
-                         line_spacing_pct=line_spacing_pct)
+        if original_pls is not None and len(original_pls) >= 36 and _validate_pls(original_pls, char_cnt):
+            pls = original_pls
+        else:
+            pls = _build_pls(char_cnt, vpos=vpos,
+                             dist=content_width or 42520,
+                             line_spacing_pct=line_spacing_pct)
         out = _pack_record(HWPTAG_PARA_HEADER, level, ph)
         out += _pack_record(HWPTAG_PARA_CHAR_SHAPE, level + 1, pcs)
         out += _pack_record(HWPTAG_PARA_LINE_SEG, level + 1, pls)
@@ -407,7 +426,7 @@ def build_paragraph(
     char_cnt = len(pt) // 2
     pcs = _build_pcs(spans)
 
-    if original_pls is not None and len(original_pls) >= 36:
+    if original_pls is not None and len(original_pls) >= 36 and _validate_pls(original_pls, char_cnt):
         pls = original_pls
         ls_entry_h = struct.unpack_from("<I", pls, 8)[0] if len(pls) >= 12 else line_height
         para_height = ls_entry_h if ls_entry_h > 0 else line_height
@@ -427,6 +446,7 @@ def build_paragraph(
         style_id=style_id,
         control_mask=_ctrl_mask_from_text(text),
         is_last=is_last,
+        instance_id=iid,
     )
 
     out = _pack_record(HWPTAG_PARA_HEADER, level, ph)
@@ -502,6 +522,8 @@ def build_secd_paragraph(
     line_spacing_pct: int = 160,
     extra_inline_ctrls: list[bytes] | None = None,
     page_bg_bf_id: int | None = None,
+    original_pls: bytes | None = None,
+    skip_seed_dloc: bool = False,
 ) -> bytes:
     """Reconstruct the secd paragraph from seed, merging new text content.
 
@@ -551,6 +573,9 @@ def build_secd_paragraph(
                 para_text_payload = rec.payload
             elif rec.tag_id not in (HWPTAG_PARA_CHAR_SHAPE, HWPTAG_PARA_LINE_SEG):
                 payload = rec.payload
+                # skip seed dloc when verbatim provides a replacement
+                if skip_seed_dloc and rec.tag_id == HWPTAG_CTRL_HEADER and len(payload) >= 4 and payload[:4] == b"dloc":
+                    continue
                 if rec.tag_id == HWPTAG_PAGE_DEF and page_meta:
                     payload = _patch_page_def_payload(payload, page_meta)
                 if rec.tag_id == 75 and page_bg_bf_id is not None and len(payload) >= 14:
@@ -598,6 +623,7 @@ def build_secd_paragraph(
     ctrl_mask |= _ctrl_mask_from_text(text)
     seed_ps_id = struct.unpack_from("<H", first_ph_payload, 8)[0]
     seed_style_id = first_ph_payload[10]
+    seed_instance_id = struct.unpack_from("<I", first_ph_payload, 18)[0] if len(first_ph_payload) >= 22 else _PH_MAGIC
     ps_id = ps_id_override if ps_id_override is not None else seed_ps_id
     style_id = style_id_override if style_id_override is not None else seed_style_id
 
@@ -613,20 +639,26 @@ def build_secd_paragraph(
         pcs_entries += struct.pack("<II", text_start_pos, cs_id)
 
     h = _DEFAULT_LINE_HEIGHT
-    h * 85 // 100
-    h * (line_spacing_pct - 100) // 100
+
+    if original_pls is not None and len(original_pls) >= 36 and _validate_pls(original_pls, char_cnt):
+        pls = original_pls
+    elif text and dist > 0:
+        pls, _ = _build_pls_multi(text, 0, dist, h, line_spacing_pct)
+    else:
+        pls = _build_pls(char_cnt, vpos=0, h=h, dist=dist, line_spacing_pct=line_spacing_pct)
+    ls_count = len(pls) // 36
 
     ph = _build_para_header(
         char_cnt=char_cnt,
         cs_count=n_pcs,
-        ls_count=1,
+        ls_count=ls_count,
         ps_id=ps_id,
         style_id=style_id,
         control_mask=ctrl_mask,
         is_last=is_last,
         col_split=3,
+        instance_id=seed_instance_id,
     )
-    pls = _build_pls(char_cnt, vpos=0, h=h, dist=dist, line_spacing_pct=line_spacing_pct)
 
     out = _pack_record(HWPTAG_PARA_HEADER, 0, ph)
     out += _pack_record(HWPTAG_PARA_TEXT, 1, new_pt)
@@ -651,8 +683,8 @@ _CTRL_ID_FN = b"\x20\x20\x6e\x66"    # 'fn  ' LE (reversed)
 _CTRL_ID_EN = b"\x20\x20\x6e\x65"    # 'en  ' LE (reversed)
 _CTRL_ID_GSO = b"\x20\x6f\x73\x67"   # 'gso ' LE (reversed)
 
-_TBL_CTRL_ATTR = 0x082A2210
-_TBL_TABLE_ATTR = 0x04000006
+_TBL_CTRL_ATTR = 0x002A0310
+_TBL_TABLE_ATTR = 0x00000006
 _DEFAULT_CELL_PADDING_H = 510   # 좌우 셀 패딩 (≈5.1pt = 1.8mm)
 _DEFAULT_CELL_PADDING_V = 141   # 상하 셀 패딩 (≈1.41pt = 0.5mm)
 _DEFAULT_CELL_BF_ID = 3
@@ -753,7 +785,10 @@ def _build_list_header(
     para_count: int = 1,
     vertical_align: str | None = None,
 ) -> bytes:
-    """LIST_HEADER (tag=72) 셀 페이로드 (47B, 한컴 실제 파일 기준)."""
+    """LIST_HEADER (tag=72) 셀 페이로드 (34B).
+
+    34-byte format: standard for table cells (iid=0 paragraphs).
+    """
     va = _CELL_VALIGN.get(vertical_align or "top", 0)
     listflags = 0x00000020 | (va << 2)
     buf = struct.pack("<HH", para_count, 0)  # paragraphs, unknown
@@ -764,10 +799,34 @@ def _build_list_header(
     buf += struct.pack("<4H", _DEFAULT_CELL_PADDING_H, _DEFAULT_CELL_PADDING_H,
                        _DEFAULT_CELL_PADDING_V, _DEFAULT_CELL_PADDING_V)
     buf += struct.pack("<H", bf_id)
-    buf += struct.pack("<I", size_x)  # textWidth (한컴 47B 기준)
-    buf += b"\x00" * 9
-    assert len(buf) == 47
     return buf
+
+
+def _set_last_ph_msb(data: bytes, target_level: int) -> bytes:
+    """Set MSB (bit 31) on the last PARA_HEADER at the specified level."""
+    buf = bytearray(data)
+    last_ph_offset = -1
+    pos = 0
+    while pos + 4 <= len(buf):
+        hdr = struct.unpack_from("<I", buf, pos)[0]
+        tag = hdr & 0x3FF
+        lvl = (hdr >> 10) & 0x3FF
+        sz = (hdr >> 20) & 0xFFF
+        if sz == 0xFFF:
+            if pos + 8 > len(buf):
+                break
+            sz = struct.unpack_from("<I", buf, pos + 4)[0]
+            payload_start = pos + 8
+        else:
+            payload_start = pos + 4
+        if tag == (HWPTAG_PARA_HEADER & 0x3FF) and lvl == target_level:
+            last_ph_offset = payload_start
+        pos = payload_start + sz
+    if last_ph_offset >= 0 and last_ph_offset + 4 <= len(buf):
+        raw = struct.unpack_from("<I", buf, last_ph_offset)[0]
+        if not (raw & _MSB):
+            struct.pack_into("<I", buf, last_ph_offset, raw | _MSB)
+    return bytes(buf)
 
 
 def build_table(
@@ -790,19 +849,39 @@ def build_table(
     cell_valigns: list[list[str]] | None = None,
     tbl_cell_spacing: int = 0,
     tbl_padding: tuple[int, int, int, int] | None = None,
+    cell_original_pls: list[list[bytes | None]] | None = None,
+    cell_content_bytes: list[list[tuple[bytes, int]]] | None = None,
+    skip_host: bool = False,
+    freeze_layout: bool = False,
+    freeze_row_heights: list[bool] | None = None,
 ) -> tuple[bytes, int]:
     """Build a complete HWP table record set for a TableBlock.
 
     cell_merges: per-row list of (col_span, row_span) for each cell in that row.
     Rows in cell_merges correspond to the actual cells emitted per row (after merge).
     cell_images: per-row, per-cell list of CellImageInfo for images to embed in cells.
+    cell_content_bytes: pre-built cell content records [row][cell] = (bytes, para_count).
+    skip_host: if True, omit the host paragraph (PH/PT/PCS/PLS) and return only
+        CTRL_HEADER + TABLE + cell records. Used when merging into a preceding paragraph.
+    freeze_layout: if True, use row_heights_hint and col_widths as exact values,
+        skipping all auto-sizing based on text content or images.
+        When provided, overrides cell_texts for record emission (still uses cell_texts for sizing).
     """
-    if not col_widths:
+    if not col_widths and not freeze_layout:
         col_widths = _auto_col_widths(n_cols, cell_texts, content_width, font_size_hu)
+    elif not col_widths and cell_widths_hint:
+        first_row = cell_widths_hint[0] if cell_widths_hint else []
+        if len(first_row) == n_cols and all(w > 0 for w in first_row):
+            col_widths = list(first_row)
+        else:
+            per_col = content_width // max(n_cols, 1)
+            col_widths = [per_col] * n_cols
+    elif not col_widths:
+        per_col = content_width // max(n_cols, 1)
+        col_widths = [per_col] * n_cols
     table_width = sum(col_widths)
 
     # Build a grid to track which cells are covered by rowspan from above.
-    # covered[ri][ci] = True means (ri, ci) is covered by a rowspan from a cell above.
     covered: list[list[bool]] = [[False] * n_cols for _ in range(n_rows)]
     if cell_merges:
         for ri in range(n_rows):
@@ -821,12 +900,19 @@ def build_table(
                     logical_ci += cs
 
     line_h = max(_DEFAULT_LINE_HEIGHT, font_size_hu * line_spacing_pct // 100)
-    row_heights = [max(_MIN_CELL_HEIGHT, line_h)] * n_rows
+    row_heights = [_MIN_CELL_HEIGHT] * n_rows
     if row_heights_hint:
         for ri in range(min(n_rows, len(row_heights_hint))):
             if row_heights_hint[ri] > 0:
-                row_heights[ri] = max(row_heights[ri], row_heights_hint[ri])
+                row_heights[ri] = row_heights_hint[ri]
     for ri in range(n_rows):
+        row_frozen = freeze_layout or (
+            freeze_row_heights is not None and ri < len(freeze_row_heights) and freeze_row_heights[ri]
+        )
+        if row_frozen:
+            continue
+        if row_heights_hint and ri < len(row_heights_hint) and row_heights_hint[ri] > 0:
+            continue
         if ri < len(cell_texts):
             for ci_data, spans in enumerate(cell_texts[ri]):
                 text = "".join(s.text for s in spans)
@@ -843,7 +929,6 @@ def build_table(
                     n_lines = min(n_lines, len(text) + 1)
                     h = n_lines * line_h
                     row_heights[ri] = max(row_heights[ri], h)
-        # Account for image heights in cells
         if cell_images and ri < len(cell_images):
             for ci_data, imgs in enumerate(cell_images[ri]):
                 for img_info in imgs:
@@ -855,7 +940,10 @@ def build_table(
                         ih = int(ih * cell_content_w / iw)
                     row_heights[ri] = max(row_heights[ri], row_heights[ri] + ih)
 
-    table_height = sum(row_heights)
+    pad = tbl_padding or (_DEFAULT_CELL_PADDING_H, _DEFAULT_CELL_PADDING_H,
+                          _DEFAULT_CELL_PADDING_V, _DEFAULT_CELL_PADDING_V)
+    ctrl_row_h = [max(rh, font_size_hu) + pad[2] + pad[3] for rh in row_heights]
+    table_height = sum(ctrl_row_h)
 
     # Compute actual cells per row for TABLE record
     cells_per_row: list[int] | None = None
@@ -877,17 +965,19 @@ def build_table(
             cells_per_row.append(cnt)
 
     # 1. Host paragraph: PH + PT(inline ctrl) + PCS + PLS
-    inline_obj = _build_inline_ctrl_obj(_CTRL_CODE_TABLE, _CTRL_ID_TBL)
-    pt_payload = inline_obj + b"\x0d\x00"  # ctrl obj + CR
-    char_cnt = len(pt_payload) // 2  # = 9
-    ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00000800)
-    pcs = struct.pack("<II", 0, 0)
-    pls = _build_pls(char_cnt, vpos=vpos)
+    out = b""
+    if not skip_host:
+        inline_obj = _build_inline_ctrl_obj(_CTRL_CODE_TABLE, _CTRL_ID_TBL)
+        pt_payload = inline_obj + b"\x0d\x00"  # ctrl obj + CR
+        char_cnt = len(pt_payload) // 2  # = 9
+        ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00000800, instance_id=0)
+        pcs = struct.pack("<II", 0, 0)
+        pls = _build_pls(char_cnt, vpos=0, dist=0)
 
-    out = _pack_record(HWPTAG_PARA_HEADER, level, ph)
-    out += _pack_record(HWPTAG_PARA_TEXT, level + 1, pt_payload)
-    out += _pack_record(HWPTAG_PARA_CHAR_SHAPE, level + 1, pcs)
-    out += _pack_record(HWPTAG_PARA_LINE_SEG, level + 1, pls)
+        out = _pack_record(HWPTAG_PARA_HEADER, level, ph)
+        out += _pack_record(HWPTAG_PARA_TEXT, level + 1, pt_payload)
+        out += _pack_record(HWPTAG_PARA_CHAR_SHAPE, level + 1, pcs)
+        out += _pack_record(HWPTAG_PARA_LINE_SEG, level + 1, pls)
 
     # 2. CTRL_HEADER 'tbl '
     ctrl_payload = _build_ctrl_header_tbl(table_width, table_height)
@@ -920,8 +1010,19 @@ def build_table(
             if cell_images and ri < len(cell_images) and data_ci < len(cell_images[ri]):
                 imgs = cell_images[ri][data_ci]
 
-            # paragraph count = 1 (text) + number of images
-            para_count = 1 + len(imgs)
+            has_imgs = len(imgs) > 0
+
+            # Check for pre-built cell content
+            has_prebuilt = (cell_content_bytes is not None
+                           and ri < len(cell_content_bytes)
+                           and data_ci < len(cell_content_bytes[ri]))
+
+            if has_prebuilt:
+                cb_bytes, cb_para_count = cell_content_bytes[ri][data_ci]
+                para_count = cb_para_count + len(imgs)
+            else:
+                para_count = 1 + len(imgs)
+
             cell_va = None
             if cell_valigns and ri < len(cell_valigns) and data_ci < len(cell_valigns[ri]):
                 cell_va = cell_valigns[ri][data_ci]
@@ -932,24 +1033,32 @@ def build_table(
             )
             out += _pack_record(HWPTAG_LIST_HEADER, level + 2, lh)
 
-            spans = [TextSpan("", 0)]
-            if ri < len(cell_texts) and data_ci < len(cell_texts[ri]):
-                spans = cell_texts[ri][data_ci] or [TextSpan("", 0)]
+            if has_prebuilt:
+                if not has_imgs:
+                    cb_bytes = _set_last_ph_msb(cb_bytes, level + 2)
+                out += cb_bytes
+            else:
+                spans = [TextSpan("", 0)]
+                if ri < len(cell_texts) and data_ci < len(cell_texts[ri]):
+                    spans = cell_texts[ri][data_ci] or [TextSpan("", 0)]
 
-            cell_ps = 0
-            if cell_ps_ids and ri < len(cell_ps_ids) and data_ci < len(cell_ps_ids[ri]):
-                cell_ps = cell_ps_ids[ri][data_ci]
+                cell_ps = 0
+                if cell_ps_ids and ri < len(cell_ps_ids) and data_ci < len(cell_ps_ids[ri]):
+                    cell_ps = cell_ps_ids[ri][data_ci]
 
-            has_imgs = len(imgs) > 0
-            cell_para, _ = build_paragraph(
-                spans, ps_id=cell_ps, level=level + 2,
-                is_last=(not has_imgs),  # only last if no images follow
-                vpos=0,
-                content_width=max(1, size_x - 2 * _DEFAULT_CELL_PADDING_H),
-                font_size_hu=font_size_hu,
-                line_spacing_pct=line_spacing_pct,
-            )
-            out += cell_para
+                cell_pls = None
+                if cell_original_pls and ri < len(cell_original_pls) and data_ci < len(cell_original_pls[ri]):
+                    cell_pls = cell_original_pls[ri][data_ci]
+                cell_para, _ = build_paragraph(
+                    spans, ps_id=cell_ps, level=level + 2,
+                    is_last=(not has_imgs),
+                    vpos=0,
+                    content_width=max(1, size_x - 2 * _DEFAULT_CELL_PADDING_H),
+                    font_size_hu=font_size_hu,
+                    line_spacing_pct=line_spacing_pct,
+                    original_pls=cell_pls,
+                )
+                out += cell_para
 
             # Emit image paragraphs inside the cell
             for img_idx, img_info in enumerate(imgs):
@@ -994,6 +1103,7 @@ def build_equation(
     level: int = 0,
     font_size_hu: int = 1000,
     line_spacing_pct: int = 160,
+    eq_trailing: bytes | None = None,
 ) -> tuple[bytes, int]:
     """Build an equation record set (host paragraph + CTRL_HEADER + EQEDIT).
 
@@ -1019,9 +1129,9 @@ def build_equation(
     inline_obj = _build_inline_ctrl_obj(_CTRL_CODE_EQED, _CTRL_ID_EQED)
     pt_payload = inline_obj + b"\x0d\x00"
     char_cnt = len(pt_payload) // 2
-    ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00000800)
+    ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00000800, instance_id=0)
     pcs = struct.pack("<II", 0, 0)
-    pls = _build_pls(char_cnt, vpos=vpos)
+    pls = _build_pls(char_cnt, vpos=0, dist=0)
 
     out = _pack_record(HWPTAG_PARA_HEADER, level, ph)
     out += _pack_record(HWPTAG_PARA_TEXT, level + 1, pt_payload)
@@ -1036,7 +1146,7 @@ def build_equation(
     ctrl_payload += struct.pack("<hh", 0, 0)  # z_order, unknown
     ctrl_payload += struct.pack("<4H", 56, 56, 0, 0)  # margins (원본: 0x38=56)
     ctrl_payload += struct.pack("<I", 0)  # instance_id
-    ctrl_payload += struct.pack("<H", 0)  # trailing field
+    ctrl_payload += struct.pack("<IH", 0, 0)  # trailing (6B: 원본 관찰 — 00*6)
     out += _pack_record(HWPTAG_CTRL_HEADER, level + 1, ctrl_payload)
 
     # 3. EQEDIT record (tag=88)
@@ -1044,6 +1154,15 @@ def build_equation(
     eqedit = struct.pack("<I", 0)  # attr
     eqedit += struct.pack("<H", len(hwp_script))  # script char count
     eqedit += script_bytes
+    # trailing fields (14B) — verbatim 우선, fallback 상수
+    if eq_trailing and len(eq_trailing) >= 14:
+        eqedit += eq_trailing[:14]
+    else:
+        eqedit += struct.pack("<I", font_size_hu)  # BaseUnit
+        eqedit += struct.pack("<I", 0x00000000)    # TextColor (black)
+        eqedit += struct.pack("<H", 84)            # BaseLine (default)
+        eqedit += struct.pack("<H", 0)             # unknown
+        eqedit += struct.pack("<H", 0)             # VersionLen
     out += _pack_record(HWPTAG_EQEDIT, level + 2, eqedit)
 
     line_height = font_size_hu * line_spacing_pct // 100
@@ -1169,7 +1288,7 @@ def _build_note_body_paragraph(
     pt_payload = atno_inline + body_text + b"\x0d\x00"
     char_cnt = len(pt_payload) // 2
 
-    ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00040800, is_last=True)
+    ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00040800, is_last=True, instance_id=0)
 
     # PCS: position 0 = cs_id from first span
     first_cs = body_spans[0].cs_id if body_spans else 0
@@ -1222,9 +1341,9 @@ def _build_note_records(
     inline_obj = _build_inline_ctrl_obj(_CTRL_CODE_FN, ctrl_id_bytes)
     pt_payload = inline_obj + b"\x0d\x00"
     char_cnt = len(pt_payload) // 2
-    ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00000800)
+    ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00000800, instance_id=0)
     pcs = struct.pack("<II", 0, 0)
-    pls = _build_pls(char_cnt, vpos=vpos)
+    pls = _build_pls(char_cnt, vpos=0, dist=0)
 
     out = _pack_record(HWPTAG_PARA_HEADER, level, ph)
     out += _pack_record(HWPTAG_PARA_TEXT, level + 1, pt_payload)
@@ -1316,7 +1435,7 @@ def build_header_footer(
     pcs = struct.pack("<II", 0, first_cs)
     pls = _build_pls(char_cnt, vpos=0, h=font_size_hu,
                      line_spacing_pct=line_spacing_pct)
-    ph = _build_para_header(char_cnt, 1, 1, is_last=True)
+    ph = _build_para_header(char_cnt, 1, 1, is_last=True, instance_id=0)
 
     out += _pack_record(HWPTAG_PARA_HEADER, level + 1, ph)
     if text:
@@ -1450,29 +1569,52 @@ def _build_shape_component_con(
     total = base + 2 + 4 * n_children + 4
     buf = bytearray(total)
     o = 0
-    buf[o:o+4] = _SHAPE_TYPE_CON; o += 4
-    buf[o:o+4] = _SHAPE_TYPE_CON; o += 4
-    struct.pack_into("<i", buf, o, 0); o += 4        # OffsetX
-    struct.pack_into("<i", buf, o, 0); o += 4        # OffsetY
-    struct.pack_into("<H", buf, o, 0); o += 2        # GroupingCount
-    struct.pack_into("<H", buf, o, 1); o += 2        # LocalFileVersion
-    struct.pack_into("<I", buf, o, width); o += 4
-    struct.pack_into("<I", buf, o, height); o += 4
-    struct.pack_into("<I", buf, o, width); o += 4
-    struct.pack_into("<I", buf, o, height); o += 4
-    struct.pack_into("<I", buf, o, 0x00080000); o += 4
+    buf[o:o+4] = _SHAPE_TYPE_CON
+    o += 4
+    buf[o:o+4] = _SHAPE_TYPE_CON
+    o += 4
+    struct.pack_into("<i", buf, o, 0)
+    o += 4        # OffsetX
+    struct.pack_into("<i", buf, o, 0)
+    o += 4        # OffsetY
+    struct.pack_into("<H", buf, o, 0)
+    o += 2        # GroupingCount
+    struct.pack_into("<H", buf, o, 1)
+    o += 2        # LocalFileVersion
+    struct.pack_into("<I", buf, o, width)
+    o += 4
+    struct.pack_into("<I", buf, o, height)
+    o += 4
+    struct.pack_into("<I", buf, o, width)
+    o += 4
+    struct.pack_into("<I", buf, o, height)
+    o += 4
+    struct.pack_into("<I", buf, o, 0x00080000)
+    o += 4
     rot_angle = round(rotation * 10) if rotation else 0
-    struct.pack_into("<H", buf, o, rot_angle & 0xFFFF); o += 2  # RotAngle
-    struct.pack_into("<i", buf, o, width // 2); o += 4
-    struct.pack_into("<i", buf, o, height // 2); o += 4
-    struct.pack_into("<H", buf, o, 1); o += 2        # RenderingInfo count=1
-    struct.pack_into("<d", buf, o, 1.0); struct.pack_into("<d", buf, o + 32, 1.0); o += 48
-    struct.pack_into("<d", buf, o, 1.0); struct.pack_into("<d", buf, o + 32, 1.0); o += 48
-    struct.pack_into("<d", buf, o, 1.0); struct.pack_into("<d", buf, o + 32, 1.0); o += 48
+    struct.pack_into("<H", buf, o, rot_angle & 0xFFFF)
+    o += 2  # RotAngle
+    struct.pack_into("<i", buf, o, width // 2)
+    o += 4
+    struct.pack_into("<i", buf, o, height // 2)
+    o += 4
+    struct.pack_into("<H", buf, o, 1)
+    o += 2        # RenderingInfo count=1
+    struct.pack_into("<d", buf, o, 1.0)
+    struct.pack_into("<d", buf, o + 32, 1.0)
+    o += 48
+    struct.pack_into("<d", buf, o, 1.0)
+    struct.pack_into("<d", buf, o + 32, 1.0)
+    o += 48
+    struct.pack_into("<d", buf, o, 1.0)
+    struct.pack_into("<d", buf, o + 32, 1.0)
+    o += 48
     assert o == base
-    struct.pack_into("<H", buf, o, n_children); o += 2
+    struct.pack_into("<H", buf, o, n_children)
+    o += 2
     for ct in child_types:
-        buf[o:o+4] = ct; o += 4
+        buf[o:o+4] = ct
+        o += 4
     if inst_id is None:
         inst_id = _next_gso_instance_id()
     struct.pack_into("<I", buf, o, inst_id)
@@ -1492,22 +1634,37 @@ def _build_shape_component_pic(width: int, height: int, child: bool = False) -> 
     size = base + mat_bytes
     buf = bytearray(size)
     o = 0
-    struct.pack_into("<4s", buf, o, _SHAPE_TYPE_PIC); o += 4
+    struct.pack_into("<4s", buf, o, _SHAPE_TYPE_PIC)
+    o += 4
     if not child:
-        struct.pack_into("<4s", buf, o, _SHAPE_TYPE_PIC); o += 4
-    struct.pack_into("<i", buf, o, 0); o += 4        # OffsetX
-    struct.pack_into("<i", buf, o, 0); o += 4        # OffsetY
-    struct.pack_into("<H", buf, o, grp_cnt); o += 2  # GroupingCount
-    struct.pack_into("<H", buf, o, 1); o += 2        # LocalFileVersion
-    struct.pack_into("<I", buf, o, width); o += 4    # WidthAtCreate
-    struct.pack_into("<I", buf, o, height); o += 4   # HeightAtCreate
-    struct.pack_into("<I", buf, o, width); o += 4    # WidthAtCurrent
-    struct.pack_into("<I", buf, o, height); o += 4   # HeightAtCurrent
-    struct.pack_into("<I", buf, o, 0x00080000 if child else 0x24080000); o += 4  # Property
-    struct.pack_into("<H", buf, o, 0); o += 2        # RotateAngle
-    struct.pack_into("<i", buf, o, width // 2); o += 4   # RotateXCenter
-    struct.pack_into("<i", buf, o, height // 2); o += 4  # RotateYCenter
-    struct.pack_into("<H", buf, o, n_pairs); o += 2
+        struct.pack_into("<4s", buf, o, _SHAPE_TYPE_PIC)
+        o += 4
+    struct.pack_into("<i", buf, o, 0)
+    o += 4        # OffsetX
+    struct.pack_into("<i", buf, o, 0)
+    o += 4        # OffsetY
+    struct.pack_into("<H", buf, o, grp_cnt)
+    o += 2  # GroupingCount
+    struct.pack_into("<H", buf, o, 1)
+    o += 2        # LocalFileVersion
+    struct.pack_into("<I", buf, o, width)
+    o += 4    # WidthAtCreate
+    struct.pack_into("<I", buf, o, height)
+    o += 4   # HeightAtCreate
+    struct.pack_into("<I", buf, o, width)
+    o += 4    # WidthAtCurrent
+    struct.pack_into("<I", buf, o, height)
+    o += 4   # HeightAtCurrent
+    struct.pack_into("<I", buf, o, 0x00080000 if child else 0x24080000)
+    o += 4  # Property
+    struct.pack_into("<H", buf, o, 0)
+    o += 2        # RotateAngle
+    struct.pack_into("<i", buf, o, width // 2)
+    o += 4   # RotateXCenter
+    struct.pack_into("<i", buf, o, height // 2)
+    o += 4  # RotateYCenter
+    struct.pack_into("<H", buf, o, n_pairs)
+    o += 2
     for _ in range(1 + 2 * n_pairs):
         struct.pack_into("<d", buf, o, 1.0)
         struct.pack_into("<d", buf, o + 32, 1.0)
@@ -1632,10 +1789,10 @@ def build_image(
     inline_obj = _build_inline_ctrl_obj(_CTRL_CODE_GSO, _CTRL_ID_GSO)
     pt_payload = inline_obj + b"\x0d\x00"
     char_cnt = len(pt_payload) // 2
-    ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00000800)
+    ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00000800, instance_id=0)
     pcs = struct.pack("<II", 0, 0)
     is_floating = x_offset != 0 or y_offset != 0 or flow in ('back', 'front')
-    pls = _build_pls(char_cnt, vpos=vpos)
+    pls = _build_pls(char_cnt, vpos=0, dist=0)
 
     out = _pack_record(HWPTAG_PARA_HEADER, level, ph)
     out += _pack_record(HWPTAG_PARA_TEXT, level + 1, pt_payload)
@@ -1668,6 +1825,39 @@ def build_image(
     if flow == 'back':
         return out, 0
     return out, max(line_height, img_height)
+
+
+def build_image_gso_records(
+    bin_item_id: int,
+    img_width: int,
+    img_height: int,
+    orig_width: int = 0,
+    orig_height: int = 0,
+    position=None,
+) -> list:
+    """Build GSO child records for Seed Patch image injection.
+
+    Returns a list of (tag_id, relative_level, payload) tuples.
+    Levels are 0-based relative to the parent paragraph's child level.
+    """
+    from udf.parsers.hwp.records import (
+        HWPTAG_CTRL_HEADER as _CH,
+        HWPTAG_SHAPE_COMPONENT as _SC,
+        HWPTAG_SHAPE_COMPONENT_PIC as _SCP,
+        HwpRecord,
+    )
+    ctrl_pay, _ = _build_gso_ctrl_header(
+        img_width, img_height, position=position,
+    )
+    sc_pay = _build_shape_component_pic(img_width, img_height)
+    pic_pay = _build_shape_pic_payload(
+        img_width, img_height, bin_item_id, orig_width, orig_height,
+    )
+    return [
+        HwpRecord(_CH, 0, ctrl_pay, 0),
+        HwpRecord(_SC, 1, sc_pay, 0),
+        HwpRecord(_SCP, 2, pic_pay, 0),
+    ]
 
 
 def _build_textbox_list_header(width: int, height: int) -> bytes:
@@ -1804,9 +1994,9 @@ def build_textbox_shape(
     inline_obj = _build_inline_ctrl_obj(_CTRL_CODE_GSO, _CTRL_ID_GSO)
     pt_payload = inline_obj + b"\x0d\x00"
     char_cnt = len(pt_payload) // 2
-    ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00000800)
+    ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00000800, instance_id=0)
     pcs = struct.pack("<II", 0, 0)
-    pls = _build_pls(char_cnt, vpos=vpos)
+    pls = _build_pls(char_cnt, vpos=0, dist=0)
 
     out = _pack_record(HWPTAG_PARA_HEADER, level, ph)
     out += _pack_record(HWPTAG_PARA_TEXT, level + 1, pt_payload)

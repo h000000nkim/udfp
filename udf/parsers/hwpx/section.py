@@ -131,7 +131,8 @@ def parse_section_xml(
     if list_acc:
         blocks.append(_flush_list(list_acc, info))
 
-    # secPr에서 header/footer 추출
+    # header/footer는 _parse_paragraph 내에서 위치에 맞게 추출됨 (ctrl > header/footer 경로)
+    # secPr > headerFooter 경로는 fallback으로 유지 (위치 정보 없으므로 끝에 추가)
     hf_blocks = _extract_header_footer(root, info, verbatim_map)
     blocks.extend(hf_blocks)
 
@@ -198,11 +199,14 @@ def _parse_paragraph(
                         inlines=text_only,
                         format=_build_para_format(para_pr_id, info),
                     ))
-            result.append(_parse_table(tbl, info, verbatim_map))
+            # Emit table and header/footer in XML run order
+            _collect_tbl_and_hf_in_order(p_el, tbl, info, verbatim_map, result)
             return result if len(result) > 1 else result[0]
 
     # 텍스트 인라인 수집 (extra_blocks for footnotes/endnotes)
     extra_blocks: list[Block] = []
+    # ctrl > header/footer 추출 (테이블 없는 단락에서)
+    _collect_hf_from_paragraph(p_el, info, verbatim_map, extra_blocks)
     inlines = _collect_inlines(p_el, info, extra_blocks=extra_blocks)
     inlines = _merge_adjacent_text_inlines(inlines)
 
@@ -1182,15 +1186,120 @@ def _collect_draw_content(
     return blocks
 
 
+def _collect_tbl_and_hf_in_order(
+    p_el: etree._Element,
+    tbl: etree._Element,
+    info: DocInfoResult,
+    verbatim_map: dict[str, VerbatimBlock],
+    out: list[Block],
+) -> None:
+    """테이블과 header/footer를 XML run 순서에 맞게 out에 추가."""
+    _APPLY_MAP = {
+        "BOTH": "all",
+        "EVEN": "even",
+        "ODD": "odd",
+        "FIRST": "first",
+    }
+    tbl_emitted = False
+    for run in p_el.iterfind("hp:run", NS):
+        # table
+        if not tbl_emitted and run.find("hp:tbl", NS) is not None:
+            out.append(_parse_table(tbl, info, verbatim_map))
+            tbl_emitted = True
+        # header/footer in ctrl
+        for ctrl_el in run.iterfind("hp:ctrl", NS):
+            for child in ctrl_el:
+                child_tag = _local_tag(child)
+                if child_tag not in ("header", "footer"):
+                    continue
+                apply_page = child.get("applyPageType", "BOTH")
+                apply_to = _APPLY_MAP.get(apply_page, "all")
+                sub_list = child.find("hp:subList", NS)
+                content: list[Block] = []
+                if sub_list is not None:
+                    for sub_p in sub_list.iterfind("hp:p", NS):
+                        block = _parse_paragraph(sub_p, info, verbatim_map)
+                        if block is not None:
+                            if isinstance(block, list):
+                                content.extend(block)
+                            else:
+                                content.append(block)
+                hf_id = _next_block_id()
+                if child_tag == "header":
+                    out.append(HeaderBlock(
+                        type="header", id=hf_id, apply_to=apply_to, content=content
+                    ))
+                else:
+                    out.append(FooterBlock(
+                        type="footer", id=hf_id, apply_to=apply_to, content=content
+                    ))
+    if not tbl_emitted:
+        out.append(_parse_table(tbl, info, verbatim_map))
+
+
+def _collect_hf_from_paragraph(
+    p_el: etree._Element,
+    info: DocInfoResult,
+    verbatim_map: dict[str, VerbatimBlock],
+    out: list[Block],
+) -> None:
+    """단락 내 ctrl > header/footer 요소를 찾아 HeaderBlock/FooterBlock을 out에 추가."""
+    _APPLY_MAP = {
+        "BOTH": "all",
+        "EVEN": "even",
+        "ODD": "odd",
+        "FIRST": "first",
+    }
+    for run in p_el.iterfind("hp:run", NS):
+        for ctrl_el in run.iterfind("hp:ctrl", NS):
+            for child in ctrl_el:
+                child_tag = _local_tag(child)
+                if child_tag not in ("header", "footer"):
+                    continue
+
+                apply_page = child.get("applyPageType", "BOTH")
+                apply_to = _APPLY_MAP.get(apply_page, "all")
+
+                sub_list = child.find("hp:subList", NS)
+                content: list[Block] = []
+                if sub_list is not None:
+                    for sub_p in sub_list.iterfind("hp:p", NS):
+                        block = _parse_paragraph(sub_p, info, verbatim_map)
+                        if block is not None:
+                            if isinstance(block, list):
+                                content.extend(block)
+                            else:
+                                content.append(block)
+
+                hf_id = _next_block_id()
+                if child_tag == "header":
+                    out.append(HeaderBlock(
+                        type="header", id=hf_id, apply_to=apply_to, content=content
+                    ))
+                else:
+                    out.append(FooterBlock(
+                        type="footer", id=hf_id, apply_to=apply_to, content=content
+                    ))
+
+
 def _extract_header_footer(
     root: etree._Element,
     info: DocInfoResult,
     verbatim_map: dict[str, VerbatimBlock],
 ) -> list[Block]:
-    """section XML의 secPr에서 headerFooter 요소를 찾아 HeaderBlock/FooterBlock을 생성한다."""
+    """secPr > headerFooter 경로의 header/footer를 추출 (fallback).
+
+    ctrl > header/footer 경로는 _collect_hf_from_paragraph()에서 인라인 처리됨.
+    """
     blocks: list[Block] = []
 
-    # secPr은 hp:p > hp:run > hp:secPr 경로에 있음
+    _APPLY_MAP = {
+        "BOTH": "all",
+        "EVEN": "even",
+        "ODD": "odd",
+        "FIRST": "first",
+    }
+
     for p_el in root.iterfind("hp:p", NS):
         for run in p_el.iterfind("hp:run", NS):
             sec_pr = run.find("hp:secPr", NS)
@@ -1202,18 +1311,10 @@ def _extract_header_footer(
                 if hf_tag != "headerFooter":
                     continue
 
-                hf_type = hf_el.get("type", "BOTH")  # BOTH, EVEN, ODD, FIRST
+                hf_type = hf_el.get("type", "BOTH")
                 header_or_footer = hf_el.get("headerFooter", "HEADER")
+                apply_to = _APPLY_MAP.get(hf_type, "all")
 
-                apply_to_map = {
-                    "BOTH": "all",
-                    "EVEN": "even",
-                    "ODD": "odd",
-                    "FIRST": "first",
-                }
-                apply_to = apply_to_map.get(hf_type, "all")
-
-                # subList 안의 단락 파싱
                 sub_list = hf_el.find("hp:subList", NS)
                 content: list[Block] = []
                 if sub_list is not None:

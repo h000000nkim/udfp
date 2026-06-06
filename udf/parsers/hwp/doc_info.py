@@ -561,7 +561,7 @@ def _parse_border_fill(payload: bytes) -> dict[str, Any]:
     if off + 4 <= len(payload):
         (fill_attr,) = struct.unpack_from("<I", payload, off)
         off += 4
-        # 단색 채우기인 경우 (bit 0)
+        # 단색 채우기 (bit 0)
         if fill_attr & 0x01:
             if off + 4 <= len(payload):
                 (fg_color,) = struct.unpack_from("<I", payload, off)
@@ -571,6 +571,25 @@ def _parse_border_fill(payload: bytes) -> dict[str, Any]:
                     fc_g = (fg_rgb >> 8) & 0xFF
                     fc_b = (fg_rgb >> 16) & 0xFF
                     result["fill_color"] = f"#{fc_r:02x}{fc_g:02x}{fc_b:02x}"
+                off += 8  # fg(4B) + bg(4B)
+                if off + 4 <= len(payload):
+                    off += 4  # pattern_type
+        # 그래디언트 채우기 (bit 1) — 첫 번째 색상 추출
+        if fill_attr & 0x02 and "fill_color" not in result:
+            grad_off = off
+            # grad_type(1B) + angle(4B) + center_x(4B) + center_y(4B) + step(4B) = 17B header
+            grad_off += 17
+            if grad_off + 4 <= len(payload):
+                (n_colors,) = struct.unpack_from("<I", payload, grad_off)
+                grad_off += 4
+                if 0 < n_colors <= 16 and grad_off + 4 <= len(payload):
+                    (gc_raw,) = struct.unpack_from("<I", payload, grad_off)
+                    gc_rgb = gc_raw & 0x00FFFFFF
+                    if gc_rgb != 0x00FFFFFF:
+                        gc_r = gc_rgb & 0xFF
+                        gc_g = (gc_rgb >> 8) & 0xFF
+                        gc_b = (gc_rgb >> 16) & 0xFF
+                        result["fill_color"] = f"#{gc_r:02x}{gc_g:02x}{gc_b:02x}"
 
     return result
 
@@ -650,7 +669,7 @@ def _parse_compatible_document(payload: bytes) -> dict[str, Any]:
 def _parse_id_mappings(payload: bytes) -> list[int]:
     """ID_MAPPINGS 레코드에서 카테고리별 항목 수를 추출한다.
 
-    HWP ID_MAPPINGS: uint16 × N (카테고리 순서)
+    HWP ID_MAPPINGS: uint32 × N (카테고리 순서, 72바이트 = 18필드)
       [0] 바이너리 데이터
       [1] 한글 FaceName
       [2] 영문 FaceName
@@ -669,8 +688,8 @@ def _parse_id_mappings(payload: bytes) -> list[int]:
       ... (추가 카테고리)
     """
     counts: list[int] = []
-    for off in range(0, len(payload) - 1, 2):
-        (cnt,) = struct.unpack_from("<H", payload, off)
+    for off in range(0, len(payload) - 3, 4):
+        (cnt,) = struct.unpack_from("<I", payload, off)
         counts.append(cnt)
     return counts
 

@@ -154,7 +154,6 @@ FONT_MAP: dict[str, FontMapping] = {
     "courier new": _MONO,
     "consolas": _MONO,
     "d2coding": _MONO,
-    "나눔고딕코딩": _MONO,
     # --- Western (pass-through, no fallback) ---
     "arial": _WESTERN,
     "arial unicode ms": _WESTERN,

@@ -16,6 +16,9 @@ htmlcov/
 venv/
 env/
 
+# Layout engine (unused, see BUG-246)
+udf/layout/
+
 # Rust
 target/
 Cargo.lock
@@ -27,10 +30,6 @@ wheels/
 .env
 .env.local
 
-.claude/settings.json
-.claude/settings.local.json
-*.local.md
-
 # IDE
 .vscode/
 .idea/
@@ -38,30 +37,10 @@ wheels/
 *.swo
 .DS_Store
 
-dev/
-
-output/
-sandbox/
-workspace/
-scripts/
-notebooks/
-
 /tmp_roundtrip/
 tests/roundtrip_output/
 *.udfp.bak.json
 *.original_container.bin
 
-tests/fixtures/realworld/
-tests/fixtures/codex_cases/
-tests/fixtures/html_output/
-tests/fixtures/render_screenshots/
-tests/fixtures/screenshots/
-tests/fixtures/html_screenshots/
-tests/fixtures/external/
-
-scripts/.hancom_auth.json
-
 node_modules/
-package.json
-package-lock.json
 site/
