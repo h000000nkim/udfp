@@ -15,7 +15,6 @@ import pathlib
 import pytest
 
 from udf.core.loss import diff_documents
-from udf.core.schema import ParagraphBlock, HeadingBlock, TextInline
 from udf.renderers.hwp import generate_hwp
 from udf.parsers.hwp.parse import parse_hwp
 from udf.parsers.md.parse import parse_md
@@ -48,17 +47,7 @@ def _fixture(name: str) -> str:
     return str(p)
 
 
-def _all_texts(doc) -> list[str]:
-    texts = []
-    for block in doc.blocks:
-        if isinstance(block, ParagraphBlock):
-            t = "".join(i.text for i in block.inlines if isinstance(i, TextInline))
-            if t.strip():
-                texts.append(t)
-        elif isinstance(block, HeadingBlock):
-            if block.text.strip():
-                texts.append(block.text)
-    return texts
+from tests.helpers import all_texts as _all_texts
 
 
 class TestP0Roundtrip:
@@ -157,7 +146,7 @@ class TestFormattingRoundtrip:
         doc_rt = parse_hwp(out)
         report = diff_documents(doc, doc_rt)
         formatting_losses = [
-            b for b in report.lossy_blocks if "포매팅" in b.description
+            b for b in report.lossy_blocks if b.description.startswith("포매팅 변경:")
         ]
         assert not formatting_losses, (
             f"포맷팅 손실 ({filename}): "

@@ -153,7 +153,7 @@ class TestCheckI4ConChildren:
             try:
                 with OleReader.open(path) as ole:
                     sec = ole.read_stream(["BodyText", "Section0"])
-                violations = check_i4_con_children(sec)
-                assert violations == [], f"{fname}: {[v.message for v in violations]}"
-            except Exception:
-                pass  # Skip files that can't be opened
+            except (OSError, KeyError, ValueError):
+                continue
+            violations = check_i4_con_children(sec)
+            assert violations == [], f"{fname}: {[v.message for v in violations]}"

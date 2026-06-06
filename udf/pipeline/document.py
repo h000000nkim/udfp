@@ -274,6 +274,197 @@ class UdfDocument(BaseModel):
 
         return result
 
+    # ------------------------------------------------------------------
+    # Placeholder 관리
+    # ------------------------------------------------------------------
+
+    _PLACEHOLDER_KEY_RE = re.compile(r"^[a-zA-Z0-9_가-힣]+$")
+
+    _PLACEHOLDER_ALLOWED_TYPES = (
+        "paragraph", "heading",
+    )
+
+    def set_placeholders(
+        self,
+        placeholders: list[dict[str, Any]],
+        *,
+        delimiter: tuple[str, str] = ("{{", "}}"),
+    ) -> list[dict[str, Any]]:
+        """Mark specific text positions as template placeholders.
+
+        Each placeholder replaces the text of a TextInline with
+        ``{{key}}``, preserving the inline's formatting (bold, font,
+        color, etc.).  The resulting placeholder can later be filled
+        via :meth:`fill_template`.
+
+        Parameters
+        ----------
+        placeholders : list of dict
+            Each dict must contain:
+
+            - ``block_id`` (str): target block ID.  Must resolve to a
+              ParagraphBlock or HeadingBlock (including those nested
+              inside table cells, text boxes, footnotes, etc.).
+            - ``inline_idx`` (int or None): index of the TextInline to
+              replace.  If *None*, a new TextInline is appended to the
+              block's inlines list (useful for empty paragraphs).
+            - ``key`` (str): placeholder name.  Allowed characters:
+              ``[a-zA-Z0-9_가-힣]``.
+
+        delimiter : tuple[str, str], default ("{{", "}}")
+            Opening and closing delimiter pair wrapping the key.
+
+        Returns
+        -------
+        list of dict
+            One result per input, each containing ``key``, ``block_id``,
+            ``inline_idx``, ``previous_text``, and ``placeholder``.
+
+        Raises
+        ------
+        ValueError
+            If any placeholder spec violates the placement rules.
+            The error message names the exact rule that failed.
+        """
+        open_d, close_d = delimiter
+        results: list[dict[str, Any]] = []
+
+        for i, spec in enumerate(placeholders):
+            block_id = spec.get("block_id")
+            inline_idx = spec.get("inline_idx")
+            key = spec.get("key")
+
+            if not block_id or not isinstance(block_id, str):
+                raise ValueError(
+                    f"placeholders[{i}]: block_id는 필수 문자열입니다"
+                )
+            if inline_idx is not None and not isinstance(inline_idx, int):
+                raise ValueError(
+                    f"placeholders[{i}]: inline_idx는 정수 또는 null이어야 합니다"
+                )
+            if not key or not isinstance(key, str):
+                raise ValueError(
+                    f"placeholders[{i}]: key는 필수 문자열입니다"
+                )
+            if not self._PLACEHOLDER_KEY_RE.match(key):
+                raise ValueError(
+                    f"placeholders[{i}]: key '{key}'에 허용되지 않는 문자가 "
+                    f"포함되어 있습니다 (허용: 영문, 숫자, _, 한글)"
+                )
+
+            block = self.get_block(block_id)
+            if block is None:
+                raise ValueError(
+                    f"placeholders[{i}]: block_id '{block_id}'를 "
+                    f"찾을 수 없습니다"
+                )
+
+            block_type = getattr(block, "type", None)
+            if block_type not in self._PLACEHOLDER_ALLOWED_TYPES:
+                raise ValueError(
+                    f"placeholders[{i}]: 블록 타입 '{block_type}'에는 "
+                    f"placeholder를 설정할 수 없습니다. "
+                    f"허용 타입: {', '.join(self._PLACEHOLDER_ALLOWED_TYPES)}"
+                )
+
+            inlines = _get_inlines(block)
+            if inlines is None:
+                raise ValueError(
+                    f"placeholders[{i}]: 블록 '{block_id}'에 "
+                    f"inlines 속성이 없습니다"
+                )
+
+            placeholder_text = f"{open_d}{key}{close_d}"
+
+            if inline_idx is None:
+                new_inline = TextInline(text=placeholder_text)
+                inlines.append(new_inline)
+                actual_idx = len(inlines) - 1
+
+                if isinstance(block, HeadingBlock):
+                    block.text = "".join(
+                        il.text for il in block.inlines
+                        if hasattr(il, "text")
+                    )
+
+                results.append({
+                    "key": key,
+                    "block_id": block_id,
+                    "inline_idx": actual_idx,
+                    "previous_text": "",
+                    "placeholder": placeholder_text,
+                })
+                continue
+
+            if inline_idx < 0 or inline_idx >= len(inlines):
+                length = len(inlines)
+                raise ValueError(
+                    f"placeholders[{i}]: inline_idx {inline_idx}이 "
+                    f"범위를 벗어났습니다 (블록 '{block_id}'의 "
+                    f"인라인 수: {length})"
+                )
+
+            inline = inlines[inline_idx]
+            if not isinstance(inline, TextInline):
+                raise ValueError(
+                    f"placeholders[{i}]: inline_idx {inline_idx}은 "
+                    f"TextInline이 아닙니다 (타입: {type(inline).__name__}). "
+                    f"TextInline만 placeholder로 변환할 수 있습니다"
+                )
+
+            previous_text = inline.text
+            inlines[inline_idx] = inline.model_copy(
+                update={"text": placeholder_text}
+            )
+
+            if isinstance(block, HeadingBlock):
+                block.text = "".join(
+                    il.text for il in block.inlines if hasattr(il, "text")
+                )
+
+            results.append({
+                "key": key,
+                "block_id": block_id,
+                "inline_idx": inline_idx,
+                "previous_text": previous_text,
+                "placeholder": placeholder_text,
+            })
+
+        if results:
+            self._content_modified = True
+
+        return results
+
+    def list_placeholders(
+        self,
+        *,
+        delimiter: tuple[str, str] = ("{{", "}}"),
+    ) -> list[dict[str, Any]]:
+        """Find all template placeholders in the document.
+
+        Scans every text-bearing inline for ``{{key}}`` patterns and
+        returns their locations.
+
+        Parameters
+        ----------
+        delimiter : tuple[str, str], default ("{{", "}}")
+            Opening and closing delimiter pair to search for.
+
+        Returns
+        -------
+        list of dict
+            Each dict contains ``key``, ``block_id``, ``inline_idx``,
+            and ``text`` (the full inline text containing the placeholder).
+        """
+        open_d, close_d = delimiter
+        pattern = re.compile(
+            re.escape(open_d) + r"([a-zA-Z0-9_가-힣]+)" + re.escape(close_d)
+        )
+        results: list[dict[str, Any]] = []
+        for block in self.blocks:
+            _find_placeholders_in_block(block, pattern, results)
+        return results
+
     def replace_text(self, old: str, new: str) -> int:
         """Replace all occurrences of a substring across all blocks.
 
@@ -1150,7 +1341,8 @@ def _replace_text_in_block(block: Block, old: str, new: str) -> int:
                         child.inlines[idx] = inline.model_copy(
                             update={"text": inline.text.replace(old, new)}
                         )
-    elif isinstance(block, (TextBoxBlock, FootnoteBlock, EndnoteBlock)):
+    elif isinstance(block, (TextBoxBlock, FootnoteBlock, EndnoteBlock,
+                            QuoteBlock, HeaderBlock, FooterBlock, CommentBlock)):
         content = getattr(block, "content", [])
         for cb in content:
             count += _replace_text_in_block(cb, old, new)
@@ -1187,7 +1379,80 @@ def _find_text_in_block(
             for cell in row.cells:
                 for cb in cell.content:
                     _find_text_in_block(cb, pattern, matches)
-    elif isinstance(block, (TextBoxBlock, FootnoteBlock, EndnoteBlock)):
+    elif isinstance(block, ListBlock):
+        for item in block.items:
+            _find_text_in_list_item(item, pattern, matches)
+    elif isinstance(block, (TextBoxBlock, FootnoteBlock, EndnoteBlock,
+                            QuoteBlock, HeaderBlock, FooterBlock, CommentBlock)):
         content = getattr(block, "content", [])
         for cb in content:
             _find_text_in_block(cb, pattern, matches)
+
+
+def _find_text_in_list_item(
+    item: ListItem,
+    pattern: "re.Pattern[str]",
+    matches: list[dict[str, Any]],
+) -> None:
+    """Find regex matches within a list item and its children."""
+    for inline in item.inlines:
+        if hasattr(inline, "text"):
+            for m in pattern.finditer(inline.text):
+                matches.append({
+                    "block_id": item.id,
+                    "text": m.group(),
+                    "start": m.start(),
+                    "end": m.end(),
+                })
+    for child in item.children:
+        _find_text_in_list_item(child, pattern, matches)
+
+
+def _find_placeholders_in_block(
+    block: Block,
+    pattern: "re.Pattern[str]",
+    results: list[dict[str, Any]],
+) -> None:
+    """Find placeholder patterns in a block's inlines, recursing into containers."""
+    if isinstance(block, (ParagraphBlock, HeadingBlock)):
+        inlines = getattr(block, "inlines", [])
+        for idx, inline in enumerate(inlines):
+            if hasattr(inline, "text"):
+                for m in pattern.finditer(inline.text):
+                    results.append({
+                        "key": m.group(1),
+                        "block_id": block.id,
+                        "inline_idx": idx,
+                        "text": inline.text,
+                    })
+    elif isinstance(block, TableBlock):
+        for row in block.rows:
+            for cell in row.cells:
+                for cb in cell.content:
+                    _find_placeholders_in_block(cb, pattern, results)
+    elif isinstance(block, ListBlock):
+        for item in block.items:
+            _find_placeholders_in_list_item(item, pattern, results)
+    elif isinstance(block, (TextBoxBlock, FootnoteBlock, EndnoteBlock,
+                            QuoteBlock, HeaderBlock, FooterBlock, CommentBlock)):
+        for cb in getattr(block, "content", []):
+            _find_placeholders_in_block(cb, pattern, results)
+
+
+def _find_placeholders_in_list_item(
+    item: ListItem,
+    pattern: "re.Pattern[str]",
+    results: list[dict[str, Any]],
+) -> None:
+    """Find placeholder patterns in a list item and its children."""
+    for idx, inline in enumerate(item.inlines):
+        if hasattr(inline, "text"):
+            for m in pattern.finditer(inline.text):
+                results.append({
+                    "key": m.group(1),
+                    "block_id": item.id,
+                    "inline_idx": idx,
+                    "text": inline.text,
+                })
+    for child in item.children:
+        _find_placeholders_in_list_item(child, pattern, results)

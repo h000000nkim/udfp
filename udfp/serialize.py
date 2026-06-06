@@ -175,6 +175,10 @@ def _serialize_table(block: TableBlock) -> dict[str, Any]:
                 cd["row_span"] = cell.row_span
             if cell.col_span > 1:
                 cd["col_span"] = cell.col_span
+            if cell.fixed_width:
+                cd["fixed_width"] = True
+            if cell.fixed_height:
+                cd["fixed_height"] = True
             cfmt = _serialize_cell_format(cell.format)
             if cfmt:
                 cd["fmt"] = cfmt
@@ -188,6 +192,8 @@ def _serialize_table(block: TableBlock) -> dict[str, Any]:
             cells_out.append(cd)
         rows_out.append(cells_out)
     d: dict[str, Any] = {"id": block.id, "type": "table", "rows": rows_out}
+    if block.layout_type is not None:
+        d["layout_type"] = block.layout_type
     return d
 
 

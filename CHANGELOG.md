@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.3 (2026-06-06)
+
+### Changed
+
+- **License**: Changed from Apache-2.0 to Business Source License 1.1 (BUSL-1.1)
+  - Non-commercial, academic, and personal use remains free
+  - Commercial/production use requires a separate license
+  - Automatically converts to Apache-2.0 on 2030-06-06
+- **Template/placeholder system**: `set_placeholders`, `list_placeholders`, `fill_template` API
+
+## 1.0.2 (2026-06-05)
+
+### Added
+
+- **Template/placeholder system**: `set_placeholders`, `list_placeholders`, `fill_template`
+
 ## 1.0.1 (2026-06-01)
 
 ### Added

@@ -365,10 +365,132 @@ def create_server() -> FastMCP:
             return f"Error: {type(e).__name__}: {e}\nTip: Use export_md(path) first to get editable Markdown."
 
     @mcp.tool()
+    async def set_placeholders(
+        path: str,
+        placeholders: list[dict[str, Any]],
+        output_path: str | None = None,
+    ) -> str:
+        """문서의 특정 텍스트 위치를 템플릿 플레이스홀더({{key}})로 변환합니다.
+
+        read()로 블록 구조를 확인한 후, 원하는 위치에 placeholder를 설정하세요.
+        설정된 placeholder는 fill_template()로 값을 채울 수 있습니다.
+
+        placeholders: 플레이스홀더 배열. 각 항목:
+        - block_id (str): 대상 블록 ID
+        - inline_idx (int | null): 대상 TextInline 인덱스 (read 출력의 idx 값).
+          null이면 빈 문단에 새 TextInline을 추가합니다.
+        - key (str): 플레이스홀더 이름 (영문, 숫자, _, 한글만 허용)
+
+        규칙:
+        - ParagraphBlock, HeadingBlock의 TextInline만 가능
+        - 테이블 셀 내부, 텍스트 박스, 각주 등의 ParagraphBlock도 가능
+        - CodeBlock, EquationBlock, ImageBlock 등에는 불가
+        - LinkInline, CodeInline, EquationInline 등에는 불가
+
+        예시:
+        [{"block_id": "b_0003", "inline_idx": 0, "key": "이름"},
+         {"block_id": "b_0005", "inline_idx": 0, "key": "학번"}]
+        """
+        try:
+            if not os.path.exists(path):
+                return f"Error: File not found: {path}"
+            doc = udf.parse(path)
+            results = doc.set_placeholders(placeholders)
+            out = output_path or path
+            _save_doc(doc, out)
+            lines = [f"Set {len(results)} placeholder(s): {out}", ""]
+            for r in results:
+                lines.append(
+                    f"  {r['placeholder']} ← \"{r['previous_text']}\" "
+                    f"(block {r['block_id']}, inline {r['inline_idx']})"
+                )
+            lines.append("")
+            lines.append(serialize_simplified(doc))
+            return "\n".join(lines)
+        except ValueError as e:
+            return (
+                f"Error: {e}\n"
+                f"Tip: Use describe('template') for placeholder rules."
+            )
+        except Exception as e:
+            return (
+                f"Error: {type(e).__name__}: {e}\n"
+                f"Tip: Use describe('template') for placeholder rules."
+            )
+
+    @mcp.tool()
+    async def list_placeholders(path: str) -> str:
+        """문서에 설정된 모든 템플릿 플레이스홀더({{key}})를 조회합니다.
+
+        반환: 각 placeholder의 key, 위치(block_id, inline_idx), 전체 텍스트
+        """
+        try:
+            if not os.path.exists(path):
+                return f"Error: File not found: {path}"
+            doc = udf.parse(path)
+            items = doc.list_placeholders()
+            if not items:
+                return "No placeholders found in this document."
+            lines = [f"Found {len(items)} placeholder(s):", ""]
+            keys: list[str] = []
+            for item in items:
+                lines.append(
+                    f"  {{{{{{{{item['key']}}}}}}}} — "
+                    f"block {item['block_id']}, inline {item['inline_idx']}"
+                )
+                if item["key"] not in keys:
+                    keys.append(item["key"])
+            lines.append("")
+            lines.append("fill_template usage:")
+            sample = {k: f"<{k} 값>" for k in keys[:5]}
+            lines.append(f'  fill_template(path, values={sample})')
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error: {type(e).__name__}: {e}"
+
+    @mcp.tool()
+    async def fill_template(
+        path: str,
+        values: dict[str, str],
+        output_path: str | None = None,
+        strict: bool = False,
+    ) -> str:
+        """문서의 {{key}} 플레이스홀더를 실제 값으로 치환합니다.
+
+        path: 템플릿 문서 경로 (set_placeholders로 설정된 문서)
+        values: {"key": "value"} 매핑. 예: {"이름": "김훈", "학번": "30217"}
+        output_path: 저장 경로 (미지정 시 원본 파일 덮어쓰기)
+        strict: true이면 문서에 남은 미매칭 placeholder가 있을 때 에러 발생
+
+        Seed Patch 모드와 호환되어 원본 바이너리 품질을 유지합니다.
+        """
+        try:
+            if not os.path.exists(path):
+                return f"Error: File not found: {path}"
+            doc = udf.parse(path)
+            result = doc.fill_template(values, strict=strict)
+            out = output_path or path
+            _save_doc(doc, out)
+            lines = [f"Filled template: {out}", ""]
+            for key, count in result.items():
+                status = f"{count} replacement(s)" if count > 0 else "not found"
+                lines.append(f"  {{{{{key}}}}} → \"{values[key]}\" — {status}")
+            remaining = doc.list_placeholders()
+            if remaining:
+                lines.append(f"\nRemaining placeholders: {len(remaining)}")
+                for r in remaining:
+                    lines.append(f"  {{{{{r['key']}}}}}")
+            return "\n".join(lines)
+        except ValueError as e:
+            return f"Error: {e}\nTip: Use list_placeholders(path) to see available placeholders."
+        except Exception as e:
+            return f"Error: {type(e).__name__}: {e}"
+
+    @mcp.tool()
     async def describe(topic: str = "overview") -> str:
         """Get documentation about UDF document structure and tool usage.
 
-        Topics: overview, blocks, edit, create, fmt, workflow, api, metadata, loss
+        Topics: overview, blocks, edit, create, fmt, workflow, api, metadata, loss, template
         Start with describe('overview') to understand the document model.
         """
         topic = topic.lower().strip()
@@ -412,11 +534,18 @@ UdfDocument
 3. `render(path, format)` → export to hwp/hwpx/docx/md/html
 4. `create(blocks, format)` → build new document from scratch
 
+## Template Workflow
+1. `create(blocks)` or `read(path)` → get document with block IDs
+2. `set_placeholders(path, [...])` → mark positions as {{key}}
+3. `list_placeholders(path)` → verify placeholders
+4. `fill_template(path, values)` → fill with actual values
+
 ## Topics
 - `describe('blocks')` — all 22 block types with JSON examples
 - `describe('edit')` — edit tool patterns and examples
 - `describe('create')` — create tool block schema
 - `describe('fmt')` — format key alias table (inline, block, cell)
+- `describe('template')` — template/placeholder system
 - `describe('workflow')` — common task recipes
 - `describe('api')` — UdfDocument properties and methods
 - `describe('metadata')` — page layout and document properties
@@ -692,13 +821,36 @@ import_md("/path/doc.hwp", edited_md, "/path/doc_edited.hwp")
 → merges edits back, preserving original HWP formatting
 ```
 
+## 8. Template Workflow (create form → fill values)
+```
+# Step 1: Create a form document
+create([
+  {"type": "heading", "level": 1, "text": "입학 신청서"},
+  {"type": "paragraph", "text": "이름: 홍길동"},
+  {"type": "paragraph", "text": "학번: 12345"}
+], format="hwp", output_path="/tmp/form.hwp")
+
+# Step 2: Mark placeholder positions
+read("/tmp/form.hwp")                    → get block IDs
+set_placeholders("/tmp/form.hwp", [
+  {"block_id": "b_0003", "inline_idx": 0, "key": "이름"},
+  {"block_id": "b_0005", "inline_idx": 0, "key": "학번"}
+])
+
+# Step 3: Fill with actual values (repeatable)
+fill_template("/tmp/form.hwp",
+  values={"이름": "김훈", "학번": "30217"},
+  output_path="/tmp/filled.hwp")
+```
+
 ## Tips
 - Always `read` first to discover block IDs before editing
 - Use `output_path` to save changes to a new file (non-destructive)
 - HWP/HWPX editing uses Seed Patch (preserves original binary fidelity)
 - Block structure changes (insert/remove) switch to From Scratch mode
 - For bulk text editing, prefer `export_md` + `import_md` over multiple `edit` calls
-- Call `describe('fmt')` for the full format alias table""",
+- Call `describe('fmt')` for the full format alias table
+- Call `describe('template')` for template/placeholder system""",
 
     "api": """\
 # UdfDocument API Reference
@@ -883,6 +1035,94 @@ To check, use the Python API:
 doc = udf.parse("file.hwp")
 if doc.loss_report and not doc.loss_report.is_roundtrip_safe:
     print(doc.loss_report.dropped_features)
+```""",
+
+    "template": """\
+# Template / Placeholder System
+
+Create reusable document templates with {{placeholders}} that can be filled with values.
+
+## Workflow
+```
+read(path)                          → discover block IDs and text
+set_placeholders(path, [...])       → mark text as {{key}}
+list_placeholders(path)             → verify what's set
+fill_template(path, values, out)    → fill and save
+```
+
+## set_placeholders
+
+Replaces the text of a TextInline with {{key}}, preserving all formatting
+(bold, font, color, size, etc.). When fill_template fills the value later,
+it inherits the same formatting.
+
+```json
+[
+  {"block_id": "b_0003", "inline_idx": 0, "key": "이름"},
+  {"block_id": "b_0005", "inline_idx": 0, "key": "학번"},
+  {"block_id": "b_0007", "inline_idx": null, "key": "관심내용"}
+]
+```
+
+- `inline_idx: 0, 1, ...` → existing TextInline text is replaced (formatting preserved)
+- `inline_idx: null` → new TextInline is appended (for empty paragraphs)
+
+### Placement Rules (enforced — violations return a clear error)
+
+| Rule | Description |
+|------|-------------|
+| Block type | ParagraphBlock or HeadingBlock only |
+| Nesting | Table cells, text boxes, footnotes OK (they contain ParagraphBlocks) |
+| Inline type | TextInline only (not Link, Code, Equation, Image, etc.) |
+| Key format | `[a-zA-Z0-9_가-힣]+` (letters, digits, underscore, Korean) |
+| inline_idx | Must be in range of the block's inlines array |
+
+### Blocks where placeholders CANNOT be set
+- CodeBlock — code content, not document text
+- EquationBlock — LaTeX/formula
+- ImageBlock — media, not text
+- DrawingBlock — vector graphics
+- FieldBlock — has its own form semantics
+- BookmarkBlock, PageBreakBlock, HorizontalRuleBlock — no text
+
+### Inlines that CANNOT become placeholders
+- LinkInline — URL is structural
+- CodeInline — code span
+- EquationInline — formula
+- ImageInline, FootnoteRefInline, EndnoteRefInline — non-text
+
+## fill_template
+
+```json
+fill_template(path, values={"이름": "김훈", "학번": "30217"})
+```
+- Replaces all {{key}} → value across the entire document
+- Works with Seed Patch mode (original binary quality preserved)
+- `strict=true`: error if unmatched placeholders remain
+- Returns replacement count per key + remaining placeholders
+
+## list_placeholders
+
+Returns all {{key}} positions found in the document:
+- key, block_id, inline_idx, surrounding text
+- Use to verify template before filling
+
+## Example: Form Automation
+```
+# 1. Parse existing form
+read("/forms/application.hwp")
+
+# 2. Identify text to templatize (from read output)
+set_placeholders("/forms/application.hwp", [
+  {"block_id": "b_0010", "inline_idx": 0, "key": "성명"},
+  {"block_id": "b_0012", "inline_idx": 0, "key": "생년월일"},
+  {"block_id": "b_0014", "inline_idx": 0, "key": "주소"}
+], output_path="/forms/template.hwp")
+
+# 3. Fill for each applicant
+fill_template("/forms/template.hwp",
+  values={"성명": "김훈", "생년월일": "1990-01-15", "주소": "서울시 강남구"},
+  output_path="/output/김훈_application.hwp")
 ```""",
 }
 

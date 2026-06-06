@@ -121,6 +121,7 @@ class TestRoundtripMd:
         from udf.parsers.hwp.parse import parse_hwp
         from udf.renderers.md import render_md
         import pathlib
+        import pytest
 
         fixture = str(
             pathlib.Path(__file__).parent.parent.parent
@@ -128,6 +129,8 @@ class TestRoundtripMd:
             / "hwp"
             / "f01_plain_text.hwp"
         )
+        if not pathlib.Path(fixture).exists():
+            pytest.skip("HWP fixture not available")
         doc = parse_hwp(fixture)
         md = render_md(doc, embed_ids=True)
         doc2 = parse_md(md)
@@ -151,6 +154,7 @@ class TestRoundtripMd:
         from udf.parsers.hwp.parse import parse_hwp
         from udf.renderers.md import render_md
         import pathlib
+        import pytest
 
         fixture = str(
             pathlib.Path(__file__).parent.parent.parent
@@ -158,6 +162,8 @@ class TestRoundtripMd:
             / "hwp"
             / "f01_plain_text.hwp"
         )
+        if not pathlib.Path(fixture).exists():
+            pytest.skip("HWP fixture not available")
         doc = parse_hwp(fixture)
         md = render_md(doc, embed_ids=True)
         doc2 = parse_md(md)

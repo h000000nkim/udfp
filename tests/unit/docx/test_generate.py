@@ -782,7 +782,9 @@ class TestSeedPatch:
         with zipfile.ZipFile(out_path, "r") as zf:
             names = set(zf.namelist())
             # 원본에 있던 settings.xml이 보존되어야 함
-            assert "word/settings.xml" in names or "word/document.xml" in names
+            assert "word/settings.xml" in names, (
+                f"Unmodified entry 'word/settings.xml' lost; ZIP contains: {sorted(names)}"
+            )
 
 
 # ---------------------------------------------------------------------------

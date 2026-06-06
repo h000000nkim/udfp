@@ -81,7 +81,7 @@ class TestHwpToMdContentPreservation:
         doc = udf.parse(src)
         md = udf.render(doc, "md")
         assert md is not None
-        assert len(md.strip()) > 10, f"HWP→MD 변환 결과가 거의 비어있음: {filename}"
+        assert len(md.strip()) > 50, f"HWP→MD 변환 결과가 거의 비어있음 ({len(md.strip())} chars): {filename}"
 
 
 class TestHwpxValidationAfterGenerate:
@@ -151,14 +151,14 @@ class TestHwpxToHwpTextFidelity:
                             if t:
                                 t = " ".join(t.split())
                                 if t:
-                                    texts.add(t[:30])
+                                    texts.add(t)
                     if hasattr(b, "content") and b.content:
                         collect(b.content)
                     if hasattr(b, "rows"):
                         for r in (b.rows or []):
                             for c in (r.cells or []):
                                 collect(c.content)
-            collect(doc.document.blocks)
+            collect(doc.blocks)
             return texts
 
         seed = "udf/renderers/hwp/seed/empty.hwp"
@@ -168,6 +168,7 @@ class TestHwpxToHwpTextFidelity:
 
         total_match = 0
         total_texts = 0
+        failures = []
         for f in sorted(os.listdir(hwpx_dir))[:10]:
             if not f.endswith(".hwpx"):
                 continue
@@ -185,10 +186,13 @@ class TestHwpxToHwpTextFidelity:
                 matched = sum(1 for ot in orig if ot in conv or any(ot in ct for ct in conv))
                 total_match += matched
                 total_texts += len(orig)
-            except Exception:
-                pass
+            except Exception as e:
+                failures.append(f"{f}: {e}")
 
         if total_texts == 0:
             pytest.skip("No text extracted")
         fidelity = total_match / total_texts
-        assert fidelity >= 0.80, f"Text fidelity {fidelity:.1%} below 80% threshold"
+        assert fidelity >= 0.80, (
+            f"Text fidelity {fidelity:.1%} below 80% threshold"
+            + (f" (failures: {failures})" if failures else "")
+        )

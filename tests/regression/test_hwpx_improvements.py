@@ -31,7 +31,7 @@ class TestHwpxEquationPromotion:
         p = f"{HWPX_DIR}/감염병확산지수미분_하윤중.hwpx"
         _skip_if_missing(p)
         dx = udf.parse(p)
-        eq_blocks = [b for b in dx.document.blocks if b.type == "equation"]
+        eq_blocks = [b for b in dx.blocks if b.type == "equation"]
         assert len(eq_blocks) >= 9
 
 
@@ -42,7 +42,7 @@ class TestHwpxImagePromotion:
         p = f"{HWPX_DIR}/과학과제연구 보고서.hwpx"
         _skip_if_missing(p)
         dx = udf.parse(p)
-        img_blocks = [b for b in dx.document.blocks if b.type == "image"]
+        img_blocks = [b for b in dx.blocks if b.type == "image"]
         assert len(img_blocks) >= 5
 
 
@@ -53,7 +53,7 @@ class TestHwpxSuperscript:
         p = f"{HWPX_DIR}/BRHS-오승훈,장예준,우송윤.hwpx"
         _skip_if_missing(p)
         dx = udf.parse(p)
-        b2 = dx.document.blocks[2]
+        b2 = dx.blocks[2]
         sup_inlines = [il for il in b2.inlines if hasattr(il, "superscript") and il.superscript]
         assert len(sup_inlines) >= 1
 
@@ -72,8 +72,8 @@ class TestHwpxTableTextSplit:
         _skip_if_missing(ph)
         dx = udf.parse(px)
         dh = udf.parse(ph)
-        bx_count = len(dx.document.blocks)
-        bh_count = len(dh.document.blocks)
+        bx_count = len(dx.blocks)
+        bh_count = len(dh.blocks)
         # HWP 바이너리에 명시적 header/footer 레코드가 있어 HWP 파서가
         # 더 많은 블록을 추출할 수 있음. HWPX는 별도 파일(header.xml 등)이라
         # 현재 미추출 → BUG-236에서 HWPX 파서에 추가 예정.

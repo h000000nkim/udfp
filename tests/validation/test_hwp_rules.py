@@ -485,7 +485,7 @@ class TestI8BorderFillRef:
         assert violations == [], f"I8 violations: {[v.message for v in violations]}"
 
     def test_detects_oob_bf(self) -> None:
-        """Mutate borderFillCount to 0 and verify detection."""
+        """Mutate borderFillCount to 1 so that refs > 1 become OOB."""
         if not TABLE_FIXTURES:
             pytest.skip("No table fixtures")
         docinfo, section = _read_streams(_fixture(TABLE_FIXTURES[0]))
@@ -493,13 +493,17 @@ class TestI8BorderFillRef:
         from udf.parsers.hwp.records import HWPTAG_ID_MAPPINGS, iter_records
 
         mutated = bytearray(docinfo)
+        mutated_id_mappings = False
         for rec in iter_records(docinfo):
             if rec.tag_id == HWPTAG_ID_MAPPINGS:
-                struct.pack_into("<I", mutated, rec.offset + 4 + 32, 0)
+                struct.pack_into("<I", mutated, rec.offset + 4 + 32, 1)
+                mutated_id_mappings = True
                 break
-        check_i8_border_fill_ref(bytes(mutated), section)
-        # May or may not have violations depending on whether the fixture has tables
-        # with LIST_HEADERs referencing BF; the key is no crash
+        assert mutated_id_mappings, "ID_MAPPINGS 레코드를 찾지 못함"
+        violations = check_i8_border_fill_ref(bytes(mutated), section)
+        assert len(violations) > 0, (
+            "borderFillCount=1로 변조했지만 OOB 참조가 검출되지 않음"
+        )
 
 
 # ---------------------------------------------------------------------------

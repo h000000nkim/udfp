@@ -1088,10 +1088,6 @@ class TestUdfDocumentLossReport:
 
 class TestPipelineLoss:
 
-    def test_loss_category_values(self):
-        assert LossCategory.USER_EDITED.value == "user_edited"
-        assert LossCategory.FORMAT_LIMIT.value == "format_limit"
-        assert LossCategory.UNINTENDED.value == "unintended"
 
     def test_block_loss(self):
         bl = BlockLoss(

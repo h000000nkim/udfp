@@ -63,7 +63,7 @@ class TestFixtureRender:
         sample = words[:50]
         preserved = sum(1 for w in sample if w in html)
         ratio = preserved / len(sample)
-        assert ratio >= 0.3, f"only {preserved}/{len(sample)} words found in HTML"
+        assert ratio >= 0.5, f"only {preserved}/{len(sample)} words found in HTML"
 
 
 @pytest.mark.parametrize("fixture", HWP_FILES, ids=lambda p: p.name)

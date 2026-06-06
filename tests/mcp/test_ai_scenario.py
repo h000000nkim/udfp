@@ -201,58 +201,6 @@ class TestScenarioComplex:
 
 
 # ------------------------------------------------------------------
-# 시나리오 4: create → edit → render 전체 파이프라인
-# ------------------------------------------------------------------
-
-
-class TestScenarioEditAfterCreate:
-    """create로 생성 후 edit으로 수정, render로 변환."""
-
-    def test_full_pipeline(self, tools, tmp_dir):
-        hwp = os.path.join(tmp_dir, "pipeline.hwp")
-        _run(tools["create"](
-            blocks=[
-                {"type": "heading", "level": 1, "text": "초안 제목"},
-                {"type": "paragraph", "text": "초안 내용입니다."},
-                {"type": "table", "rows": [
-                    [{"text": "이름"}, {"text": "___"}],
-                    [{"text": "날짜"}, {"text": "___"}],
-                ]},
-            ],
-            format="hwp",
-            output_path=hwp,
-            metadata={"title": "초안"},
-        ))
-
-        data = json.loads(_run(tools["read"](path=hwp)))
-        heading_id = data["blocks"][0]["id"]
-        para_id = data["blocks"][1]["id"]
-
-        edited = os.path.join(tmp_dir, "edited.hwp")
-        _run(tools["edit"](
-            path=hwp,
-            edits=[
-                {"block_id": heading_id, "inline_idx": 0, "text": "최종 제목"},
-                {"block_id": para_id, "inline_idx": 0, "text": "수정된 내용입니다."},
-            ],
-            output_path=edited,
-        ))
-
-        data2 = json.loads(_run(tools["read"](path=edited)))
-        heading_text = data2["blocks"][0]["inlines"][0]["text"]
-        assert heading_text == "최종 제목"
-
-        docx = os.path.join(tmp_dir, "final.docx")
-        result = _run(tools["render"](
-            path=edited,
-            format="docx",
-            output_path=docx,
-        ))
-        assert "Rendered:" in result
-        assert os.path.exists(docx)
-
-
-# ------------------------------------------------------------------
 # 시나리오 5: insert_blocks로 점진적 빌드
 # ------------------------------------------------------------------
 

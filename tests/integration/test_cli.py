@@ -168,4 +168,59 @@ class TestCliDiff:
             text=True,
             encoding="utf-8",
         )
+        assert result.returncode in (0, 1), f"diff crashed with rc={result.returncode}: {result.stderr}"
         assert "차이" in result.stdout
+
+
+class TestCliInfo:
+    def test_info_lists_formats(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "udf.cli", "info"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert result.returncode == 0
+        assert "지원 포맷" in result.stdout
+        assert "hwp" in result.stdout.lower()
+
+    def test_info_specific_format(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "udf.cli", "info", "hwp"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert result.returncode == 0
+        assert "상세" in result.stdout
+
+    def test_info_unknown_format(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "udf.cli", "info", "xyz"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert result.returncode == 1
+
+
+class TestCliInspect:
+    def test_inspect_hwp(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "udf.cli", "inspect", _fixture("f01_plain_text.hwp")],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert result.returncode == 0
+        assert "포맷:" in result.stdout
+        assert "블록:" in result.stdout
+
+    def test_inspect_nonexistent(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "udf.cli", "inspect", "/nonexistent.hwp"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert result.returncode == 1

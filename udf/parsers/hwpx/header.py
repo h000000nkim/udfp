@@ -61,6 +61,8 @@ _HWPUNIT_PER_MM = 283.46
 
 _LANG_ATTRS = ("hangul", "latin", "hanja", "japanese", "other", "symbol", "user")
 
+_STRIKE_SHAPES = {"SOLID", "DASH", "DOT", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE"}
+
 
 def parse_header_xml(header_bytes: bytes) -> DocInfoResult:
     """Parse an HWPX ``header.xml`` into global document resources.
@@ -162,7 +164,6 @@ def _parse_single_char_pr(el: etree._Element) -> dict[str, Any]:
     strikethrough = False
     strikeout_type: str | None = None
     strikeout_color: str | None = None
-    _STRIKE_SHAPES = {"SOLID", "DASH", "DOT", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE"}
     if strikeout_el is not None:
         st_shape = strikeout_el.get("shape", "NONE")
         if st_shape in _STRIKE_SHAPES:

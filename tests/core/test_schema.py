@@ -478,6 +478,3 @@ class TestLossReport:
         assert not report.is_roundtrip_safe
         assert "emboss" in report.dropped_features
 
-    def test_loss_category_values(self):
-        assert LossCategory.FORMAT_LIMIT == "format_limit"
-        assert LossCategory.UNINTENDED == "unintended"

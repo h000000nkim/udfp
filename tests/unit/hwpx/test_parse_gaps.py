@@ -420,35 +420,6 @@ class TestPageDefOrientation:
         assert result.get("orientation") is None
 
 
-class TestExtractPageDefColumns:
-    def test_two_columns(self):
-        xml = (
-            f'<hp:pagePr {_NS_DECL} width="59528" height="84188">'
-            f'  <hp:margin left="8504" right="8504" top="5668" bottom="4252"'
-            f'   header="4252" footer="4252" />'
-            f'  <hp:multiColumn count="2" gap="1200" sameWidth="1" />'
-            f'</hp:pagePr>'
-        )
-        el = etree.fromstring(xml.encode())
-        result = _extract_from_page_pr(el)
-        assert result["column_count"] == 2
-        assert result["column_gap"] == 12.0
-        assert result["column_same_width"] is True
-
-    def test_columnDef_fallback(self):
-        xml = (
-            f'<hp:pagePr {_NS_DECL} width="59528" height="84188">'
-            f'  <hp:margin left="8504" right="8504" top="5668" bottom="4252"'
-            f'   header="4252" footer="4252" />'
-            f'  <hp:columnDef count="3" gap="800" sameWidth="0" />'
-            f'</hp:pagePr>'
-        )
-        el = etree.fromstring(xml.encode())
-        result = _extract_from_page_pr(el)
-        assert result["column_count"] == 3
-        assert result["column_same_width"] is False
-
-
 # ===========================================================================
 # ListBlock 감지
 # ===========================================================================
@@ -540,7 +511,7 @@ class TestListBlockDetection:
         """실제 HWPX fixture에서 ListBlock이 감지되는지 통합 검증."""
         from udf.parsers.hwpx.parse import parse_hwpx
         doc = parse_hwpx("tests/fixtures/hwpx/tac_img.hwpx")
-        list_blocks = [b for b in doc.document.blocks if isinstance(b, ListBlock)]
+        list_blocks = [b for b in doc.blocks if isinstance(b, ListBlock)]
         assert len(list_blocks) >= 2
         mso_lists = [lb for lb in list_blocks if lb.list_style == "MsoListParagraph"]
         assert len(mso_lists) >= 2

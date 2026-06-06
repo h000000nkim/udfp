@@ -291,7 +291,8 @@ class TestRender:
         assert "Rendered:" in result
         assert pathlib.Path(out).exists()
         content = pathlib.Path(out).read_text(encoding="utf-8")
-        assert len(content) > 0
+        assert len(content) > 10, f"Rendered MD is near-empty ({len(content)} chars)"
+        assert any(c.isalpha() for c in content), "Rendered MD contains no text"
 
     def test_render_hwp_to_html(self, mcp_server, tmp_path):
         path = str(HWP_DIR / "f01_plain_text.hwp")

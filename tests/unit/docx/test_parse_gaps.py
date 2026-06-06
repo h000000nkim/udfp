@@ -388,11 +388,8 @@ class TestImageCrop:
         )
         doc = parse_docx(path)
         imgs = [b for b in doc.blocks if isinstance(b, ImageBlock)]
-        # Image could also be extracted as inline within paragraph
         if not imgs:
-            pb = doc.blocks[0]
-            assert isinstance(pb, ParagraphBlock)
-            return  # ImageInline doesn't have crop fields — skip
+            pytest.xfail("Image extracted as ImageInline within paragraph — crop fields not on inline")
 
         img = imgs[0]
         assert img.crop_left == 10000
@@ -411,5 +408,5 @@ class TestImageCrop:
         doc = parse_docx(path)
         imgs = [b for b in doc.blocks if isinstance(b, ImageBlock)]
         if not imgs:
-            return
+            pytest.xfail("Image extracted as ImageInline — no crop fields to check")
         assert imgs[0].crop_left is None

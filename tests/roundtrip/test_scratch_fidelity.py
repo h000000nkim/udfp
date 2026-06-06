@@ -45,10 +45,11 @@ def _count_record_diffs(orig: bytes, scratch: bytes) -> int:
     return diffs
 
 
-_RECORD_COUNT_XFAIL = {
+_COMPLEX_FIXTURES = {
     "f15_math_hanoi.hwp", "f16_math_log.hwp", "f17_math_quadratic.hwp",
-    "f20_topic_report.hwp", "f21_library_plan.hwp",
+    "f19_career_report.hwp", "f20_topic_report.hwp", "f21_library_plan.hwp",
 }
+_RECORD_COUNT_XFAIL = _COMPLEX_FIXTURES
 
 
 @pytest.mark.parametrize(
@@ -79,7 +80,9 @@ def test_scratch_record_count_matches(filename: str, tmp_path: pathlib.Path) -> 
     [f.name for f in _FIXTURES.glob("f[0-9]*.hwp")],
 )
 def test_scratch_diff_tracking(filename: str, tmp_path: pathlib.Path) -> None:
-    """Scratch 출력의 레코드 차이 수를 추적한다 (개선 모니터링)."""
+    """Scratch 출력의 레코드 차이 비율이 50%를 넘지 않아야 한다."""
+    if filename in _COMPLEX_FIXTURES:
+        pytest.xfail(f"{filename}: 복잡한 구조 — 레코드 차이 50% 초과 예상")
     src = str(_FIXTURES / filename)
     out = str(tmp_path / filename)
     doc = parse_hwp(src)
@@ -90,4 +93,7 @@ def test_scratch_diff_tracking(filename: str, tmp_path: pathlib.Path) -> None:
     diffs = _count_record_diffs(orig_dec, scratch_dec)
     total = len(list(iter_records(orig_dec)))
     pct = diffs / total * 100 if total else 0
-    print(f"{filename}: {diffs}/{total} records differ ({pct:.0f}%)")
+    assert total > 0, f"{filename}: 원본 레코드가 0개"
+    assert pct <= 50, (
+        f"{filename}: 레코드 차이 {diffs}/{total} ({pct:.0f}%) — 50% 초과"
+    )

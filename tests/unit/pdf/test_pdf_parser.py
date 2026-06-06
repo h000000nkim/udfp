@@ -41,6 +41,10 @@ from udf.renderers.md import render_md
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "pdf"
 
+pytestmark = pytest.mark.skipif(
+    not FIXTURES.exists(), reason="PDF fixtures not available"
+)
+
 
 class TestSimpleText:
     @pytest.fixture()

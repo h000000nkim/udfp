@@ -32,17 +32,7 @@ def _fixture(name: str) -> str:
     return str(p)
 
 
-def _all_texts(doc) -> list[str]:
-    texts = []
-    for block in doc.blocks:
-        if isinstance(block, ParagraphBlock):
-            t = "".join(i.text for i in block.inlines if isinstance(i, TextInline))
-            if t.strip():
-                texts.append(t)
-        elif isinstance(block, HeadingBlock):
-            if block.text.strip():
-                texts.append(block.text)
-    return texts
+from tests.helpers import all_texts as _all_texts
 
 
 class TestP0SingleEdit:

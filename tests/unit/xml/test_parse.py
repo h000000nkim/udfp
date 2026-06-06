@@ -22,6 +22,10 @@ from udf.core.schema import (
 
 _FIXTURES = os.path.join(os.path.dirname(__file__), "..", "..", "fixtures", "xml")
 
+pytestmark = pytest.mark.skipif(
+    not os.path.isdir(_FIXTURES), reason="XML fixtures not available"
+)
+
 
 def _fixture(name: str) -> str:
     return os.path.join(_FIXTURES, name)

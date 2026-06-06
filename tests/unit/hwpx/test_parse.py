@@ -21,6 +21,10 @@ from udf.parsers.hwpx.parse import parse_hwpx
 
 FIXTURES = Path(__file__).parent.parent.parent / "fixtures" / "hwpx"
 
+pytestmark = pytest.mark.skipif(
+    not FIXTURES.exists(), reason="HWPX fixtures not available"
+)
+
 
 @pytest.fixture
 def table_doc():

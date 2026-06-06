@@ -451,8 +451,8 @@ class TestHwpHwpxParsingConsistency:
         hwpx = parse_hwpx("dev/fixtures/external/hwpx/11차시_자기_나의 약점과 강점 알기.hwpx")
         hwp_types = {}
         hwpx_types = {}
-        for b in hwp.document.blocks:
+        for b in hwp.blocks:
             hwp_types[b.type] = hwp_types.get(b.type, 0) + 1
-        for b in hwpx.document.blocks:
+        for b in hwpx.blocks:
             hwpx_types[b.type] = hwpx_types.get(b.type, 0) + 1
         assert hwp_types == hwpx_types, f"HWP {hwp_types} != HWPX {hwpx_types}"

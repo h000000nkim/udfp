@@ -30,14 +30,11 @@ def _fixture(name: str) -> str:
     return str(p)
 
 
+from tests.helpers import all_texts
+
+
 def _all_texts(doc) -> list[str]:
-    texts = []
-    for block in doc.blocks:
-        if isinstance(block, ParagraphBlock):
-            t = "".join(i.text for i in block.inlines if isinstance(i, TextInline))
-            if t.strip():
-                texts.append(t)
-    return texts
+    return all_texts(doc, include_headings=False)
 
 
 class TestHwpHtmlRoundtrip:

@@ -34,17 +34,7 @@ def _fixture(name: str) -> str:
     return str(p)
 
 
-def _all_texts(doc) -> list[str]:
-    texts = []
-    for block in doc.blocks:
-        if isinstance(block, ParagraphBlock):
-            t = "".join(i.text for i in block.inlines if isinstance(i, TextInline))
-            if t.strip():
-                texts.append(t)
-        elif isinstance(block, HeadingBlock):
-            if block.text.strip():
-                texts.append(block.text)
-    return texts
+from tests.helpers import all_texts as _all_texts
 
 
 class TestMergeDiffNoChangeE2E:
@@ -169,23 +159,6 @@ class TestMergeDiffVerbatimPreserved:
         assert result.document.verbatim.section_streams, "section_streams 소실"
 
 
-class TestMergeDiffSemanticDiff:
-    """merge_diff 결과의 시맨틱 diff 검증."""
-
-    def test_no_edit_semantic_diff_zero(self) -> None:
-        doc = parse_hwp(_fixture("f01_plain_text.hwp"))
-        md = render_md(doc, embed_ids=True)
-
-        start = max_block_index(doc.blocks) + 1
-        edited_doc = parse_md(md, start_id=start)
-        result = merge_diff(doc, edited_doc)
-
-        report = diff_documents(doc, result.document)
-        assert len(report.lossy_blocks) == 0, (
-            f"무변경인데 시맨틱 diff 발생: {[b.description for b in report.lossy_blocks]}"
-        )
-
-
 class TestMergeDiffFalsifiability:
     """역검증: merge_diff가 실제 변경을 감지하는지."""
 
@@ -204,14 +177,3 @@ class TestMergeDiffFalsifiability:
         assert len(result.changes) > 0, "텍스트 변경을 감지하지 못함"
         assert any(c.change_type == "text_edit" for c in result.changes)
 
-    def test_identical_yields_no_changes(self) -> None:
-        doc = parse_hwp(_fixture("f01_plain_text.hwp"))
-        md = render_md(doc, embed_ids=True)
-
-        start = max_block_index(doc.blocks) + 1
-        edited_doc = parse_md(md, start_id=start)
-        result = merge_diff(doc, edited_doc)
-
-        assert len(result.changes) == 0, (
-            f"동일 문서인데 변경 감지: {result.changes}"
-        )

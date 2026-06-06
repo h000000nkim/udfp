@@ -775,11 +775,11 @@ class TestStrikeoutShape3D:
 
     def test_3d_not_in_strike_shapes(self):
         """shape='3D'는 취소선 화이트리스트에 포함되지 않아야 함."""
-        _STRIKE_SHAPES = {"SOLID", "DASH", "DOT", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE"}
+        from udf.parsers.hwpx.header import _STRIKE_SHAPES
         assert "3D" not in _STRIKE_SHAPES
         assert "NONE" not in _STRIKE_SHAPES
 
     def test_solid_is_strikethrough(self):
         """shape='SOLID'는 취소선으로 판정되어야 함."""
-        _STRIKE_SHAPES = {"SOLID", "DASH", "DOT", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE"}
+        from udf.parsers.hwpx.header import _STRIKE_SHAPES
         assert "SOLID" in _STRIKE_SHAPES

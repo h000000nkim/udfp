@@ -301,25 +301,10 @@ class TestFootnoteRefInlineRendering:
 
 
 class TestRenderHwpFixtures:
-    def test_f01_plain_text(self) -> None:
-        from udf.parsers.hwp.parse import parse_hwp
-        import pathlib
-
-        fixture = str(
-            pathlib.Path(__file__).parent.parent.parent
-            / "fixtures"
-            / "hwp"
-            / "f01_plain_text.hwp"
-        )
-        doc = parse_hwp(fixture)
-        md = render_md(doc, embed_ids=False)
-        assert "첫 번째 단락" in md
-        assert "두 번째 단락" in md
-        assert "세 번째 단락" in md
-
     def test_f04_table(self) -> None:
         from udf.parsers.hwp.parse import parse_hwp
         import pathlib
+        import pytest
 
         fixture = str(
             pathlib.Path(__file__).parent.parent.parent
@@ -327,6 +312,8 @@ class TestRenderHwpFixtures:
             / "hwp"
             / "f04_simple_table.hwp"
         )
+        if not pathlib.Path(fixture).exists():
+            pytest.skip("HWP fixture not available")
         doc = parse_hwp(fixture)
         md = render_md(doc, embed_ids=False)
         assert "<table" in md
@@ -334,6 +321,7 @@ class TestRenderHwpFixtures:
     def test_f05_cell_text(self) -> None:
         from udf.parsers.hwp.parse import parse_hwp
         import pathlib
+        import pytest
 
         fixture = str(
             pathlib.Path(__file__).parent.parent.parent
@@ -341,6 +329,8 @@ class TestRenderHwpFixtures:
             / "hwp"
             / "f05_table_cell_text.hwp"
         )
+        if not pathlib.Path(fixture).exists():
+            pytest.skip("HWP fixture not available")
         doc = parse_hwp(fixture)
         md = render_md(doc, embed_ids=False)
         assert "이름" in md

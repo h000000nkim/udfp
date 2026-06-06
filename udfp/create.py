@@ -311,6 +311,8 @@ def _build_table(spec: dict[str, Any]) -> TableBlock:
             is_header = ri < header_rows if header_rows else None
             width = col_widths_mm[ci] if ci < len(col_widths_mm) else None
 
+            fixed_w = cell_spec.get("fixed_width", False) if isinstance(cell_spec, dict) else False
+            fixed_h = cell_spec.get("fixed_height", False) if isinstance(cell_spec, dict) else False
             cells.append(TableCell(
                 id=_next_id(),
                 content=content,
@@ -319,6 +321,8 @@ def _build_table(spec: dict[str, Any]) -> TableBlock:
                 width=width,
                 col_span=cell_spec.get("colspan", 1) if isinstance(cell_spec, dict) else 1,
                 row_span=cell_spec.get("rowspan", 1) if isinstance(cell_spec, dict) else 1,
+                fixed_width=fixed_w,
+                fixed_height=fixed_h,
             ))
         rows.append(TableRow(cells=cells))
 
@@ -327,10 +331,12 @@ def _build_table(spec: dict[str, Any]) -> TableBlock:
         "1.0pt double #000000" if border == "double" else None
     )
 
+    layout_type = spec.get("layout_type")
     return TableBlock(
         id=_next_id(),
         rows=rows,
         col_widths=col_defs,
+        layout_type=layout_type,
         repeat_header=header_rows > 0 if header_rows else None,
         border_top=border_str,
         border_bottom=border_str,

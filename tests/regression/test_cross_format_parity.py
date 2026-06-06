@@ -29,7 +29,7 @@ class TestCrossFormatParity:
         for name in common:
             dx = udf.parse(f"{HWPX_DIR}/{name}.hwpx")
             dh = udf.parse(f"{HWP_DIR}/{name}.hwp")
-            bx, bh = dx.document.blocks, dh.document.blocks
+            bx, bh = dx.blocks, dh.blocks
             if len(bx) == len(bh) and [b.type for b in bx] == [b.type for b in bh]:
                 struct_match += 1
         # BUG-236 fix: HWPX parser now extracts ctrl > header/footer.
@@ -40,6 +40,6 @@ class TestCrossFormatParity:
         common = _common_pairs()
         for name in common[:10]:
             dh = udf.parse(f"{HWP_DIR}/{name}.hwp")
-            for b in dh.document.blocks:
+            for b in dh.blocks:
                 if hasattr(b, "format") and b.format and b.format.keep_with_next:
                     pytest.fail(f"{name} block has keep_with_next=True")
