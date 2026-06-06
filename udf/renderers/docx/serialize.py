@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import copy
-import math
-
 from lxml import etree
 
 from udf.core.schema import (
@@ -96,6 +93,46 @@ _ALIGNMENT_MAP = {
 
 _hyperlink_rels: dict[str, str] = {}
 _image_rels: dict[str, str] = {}
+_page_content_width_twips: int = 9360
+_bindata_keys: set[str] = set()
+
+_FONT_MAP: dict[str, str] = {
+    "함초롬바탕": "바탕",
+    "함초롬돋움": "돋움",
+    "한컴바탕": "바탕",
+    "한컴돋움": "돋움",
+    "한컴산뜻돋움": "맑은 고딕",
+    "한컴산뜻바탕": "바탕",
+    "한컴소망M": "맑은 고딕",
+    "한양신명조": "바탕",
+    "한양중고딕": "맑은 고딕",
+    "HY헤드라인M": "맑은 고딕",
+    "HY신명조": "바탕",
+    "HY중고딕": "맑은 고딕",
+    "HY울릉도B": "맑은 고딕",
+    "휴먼명조": "바탕",
+    "휴먼고딕": "돋움",
+    "휴먼둥근헤드라인": "맑은 고딕",
+    "필기": "궁서",
+    "돋움체": "돋움",
+    "바탕체": "바탕",
+    "굴림체": "굴림",
+    "궁서체": "궁서",
+}
+
+
+def _map_font(name: str) -> str:
+    return _FONT_MAP.get(name, name)
+
+
+def _resolve_media_name(name: str) -> str:
+    """Resolve bindata name, adding extension from bindata_keys if missing."""
+    if name in _bindata_keys:
+        return name
+    for key in _bindata_keys:
+        if key.rsplit(".", 1)[0] == name:
+            return key
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -128,28 +165,56 @@ def blocks_to_document_xml(
     tuple[bytes, dict[str, str], dict[str, str]]
         XML bytes, hyperlink relationship IDs, and image relationship IDs.
     """
-    global _image_id_counter
+    global _image_id_counter, _page_content_width_twips
     _hyperlink_rels.clear()
     _image_rels.clear()
+    _bindata_keys.clear()
+    if doc and doc.verbatim and doc.verbatim.bindata_streams:
+        _bindata_keys.update(doc.verbatim.bindata_streams.keys())
     _image_id_counter = 0
+
+    _page_content_width_twips = 9360
+    if doc and doc.metadata and doc.metadata.sections:
+        sect = doc.metadata.sections[-1]
+        pw = sect.page_width or 595.28
+        ml = sect.margins.left if sect.margins and sect.margins.left else 56.69
+        mr = sect.margins.right if sect.margins and sect.margins.right else 56.69
+        _page_content_width_twips = int((pw - ml - mr) * 20)
+
     root = etree.Element(f"{{{_W}}}document", nsmap=_NSMAP_DOC)
+    root.set(f"{{{_MC}}}Ignorable", "w14 wp14 wps")
     body = etree.SubElement(root, f"{{{_W}}}body")
 
     for block in blocks:
+        if isinstance(block, FieldBlock) and block.field_type in ("page_number", "num_pages"):
+            continue
         elements = _serialize_block(block)
         for el in elements:
             body.append(el)
 
-    need_sect_pr = (
-        (doc and doc.metadata and doc.metadata.sections)
-        or header_rids
-        or footer_rids
-    )
-    if need_sect_pr:
-        if doc and doc.metadata and doc.metadata.sections:
-            sect_pr = _serialize_section_def(doc.metadata.sections[-1])
-        else:
-            sect_pr = etree.Element(f"{{{_W}}}sectPr")
+    _trim_trailing_empty_paragraphs(body)
+
+    if doc and doc.metadata and doc.metadata.sections:
+        sect_pr = _serialize_section_def(doc.metadata.sections[-1])
+    else:
+        sect_pr = etree.Element(f"{{{_W}}}sectPr")
+        pg_sz = etree.SubElement(sect_pr, f"{{{_W}}}pgSz")
+        pg_sz.set(f"{{{_W}}}w", "11906")
+        pg_sz.set(f"{{{_W}}}h", "16838")
+        pg_mar = etree.SubElement(sect_pr, f"{{{_W}}}pgMar")
+        pg_mar.set(f"{{{_W}}}top", "1134")
+        pg_mar.set(f"{{{_W}}}bottom", "1134")
+        pg_mar.set(f"{{{_W}}}left", "1134")
+        pg_mar.set(f"{{{_W}}}right", "1134")
+        pg_mar.set(f"{{{_W}}}header", "851")
+        pg_mar.set(f"{{{_W}}}footer", "851")
+        pg_mar.set(f"{{{_W}}}gutter", "0")
+        cols = etree.SubElement(sect_pr, f"{{{_W}}}cols")
+        cols.set(f"{{{_W}}}space", "425")
+        doc_grid = etree.SubElement(sect_pr, f"{{{_W}}}docGrid")
+        doc_grid.set(f"{{{_W}}}linePitch", "360")
+
+    if True:
         _HDR_TYPE_MAP = {0: "default", 1: "even", 2: "first"}
         for i, rid in enumerate(header_rids or []):
             href = etree.SubElement(sect_pr, f"{{{_W}}}headerReference")
@@ -170,33 +235,52 @@ def blocks_to_document_xml(
 
 
 def build_styles_xml() -> bytes:
-    """Generate a minimal styles.xml with Normal and Heading1-6 styles.
+    """Generate styles.xml with docDefaults, Normal, and Heading1-6 styles."""
+    _W14 = "http://schemas.microsoft.com/office/word/2010/wordml"
+    root = etree.Element(f"{{{_W}}}styles", nsmap={"w": _W, "w14": _W14})
 
-    Returns
-    -------
-    bytes
-        UTF-8 encoded XML bytes for word/styles.xml.
-    """
-    root = etree.Element(f"{{{_W}}}styles", nsmap={"w": _W})
+    doc_defaults = etree.SubElement(root, f"{{{_W}}}docDefaults")
+    rpr_default = etree.SubElement(doc_defaults, f"{{{_W}}}rPrDefault")
+    rpr_def = etree.SubElement(rpr_default, f"{{{_W}}}rPr")
+    def_fonts = etree.SubElement(rpr_def, f"{{{_W}}}rFonts")
+    def_fonts.set(f"{{{_W}}}ascii", "맑은 고딕")
+    def_fonts.set(f"{{{_W}}}eastAsia", "맑은 고딕")
+    def_fonts.set(f"{{{_W}}}hAnsi", "맑은 고딕")
+    def_fonts.set(f"{{{_W}}}cs", "맑은 고딕")
+    kern = etree.SubElement(rpr_def, f"{{{_W}}}kern")
+    kern.set(f"{{{_W}}}val", "2")
+    def_sz = etree.SubElement(rpr_def, f"{{{_W}}}sz")
+    def_sz.set(f"{{{_W}}}val", "22")
+    def_szcs = etree.SubElement(rpr_def, f"{{{_W}}}szCs")
+    def_szcs.set(f"{{{_W}}}val", "22")
+    lang = etree.SubElement(rpr_def, f"{{{_W}}}lang")
+    lang.set(f"{{{_W}}}val", "en-US")
+    lang.set(f"{{{_W}}}eastAsia", "ko-KR")
+    lang.set(f"{{{_W}}}bidi", "ar-SA")
 
-    # Normal style
+    ppr_default = etree.SubElement(doc_defaults, f"{{{_W}}}pPrDefault")
+    ppr_def = etree.SubElement(ppr_default, f"{{{_W}}}pPr")
+    def_spacing = etree.SubElement(ppr_def, f"{{{_W}}}spacing")
+    def_spacing.set(f"{{{_W}}}after", "160")
+    def_spacing.set(f"{{{_W}}}line", "259")
+    def_spacing.set(f"{{{_W}}}lineRule", "auto")
+
     normal = etree.SubElement(root, f"{{{_W}}}style")
     normal.set(f"{{{_W}}}type", "paragraph")
     normal.set(f"{{{_W}}}styleId", "Normal")
     normal.set(f"{{{_W}}}default", "1")
     name_el = etree.SubElement(normal, f"{{{_W}}}name")
     name_el.set(f"{{{_W}}}val", "Normal")
+    etree.SubElement(normal, f"{{{_W}}}qFormat")
+    normal_ppr = etree.SubElement(normal, f"{{{_W}}}pPr")
+    etree.SubElement(normal_ppr, f"{{{_W}}}widowControl")
     normal_rpr = etree.SubElement(normal, f"{{{_W}}}rPr")
     normal_fonts = etree.SubElement(normal_rpr, f"{{{_W}}}rFonts")
     normal_fonts.set(f"{{{_W}}}ascii", "맑은 고딕")
     normal_fonts.set(f"{{{_W}}}hAnsi", "맑은 고딕")
     normal_fonts.set(f"{{{_W}}}eastAsia", "맑은 고딕")
-    normal_sz = etree.SubElement(normal_rpr, f"{{{_W}}}sz")
-    normal_sz.set(f"{{{_W}}}val", "22")
-    normal_szCs = etree.SubElement(normal_rpr, f"{{{_W}}}szCs")
-    normal_szCs.set(f"{{{_W}}}val", "22")
 
-    _HEADING_SIZES = {1: 16, 2: 13, 3: 12, 4: 11, 5: 11, 6: 11}
+    _HEADING_SIZES = {1: 24, 2: 18, 3: 14, 4: 12, 5: 11, 6: 11}
 
     for lvl in range(1, 7):
         style = etree.SubElement(root, f"{{{_W}}}style")
@@ -258,15 +342,10 @@ def build_content_types_xml(
     _add_default(root, "rels", "application/vnd.openxmlformats-package.relationships+xml")
     _add_default(root, "xml", "application/xml")
     _add_default(root, "png", "image/png")
-    _add_default(root, "PNG", "image/png")
     _add_default(root, "jpeg", "image/jpeg")
-    _add_default(root, "JPEG", "image/jpeg")
     _add_default(root, "jpg", "image/jpeg")
-    _add_default(root, "JPG", "image/jpeg")
     _add_default(root, "bmp", "image/bmp")
-    _add_default(root, "BMP", "image/bmp")
     _add_default(root, "gif", "image/gif")
-    _add_default(root, "GIF", "image/gif")
     _add_default(root, "tiff", "image/tiff")
     _add_default(root, "emf", "image/x-emf")
     _add_default(root, "wmf", "image/x-wmf")
@@ -621,7 +700,7 @@ def _serialize_block(block: Block) -> list[etree._Element]:
     elif isinstance(block, ImageBlock):
         return [_serialize_image_block(block)]
     elif isinstance(block, CodeBlock):
-        return [_serialize_code_block(block)]
+        return _serialize_code_block(block)
     elif isinstance(block, QuoteBlock):
         return _serialize_quote_block(block)
     elif isinstance(block, EquationBlock):
@@ -633,7 +712,7 @@ def _serialize_block(block: Block) -> list[etree._Element]:
     elif isinstance(block, (HeaderBlock, FooterBlock)):
         return []
     elif isinstance(block, DrawingBlock):
-        return []
+        return _serialize_drawing_block(block)
     elif isinstance(block, FieldBlock):
         return [_serialize_field_block(block)]
     elif isinstance(block, HorizontalRuleBlock):
@@ -671,7 +750,7 @@ def _serialize_paragraph(block: ParagraphBlock) -> etree._Element:
 
     if block.format:
         ppr = etree.SubElement(p, f"{{{_W}}}pPr")
-        _apply_ppr_format(ppr, block.format)
+        _apply_ppr_format(ppr, block.format, suppress_keep_next=True)
 
     for inline in block.inlines:
         _append_inline(p, inline)
@@ -679,57 +758,16 @@ def _serialize_paragraph(block: ParagraphBlock) -> etree._Element:
     return p
 
 
-_DOCX_TOTAL_WIDTH_TWIPS = 9360   # Letter width ≈ 6.5" content area
-_MIN_COL_WIDTH_TWIPS = 720       # ≈ 0.5 inch minimum
 
 
-def _visual_text_len(text: str) -> float:
-    """Approximate visual width — CJK chars count 1.8, ASCII 1.0."""
-    w = 0.0
-    for ch in text:
-        cp = ord(ch)
-        if 0xAC00 <= cp <= 0xD7A3 or 0x4E00 <= cp <= 0x9FFF or 0x3000 <= cp <= 0x303F:
-            w += 1.8
-        else:
-            w += 1.0
-    return w
-
-
-def _auto_col_widths_twips(block: TableBlock, n_cols: int) -> list[int]:
-    """Content-proportional column widths in twips with sqrt dampening."""
-    if n_cols <= 1:
-        return [_DOCX_TOTAL_WIDTH_TWIPS]
-
-    max_w = [0.0] * n_cols
-    for row in block.rows:
-        for ci, cell in enumerate(row.cells):
-            if ci < n_cols:
-                text = cell.text_content() if hasattr(cell, "text_content") else ""
-                if not text:
-                    text = "".join(
-                        getattr(i, "text", "") for b in cell.content
-                        for i in getattr(b, "inlines", [])
-                    )
-                max_w[ci] = max(max_w[ci], _visual_text_len(text))
-
-    dampened = [math.sqrt(max(w, 1.0)) for w in max_w]
-    total_d = sum(dampened) or 1.0
-    widths = [int(d / total_d * _DOCX_TOTAL_WIDTH_TWIPS) for d in dampened]
-
-    for i in range(n_cols):
-        if widths[i] < _MIN_COL_WIDTH_TWIPS:
-            deficit = _MIN_COL_WIDTH_TWIPS - widths[i]
-            widths[i] = _MIN_COL_WIDTH_TWIPS
-            above = [(j, widths[j]) for j in range(n_cols)
-                     if j != i and widths[j] > _MIN_COL_WIDTH_TWIPS]
-            above_total = sum(w for _, w in above) or 1
-            for j, w in above:
-                widths[j] -= int(deficit * w / above_total)
-
-    diff = _DOCX_TOTAL_WIDTH_TWIPS - sum(widths)
-    if diff != 0:
-        widths[-1] += diff
-
+def _even_col_widths(n_cols: int) -> list[int]:
+    """Evenly distribute page content width across *n_cols* columns (twips)."""
+    if n_cols <= 0:
+        return []
+    base = _page_content_width_twips // n_cols
+    widths = [base] * n_cols
+    # Distribute rounding remainder to the last column
+    widths[-1] += _page_content_width_twips - base * n_cols
     return widths
 
 
@@ -739,8 +777,8 @@ def _serialize_table(block: TableBlock) -> etree._Element:
 
     tbl_pr = etree.SubElement(tbl, f"{{{_W}}}tblPr")
     tbl_w = etree.SubElement(tbl_pr, f"{{{_W}}}tblW")
-    tbl_w.set(f"{{{_W}}}w", "0")
-    tbl_w.set(f"{{{_W}}}type", "auto")
+    tbl_w.set(f"{{{_W}}}w", str(_page_content_width_twips))
+    tbl_w.set(f"{{{_W}}}type", "dxa")
     tbl_borders = etree.SubElement(tbl_pr, f"{{{_W}}}tblBorders")
     for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
         border = etree.SubElement(tbl_borders, f"{{{_W}}}{side}")
@@ -748,6 +786,9 @@ def _serialize_table(block: TableBlock) -> etree._Element:
         border.set(f"{{{_W}}}sz", "4")
         border.set(f"{{{_W}}}space", "0")
         border.set(f"{{{_W}}}color", "000000")
+
+    # tblLayout placeholder — set after we know whether model widths exist
+    _needs_fixed_layout = False
 
     # --- grid layout: assign each cell a logical column position ----
     n_rows = len(block.rows)
@@ -791,16 +832,37 @@ def _serialize_table(block: TableBlock) -> etree._Element:
             remainder = w_twips - per_col * span
             if remainder and gc_idx + span - 1 < col_count:
                 col_widths_twips[gc_idx + span - 1] += remainder
+        # Fill missing (zero-width) columns proportionally from remaining space
+        nonzero = [(i, w) for i, w in enumerate(col_widths_twips) if w > 0]
+        zero_idxs = [i for i, w in enumerate(col_widths_twips) if w == 0]
+        if zero_idxs:
+            used = sum(w for _, w in nonzero)
+            remaining = max(_page_content_width_twips - used, 0)
+            per_missing = remaining // len(zero_idxs) if zero_idxs else 0
+            for i in zero_idxs:
+                col_widths_twips[i] = per_missing
+            # Distribute rounding remainder to last missing column
+            diff = remaining - per_missing * len(zero_idxs)
+            if diff and zero_idxs:
+                col_widths_twips[zero_idxs[-1]] += diff
         if all(w == 0 for w in col_widths_twips):
-            col_widths_twips = [9360 // col_count] * col_count
+            col_widths_twips = _even_col_widths(col_count)
         for w in col_widths_twips:
             gc = etree.SubElement(tbl_grid, f"{{{_W}}}gridCol")
             gc.set(f"{{{_W}}}w", str(w))
     else:
-        col_widths_twips = _auto_col_widths_twips(block, col_count)
+        # No width info (e.g. MD source) — even distribution + fixed layout
+        _needs_fixed_layout = True
+        col_widths_twips = _even_col_widths(col_count)
         for w in col_widths_twips:
             gc = etree.SubElement(tbl_grid, f"{{{_W}}}gridCol")
             gc.set(f"{{{_W}}}w", str(w))
+
+    # Add fixed table layout when no model widths exist — produces
+    # predictable column widths that don't shift based on content.
+    if _needs_fixed_layout:
+        tbl_layout = etree.SubElement(tbl_pr, f"{{{_W}}}tblLayout")
+        tbl_layout.set(f"{{{_W}}}type", "fixed")
 
     # --- serialize rows, inserting vMerge continuation cells ---------
     for ri, row in enumerate(block.rows):
@@ -818,10 +880,7 @@ def _serialize_table(block: TableBlock) -> etree._Element:
                 cell = real_cells[cursor]
                 tc = etree.SubElement(tr, f"{{{_W}}}tc")
                 tcpr = etree.SubElement(tc, f"{{{_W}}}tcPr")
-                if cell.width:
-                    cell_w = int(cell.width * 20)
-                else:
-                    cell_w = sum(col_widths_twips[cursor:cursor + cell.col_span])
+                cell_w = sum(col_widths_twips[cursor:cursor + cell.col_span])
                 tcw = etree.SubElement(tcpr, f"{{{_W}}}tcW")
                 tcw.set(f"{{{_W}}}w", str(cell_w))
                 tcw.set(f"{{{_W}}}type", "dxa")
@@ -915,7 +974,7 @@ _image_id_counter = 0
 
 
 def _serialize_image_block(block: ImageBlock) -> etree._Element:
-    """Serialize an ImageBlock to a w:p containing w:drawing with wp:inline."""
+    """Serialize an ImageBlock to a w:p containing w:drawing."""
     global _image_id_counter
     _image_id_counter += 1
     img_id = _image_id_counter
@@ -924,26 +983,71 @@ def _serialize_image_block(block: ImageBlock) -> etree._Element:
     r = etree.SubElement(p, f"{{{_W}}}r")
     drawing = etree.SubElement(r, f"{{{_W}}}drawing")
 
-    inline = etree.SubElement(drawing, f"{{{_WP}}}inline")
-
-    # extent
-    cx = "914400"  # 1 inch default
+    pt_to_emu = 12700
+    cx = "914400"
     cy = "914400"
     if block.width:
         cx = str(_pt_to_emu(block.width))
     if block.height:
         cy = str(_pt_to_emu(block.height))
-    extent = etree.SubElement(inline, f"{{{_WP}}}extent")
+
+    pos = block.position
+    use_anchor = pos is not None and pos.x is not None and pos.y is not None
+
+    if use_anchor:
+        wrap_el = etree.SubElement(drawing, f"{{{_WP}}}anchor")
+        wrap_el.set("distT", "0")
+        wrap_el.set("distB", "0")
+        wrap_el.set("distL", "0")
+        wrap_el.set("distR", "0")
+        wrap_el.set("simplePos", "0")
+        wrap_el.set("relativeHeight", "251658240" if pos.flow != "back" else "0")
+        wrap_el.set("behindDoc", "1" if pos.flow == "back" else "0")
+        wrap_el.set("locked", "0")
+        wrap_el.set("layoutInCell", "1")
+        wrap_el.set("allowOverlap", "1")
+
+        simple_pos = etree.SubElement(wrap_el, f"{{{_WP}}}simplePos")
+        simple_pos.set("x", "0")
+        simple_pos.set("y", "0")
+
+        _RELTO_H = {"paper": "page", "page": "page", "column": "column", "paragraph": "column"}
+        posH = etree.SubElement(wrap_el, f"{{{_WP}}}positionH")
+        posH.set("relativeFrom", _RELTO_H.get(pos.hrelto or "page", "page"))
+        posH_off = etree.SubElement(posH, f"{{{_WP}}}posOffset")
+        posH_off.text = str(int(_clip_x(pos.x, getattr(block, 'width', None) or 0) * pt_to_emu))
+
+        _RELTO_V = {"paper": "page", "page": "page", "paragraph": "paragraph"}
+        posV = etree.SubElement(wrap_el, f"{{{_WP}}}positionV")
+        posV.set("relativeFrom", _RELTO_V.get(pos.vrelto or "page", "page"))
+        posV_off = etree.SubElement(posV, f"{{{_WP}}}posOffset")
+        posV_off.text = str(int(pos.y * pt_to_emu))
+    else:
+        wrap_el = etree.SubElement(drawing, f"{{{_WP}}}inline")
+        wrap_el.set("distT", "0")
+        wrap_el.set("distB", "0")
+        wrap_el.set("distL", "0")
+        wrap_el.set("distR", "0")
+
+    extent = etree.SubElement(wrap_el, f"{{{_WP}}}extent")
     extent.set("cx", cx)
     extent.set("cy", cy)
 
-    # docPr (required by OOXML spec)
-    doc_pr = etree.SubElement(inline, f"{{{_WP}}}docPr")
+    eff_ext = etree.SubElement(wrap_el, f"{{{_WP}}}effectExtent")
+    eff_ext.set("l", "0")
+    eff_ext.set("t", "0")
+    eff_ext.set("r", "0")
+    eff_ext.set("b", "0")
+
+    if use_anchor:
+        etree.SubElement(wrap_el, f"{{{_WP}}}wrapNone")
+
+    doc_pr = etree.SubElement(wrap_el, f"{{{_WP}}}docPr")
     doc_pr.set("id", str(img_id))
     doc_pr.set("name", f"Picture {img_id}")
 
     # graphic > graphicData > pic:pic
-    graphic = etree.SubElement(inline, f"{{{_A}}}graphic")
+    graphic = etree.SubElement(wrap_el, f"{{{_A}}}graphic")
     gd = etree.SubElement(graphic, f"{{{_A}}}graphicData")
     gd.set("uri", _PIC)
     pic = etree.SubElement(gd, f"{{{_PIC}}}pic")
@@ -955,9 +1059,11 @@ def _serialize_image_block(block: ImageBlock) -> etree._Element:
     cnv_pr.set("name", f"Picture {img_id}")
     etree.SubElement(nv, f"{{{_PIC}}}cNvPicPr")
 
-    # pic:blipFill > a:blip
+    # pic:blipFill > a:blip + a:stretch
     bf = etree.SubElement(pic, f"{{{_PIC}}}blipFill")
     blip = etree.SubElement(bf, f"{{{_A}}}blip")
+    stretch = etree.SubElement(bf, f"{{{_A}}}stretch")
+    etree.SubElement(stretch, f"{{{_A}}}fillRect")
 
     # pic:spPr (required)
     sp_pr = etree.SubElement(pic, f"{{{_PIC}}}spPr")
@@ -968,10 +1074,13 @@ def _serialize_image_block(block: ImageBlock) -> etree._Element:
     ext = etree.SubElement(xfrm, f"{{{_A}}}ext")
     ext.set("cx", cx)
     ext.set("cy", cy)
+    prstGeom = etree.SubElement(sp_pr, f"{{{_A}}}prstGeom")
+    prstGeom.set("prst", "rect")
+    etree.SubElement(prstGeom, f"{{{_A}}}avLst")
 
     src = block.src or ""
     if src.startswith("bindata:"):
-        media_name = src[len("bindata:"):]
+        media_name = _resolve_media_name(src[len("bindata:"):])
         rid = f"rImg_{media_name}"
         blip.set(f"{{{_R}}}embed", rid)
         _image_rels[rid] = f"media/{media_name}"
@@ -981,18 +1090,49 @@ def _serialize_image_block(block: ImageBlock) -> etree._Element:
     return p
 
 
-def _serialize_code_block(block: CodeBlock) -> etree._Element:
-    """Serialize a CodeBlock to a w:p with Courier New monospace font."""
-    p = etree.Element(f"{{{_W}}}p", nsmap=_NSMAP_DOC)
-    r = etree.SubElement(p, f"{{{_W}}}r")
-    rpr = etree.SubElement(r, f"{{{_W}}}rPr")
-    fonts = etree.SubElement(rpr, f"{{{_W}}}rFonts")
-    fonts.set(f"{{{_W}}}ascii", "Courier New")
-    fonts.set(f"{{{_W}}}hAnsi", "Courier New")
-    t = etree.SubElement(r, f"{{{_W}}}t")
-    t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-    t.text = block.code
-    return p
+def _serialize_code_block(block: CodeBlock) -> list[etree._Element]:
+    """Serialize a CodeBlock as one w:p per line with Courier New and gray background."""
+    code = block.code or ""
+    lines = code.split("\n")
+    if lines and lines[-1] == "":
+        lines = lines[:-1]
+    if not lines:
+        lines = [""]
+
+    elements: list[etree._Element] = []
+    for line in lines:
+        p = etree.Element(f"{{{_W}}}p", nsmap=_NSMAP_DOC)
+        ppr = etree.SubElement(p, f"{{{_W}}}pPr")
+        spacing = etree.SubElement(ppr, f"{{{_W}}}spacing")
+        spacing.set(f"{{{_W}}}after", "0")
+        spacing.set(f"{{{_W}}}line", "240")
+        spacing.set(f"{{{_W}}}lineRule", "auto")
+        shd = etree.SubElement(ppr, f"{{{_W}}}shd")
+        shd.set(f"{{{_W}}}val", "clear")
+        shd.set(f"{{{_W}}}fill", "F2F2F2")
+        pbdr = etree.SubElement(ppr, f"{{{_W}}}pBdr")
+        left_bdr = etree.SubElement(pbdr, f"{{{_W}}}left")
+        left_bdr.set(f"{{{_W}}}val", "single")
+        left_bdr.set(f"{{{_W}}}sz", "12")
+        left_bdr.set(f"{{{_W}}}space", "4")
+        left_bdr.set(f"{{{_W}}}color", "CCCCCC")
+        ind = etree.SubElement(ppr, f"{{{_W}}}ind")
+        ind.set(f"{{{_W}}}left", "360")
+        r = etree.SubElement(p, f"{{{_W}}}r")
+        rpr = etree.SubElement(r, f"{{{_W}}}rPr")
+        fonts = etree.SubElement(rpr, f"{{{_W}}}rFonts")
+        fonts.set(f"{{{_W}}}ascii", "Courier New")
+        fonts.set(f"{{{_W}}}hAnsi", "Courier New")
+        fonts.set(f"{{{_W}}}eastAsia", "Courier New")
+        sz = etree.SubElement(rpr, f"{{{_W}}}sz")
+        sz.set(f"{{{_W}}}val", "20")
+        sz_cs = etree.SubElement(rpr, f"{{{_W}}}szCs")
+        sz_cs.set(f"{{{_W}}}val", "20")
+        t = etree.SubElement(r, f"{{{_W}}}t")
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        t.text = line
+        elements.append(p)
+    return elements
 
 
 def _serialize_quote_block(block: QuoteBlock) -> list[etree._Element]:
@@ -1035,23 +1175,69 @@ def _serialize_note_block(block: FootnoteBlock | EndnoteBlock) -> list[etree._El
     return elements if elements else [_make_empty_paragraph()]
 
 
-_TEXTBOX_COUNTER = [0]
+def _serialize_drawing_block_flat(block: DrawingBlock) -> list[etree._Element]:
+    """Serialize DrawingBlock content as flat paragraphs (no wrapping shape)."""
+    elements: list[etree._Element] = []
+    for child in block.content:
+        if isinstance(child, DrawingBlock):
+            elements.extend(_serialize_drawing_block_flat(child))
+        elif isinstance(child, TextBoxBlock):
+            for inner in child.content:
+                elements.extend(_serialize_block(inner))
+        else:
+            elements.extend(_serialize_block(child))
+    for child_draw in block.children:
+        elements.extend(_serialize_drawing_block_flat(child_draw))
+    return elements
 
 
-def _serialize_textbox_block(block: TextBoxBlock) -> list[etree._Element]:
-    """Serialize a TextBoxBlock as an OOXML Drawing text box."""
-    _TEXTBOX_COUNTER[0] += 1
-    tb_id = _TEXTBOX_COUNTER[0]
+def _has_drawing_child(el: etree._Element) -> bool:
+    """Check if element contains w:drawing (incompatible with txbxContent)."""
+    if el.tag == f"{{{_W}}}drawing":
+        return True
+    return el.find(f".//{{{_W}}}drawing") is not None
 
+
+def _serialize_drawing_block(block: DrawingBlock) -> list[etree._Element]:
+    """Serialize DrawingBlock — as textbox shape if it has visual properties, else inline."""
     child_elements: list[etree._Element] = []
     for child in block.content:
-        child_elements.extend(_serialize_block(child))
+        if isinstance(child, (DrawingBlock, TextBoxBlock)):
+            if isinstance(child, DrawingBlock):
+                child_elements.extend(_serialize_drawing_block_flat(child))
+            else:
+                for inner in child.content:
+                    child_elements.extend(_serialize_block(inner))
+        else:
+            child_elements.extend(_serialize_block(child))
+    for child_draw in block.children:
+        child_elements.extend(_serialize_drawing_block_flat(child_draw))
+
+    if not block.background_color and not block.line_color:
+        return child_elements
+
+    txbx_safe: list[etree._Element] = []
+    extracted: list[etree._Element] = []
+    for el in child_elements:
+        if _has_drawing_child(el):
+            extracted.append(el)
+        else:
+            txbx_safe.append(el)
+
+    child_elements = txbx_safe
     if not child_elements:
         child_elements = [_make_empty_paragraph()]
 
+    global _image_id_counter
+    _image_id_counter += 1
+    tb_id = _image_id_counter
     pt_to_emu = 12700
-    w_emu = int((block.width or 200) * pt_to_emu)
-    h_emu = int((block.height or 100) * pt_to_emu)
+
+    pos = block.position
+    w_emu = int((pos.width * pt_to_emu)) if pos and pos.width else int(200 * pt_to_emu)
+    h_emu = int((pos.height * pt_to_emu)) if pos and pos.height else int(100 * pt_to_emu)
+
+    use_anchor = pos is not None and pos.x is not None and pos.y is not None and not pos.like_char
 
     p = etree.Element(f"{{{_W}}}p", nsmap=_NSMAP_DOC)
     r = etree.SubElement(p, f"{{{_W}}}r")
@@ -1062,21 +1248,229 @@ def _serialize_textbox_block(block: TextBoxBlock) -> list[etree._Element]:
     choice.set("Requires", "wps")
 
     drawing = etree.SubElement(choice, f"{{{_W}}}drawing")
-    inline = etree.SubElement(drawing, f"{{{_WP}}}inline")
-    inline.set("distT", "0")
-    inline.set("distB", "0")
-    inline.set("distL", "0")
-    inline.set("distR", "0")
 
-    extent = etree.SubElement(inline, f"{{{_WP}}}extent")
+    if use_anchor:
+        wrap_el = etree.SubElement(drawing, f"{{{_WP}}}anchor")
+        wrap_el.set("distT", "0")
+        wrap_el.set("distB", "0")
+        wrap_el.set("distL", "114300")
+        wrap_el.set("distR", "114300")
+        wrap_el.set("simplePos", "0")
+        wrap_el.set("relativeHeight", str((pos.z_order or 0) + 251658240))
+        wrap_el.set("behindDoc", "1" if pos.flow == "back" else "0")
+        wrap_el.set("locked", "0")
+        wrap_el.set("layoutInCell", "1")
+        wrap_el.set("allowOverlap", "1" if pos.overlap_others else "0")
+
+        simple_pos = etree.SubElement(wrap_el, f"{{{_WP}}}simplePos")
+        simple_pos.set("x", "0")
+        simple_pos.set("y", "0")
+
+        _RELTO_H_MAP = {"paper": "page", "page": "page", "column": "column", "paragraph": "column"}
+        posH = etree.SubElement(wrap_el, f"{{{_WP}}}positionH")
+        posH.set("relativeFrom", _RELTO_H_MAP.get(pos.hrelto or "page", "page"))
+        posH_off = etree.SubElement(posH, f"{{{_WP}}}posOffset")
+        posH_off.text = str(int(_clip_x(pos.x, getattr(block, 'width', None) or 0) * pt_to_emu))
+
+        posV = etree.SubElement(wrap_el, f"{{{_WP}}}positionV")
+        _RELTO_V_MAP = {"paper": "page", "page": "page", "column": "page", "paragraph": "paragraph"}
+        posV.set("relativeFrom", _RELTO_V_MAP.get(pos.vrelto or "page", "page"))
+        posV_off = etree.SubElement(posV, f"{{{_WP}}}posOffset")
+        posV_off.text = str(int(pos.y * pt_to_emu))
+    else:
+        wrap_el = etree.SubElement(drawing, f"{{{_WP}}}inline")
+        wrap_el.set("distT", "0")
+        wrap_el.set("distB", "0")
+        wrap_el.set("distL", "0")
+        wrap_el.set("distR", "0")
+
+    extent = etree.SubElement(wrap_el, f"{{{_WP}}}extent")
     extent.set("cx", str(w_emu))
     extent.set("cy", str(h_emu))
 
-    doc_pr = etree.SubElement(inline, f"{{{_WP}}}docPr")
+    eff_ext = etree.SubElement(wrap_el, f"{{{_WP}}}effectExtent")
+    eff_ext.set("l", "0")
+    eff_ext.set("t", "0")
+    eff_ext.set("r", "0")
+    eff_ext.set("b", "0")
+
+    if use_anchor:
+        etree.SubElement(wrap_el, f"{{{_WP}}}wrapNone")
+
+    doc_pr = etree.SubElement(wrap_el, f"{{{_WP}}}docPr")
+    doc_pr.set("id", str(tb_id))
+    doc_pr.set("name", f"Shape {tb_id}")
+
+    graphic = etree.SubElement(wrap_el, f"{{{_A}}}graphic")
+    gd = etree.SubElement(graphic, f"{{{_A}}}graphicData")
+    gd.set("uri", "http://schemas.microsoft.com/office/word/2010/wordprocessingShape")
+
+    wsp = etree.SubElement(gd, f"{{{_WPS}}}wsp")
+    cnv = etree.SubElement(wsp, f"{{{_WPS}}}cNvSpPr")
+    cnv.set("txBox", "1")
+
+    sp_pr = etree.SubElement(wsp, f"{{{_WPS}}}spPr")
+    xfrm = etree.SubElement(sp_pr, f"{{{_A}}}xfrm")
+    off = etree.SubElement(xfrm, f"{{{_A}}}off")
+    off.set("x", "0")
+    off.set("y", "0")
+    ext = etree.SubElement(xfrm, f"{{{_A}}}ext")
+    ext.set("cx", str(w_emu))
+    ext.set("cy", str(h_emu))
+    prstGeom = etree.SubElement(sp_pr, f"{{{_A}}}prstGeom")
+    prstGeom.set("prst", "rect")
+    etree.SubElement(prstGeom, f"{{{_A}}}avLst")
+
+    if block.background_color:
+        solid = etree.SubElement(sp_pr, f"{{{_A}}}solidFill")
+        sc = etree.SubElement(solid, f"{{{_A}}}srgbClr")
+        sc.set("val", _strip_hash(block.background_color))
+    else:
+        etree.SubElement(sp_pr, f"{{{_A}}}noFill")
+
+    ln = etree.SubElement(sp_pr, f"{{{_A}}}ln")
+    if block.line_color:
+        solid = etree.SubElement(ln, f"{{{_A}}}solidFill")
+        sc = etree.SubElement(solid, f"{{{_A}}}srgbClr")
+        sc.set("val", _strip_hash(block.line_color))
+        if block.line_width:
+            ln.set("w", str(int(block.line_width * pt_to_emu)))
+    else:
+        etree.SubElement(ln, f"{{{_A}}}noFill")
+
+    txbx = etree.SubElement(wsp, f"{{{_WPS}}}txbx")
+    txbx_content = etree.SubElement(txbx, f"{{{_W}}}txbxContent")
+    for el in child_elements:
+        txbx_content.append(el)
+
+    body_pr = etree.SubElement(wsp, f"{{{_WPS}}}bodyPr")
+    body_pr.set("rot", "0")
+    body_pr.set("vert", "horz")
+    body_pr.set("wrap", "square")
+    body_pr.set("lIns", str(int(4.52 * pt_to_emu)))
+    body_pr.set("tIns", str(int(4.52 * pt_to_emu)))
+    body_pr.set("rIns", str(int(4.52 * pt_to_emu)))
+    body_pr.set("bIns", str(int(4.52 * pt_to_emu)))
+    body_pr.set("anchor", "t")
+
+    etree.SubElement(alt, f"{{{_MC}}}Fallback")
+
+    result = [p]
+    result.extend(extracted)
+    return result
+
+
+def _serialize_textbox_block(block: TextBoxBlock) -> list[etree._Element]:
+    """Serialize a TextBoxBlock as an OOXML Drawing text box."""
+    has_visual = block.background_color or block.line_color
+    pos = block.position
+    has_position = pos is not None and pos.x is not None and pos.y is not None
+
+    if not has_visual and not has_position:
+        elements: list[etree._Element] = []
+        for child in block.content:
+            elements.extend(_serialize_block(child))
+        return elements if elements else [_make_empty_paragraph()]
+
+    global _image_id_counter
+    _image_id_counter += 1
+    tb_id = _image_id_counter
+
+    all_children: list[etree._Element] = []
+    for child in block.content:
+        if isinstance(child, TextBoxBlock):
+            inner_els = []
+            for inner in child.content:
+                inner_els.extend(_serialize_block(inner))
+            if child.line_color and inner_els:
+                wrapper = _wrap_in_bordered_table(inner_els, child.line_color)
+                all_children.append(wrapper)
+            else:
+                all_children.extend(inner_els)
+        else:
+            all_children.extend(_serialize_block(child))
+
+    child_elements: list[etree._Element] = []
+    extracted: list[etree._Element] = []
+    for el in all_children:
+        if _has_drawing_child(el):
+            extracted.append(el)
+        else:
+            child_elements.append(el)
+    if not child_elements:
+        child_elements = [_make_empty_paragraph()]
+
+    pt_to_emu = 12700
+    fallback_w = _page_content_width_twips / 20
+    w_emu = int((block.width or fallback_w) * pt_to_emu)
+    auto_height = block.height is None
+    h_emu = int((block.height or 100) * pt_to_emu)
+
+    use_anchor = has_position and not pos.like_char
+
+    p = etree.Element(f"{{{_W}}}p", nsmap=_NSMAP_DOC)
+    r = etree.SubElement(p, f"{{{_W}}}r")
+
+    nsmap_mc = {"mc": _MC, "wp": _WP, "a": _A, "wps": _WPS, "w": _W}
+    alt = etree.SubElement(r, f"{{{_MC}}}AlternateContent", nsmap=nsmap_mc)
+    choice = etree.SubElement(alt, f"{{{_MC}}}Choice")
+    choice.set("Requires", "wps")
+
+    drawing = etree.SubElement(choice, f"{{{_W}}}drawing")
+
+    if use_anchor:
+        wrap_el = etree.SubElement(drawing, f"{{{_WP}}}anchor")
+        wrap_el.set("distT", "0")
+        wrap_el.set("distB", "0")
+        wrap_el.set("distL", "114300")
+        wrap_el.set("distR", "114300")
+        wrap_el.set("simplePos", "0")
+        wrap_el.set("relativeHeight", str((pos.z_order or 0) + 251658240))
+        wrap_el.set("behindDoc", "1" if pos.flow == "back" else "0")
+        wrap_el.set("locked", "0")
+        wrap_el.set("layoutInCell", "1")
+        wrap_el.set("allowOverlap", "1" if pos.overlap_others else "0")
+
+        simple_pos = etree.SubElement(wrap_el, f"{{{_WP}}}simplePos")
+        simple_pos.set("x", "0")
+        simple_pos.set("y", "0")
+
+        _RELTO_H_MAP = {"paper": "page", "page": "page", "column": "column", "paragraph": "column"}
+        posH = etree.SubElement(wrap_el, f"{{{_WP}}}positionH")
+        posH.set("relativeFrom", _RELTO_H_MAP.get(pos.hrelto or "page", "page"))
+        posH_off = etree.SubElement(posH, f"{{{_WP}}}posOffset")
+        posH_off.text = str(int(_clip_x(pos.x, getattr(block, 'width', None) or 0) * pt_to_emu))
+
+        posV = etree.SubElement(wrap_el, f"{{{_WP}}}positionV")
+        _RELTO_V_MAP = {"paper": "page", "page": "page", "column": "page", "paragraph": "paragraph"}
+        posV.set("relativeFrom", _RELTO_V_MAP.get(pos.vrelto or "page", "page"))
+        posV_off = etree.SubElement(posV, f"{{{_WP}}}posOffset")
+        posV_off.text = str(int(pos.y * pt_to_emu))
+    else:
+        wrap_el = etree.SubElement(drawing, f"{{{_WP}}}inline")
+        wrap_el.set("distT", "0")
+        wrap_el.set("distB", "0")
+        wrap_el.set("distL", "0")
+        wrap_el.set("distR", "0")
+
+    extent = etree.SubElement(wrap_el, f"{{{_WP}}}extent")
+    extent.set("cx", str(w_emu))
+    extent.set("cy", str(h_emu))
+
+    eff_ext = etree.SubElement(wrap_el, f"{{{_WP}}}effectExtent")
+    eff_ext.set("l", "0")
+    eff_ext.set("t", "0")
+    eff_ext.set("r", "0")
+    eff_ext.set("b", "0")
+
+    if use_anchor:
+        etree.SubElement(wrap_el, f"{{{_WP}}}wrapNone")
+
+    doc_pr = etree.SubElement(wrap_el, f"{{{_WP}}}docPr")
     doc_pr.set("id", str(tb_id))
     doc_pr.set("name", f"TextBox {tb_id}")
 
-    graphic = etree.SubElement(inline, f"{{{_A}}}graphic")
+    graphic = etree.SubElement(wrap_el, f"{{{_A}}}graphic")
     gd = etree.SubElement(graphic, f"{{{_A}}}graphicData")
     gd.set("uri", "http://schemas.microsoft.com/office/word/2010/wordprocessingShape")
 
@@ -1134,12 +1528,14 @@ def _serialize_textbox_block(block: TextBoxBlock) -> list[etree._Element]:
 
     va_map = {"top": "t", "middle": "ctr", "bottom": "b"}
     body_pr.set("anchor", va_map.get(block.vertical_align or "top", "t"))
+    if auto_height:
+        etree.SubElement(body_pr, f"{{{_A}}}spAutoFit")
 
-    fallback = etree.SubElement(alt, f"{{{_MC}}}Fallback")
-    for el in child_elements:
-        fallback.append(copy.deepcopy(el))
+    etree.SubElement(alt, f"{{{_MC}}}Fallback")
 
-    return [p]
+    result = [p]
+    result.extend(extracted)
+    return result
 
 
 _FIELD_TYPE_TO_INSTR = {
@@ -1168,7 +1564,7 @@ def _serialize_field_block(block: FieldBlock) -> etree._Element:
         r = etree.SubElement(fld, f"{{{_W}}}r")
         t = etree.SubElement(r, f"{{{_W}}}t")
         t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-        display = block.value or block.field_type
+        display = block.value or ""
         if block.inlines:
             display = "".join(
                 getattr(il, "text", "") for il in block.inlines
@@ -1236,11 +1632,20 @@ def _append_inline(p: etree._Element, inline: object) -> None:
         drawing = etree.SubElement(r, f"{{{_W}}}drawing")
         nsmap_wp = {"wp": _WP, "a": _A, "pic": _PIC, "r": _R}
         inl = etree.SubElement(drawing, f"{{{_WP}}}inline", nsmap=nsmap_wp)
+        inl.set("distT", "0")
+        inl.set("distB", "0")
+        inl.set("distL", "0")
+        inl.set("distR", "0")
         cx = str(_pt_to_emu(inline.width)) if inline.width else "914400"
         cy = str(_pt_to_emu(inline.height)) if inline.height else "914400"
         extent = etree.SubElement(inl, f"{{{_WP}}}extent")
         extent.set("cx", cx)
         extent.set("cy", cy)
+        eff_ext = etree.SubElement(inl, f"{{{_WP}}}effectExtent")
+        eff_ext.set("l", "0")
+        eff_ext.set("t", "0")
+        eff_ext.set("r", "0")
+        eff_ext.set("b", "0")
         doc_pr = etree.SubElement(inl, f"{{{_WP}}}docPr")
         doc_pr.set("id", str(img_id))
         doc_pr.set("name", f"Picture {img_id}")
@@ -1257,10 +1662,12 @@ def _append_inline(p: etree._Element, inline: object) -> None:
         blip = etree.SubElement(bf, f"{{{_A}}}blip")
         src = inline.src or ""
         if src.startswith("bindata:"):
-            media_name = src[len("bindata:"):]
+            media_name = _resolve_media_name(src[len("bindata:"):])
             rid = f"rImg_{media_name}"
             blip.set(f"{{{_R}}}embed", rid)
             _image_rels[rid] = f"media/{media_name}"
+        i_stretch = etree.SubElement(bf, f"{{{_A}}}stretch")
+        etree.SubElement(i_stretch, f"{{{_A}}}fillRect")
         sp_pr = etree.SubElement(pic, f"{{{_PIC}}}spPr")
         xfrm = etree.SubElement(sp_pr, f"{{{_A}}}xfrm")
         off = etree.SubElement(xfrm, f"{{{_A}}}off")
@@ -1269,6 +1676,9 @@ def _append_inline(p: etree._Element, inline: object) -> None:
         ext = etree.SubElement(xfrm, f"{{{_A}}}ext")
         ext.set("cx", cx)
         ext.set("cy", cy)
+        i_geom = etree.SubElement(sp_pr, f"{{{_A}}}prstGeom")
+        i_geom.set("prst", "rect")
+        etree.SubElement(i_geom, f"{{{_A}}}avLst")
     elif isinstance(inline, LinkInline):
         url = inline.url or ""
         if url:
@@ -1311,10 +1721,11 @@ def _build_rpr(inline: TextInline) -> etree._Element | None:
         parts.append(etree.Element(f"{{{_W}}}strike"))
 
     if inline.font_name:
+        mapped = _map_font(inline.font_name)
         fonts = etree.Element(f"{{{_W}}}rFonts")
-        fonts.set(f"{{{_W}}}ascii", inline.font_name)
-        fonts.set(f"{{{_W}}}hAnsi", inline.font_name)
-        fonts.set(f"{{{_W}}}eastAsia", inline.font_name)
+        fonts.set(f"{{{_W}}}ascii", mapped)
+        fonts.set(f"{{{_W}}}hAnsi", mapped)
+        fonts.set(f"{{{_W}}}eastAsia", mapped)
         parts.append(fonts)
 
     if inline.font_size:
@@ -1361,13 +1772,40 @@ def _build_rpr(inline: TextInline) -> etree._Element | None:
     if inline.hidden:
         parts.append(etree.Element(f"{{{_W}}}vanish"))
 
-    if inline.letter_spacing:
+    if inline.letter_spacing and inline.letter_spacing > 0:
         sp = etree.Element(f"{{{_W}}}spacing")
-        pt_val = _parse_pt(inline.letter_spacing)
+        font_pt = inline.font_size or 10.0
+        pt_val = inline.letter_spacing * font_pt / 100.0
+        sp.set(f"{{{_W}}}val", str(int(pt_val * 20)))
+        parts.append(sp)
+
+    if inline.outline:
+        parts.append(etree.Element(f"{{{_W}}}outline"))
+    if inline.shadow:
+        parts.append(etree.Element(f"{{{_W}}}shadow"))
+    if inline.emboss:
+        parts.append(etree.Element(f"{{{_W}}}emboss"))
+    if inline.engrave:
+        parts.append(etree.Element(f"{{{_W}}}imprint"))
+    if inline.all_caps:
+        parts.append(etree.Element(f"{{{_W}}}caps"))
+    if inline.emphasis_mark and inline.emphasis_mark != "none":
+        em = etree.Element(f"{{{_W}}}em")
+        em.set(f"{{{_W}}}val", inline.emphasis_mark)
+        parts.append(em)
+    if inline.char_scale is not None:
+        w_el = etree.Element(f"{{{_W}}}w")
+        pct = inline.char_scale
+        w_el.set(f"{{{_W}}}val", str(int(pct.percent if hasattr(pct, "percent") else pct)))
+        parts.append(w_el)
+    if inline.char_offset is not None:
+        pt_val = _parse_pt(inline.char_offset)
         if pt_val is not None:
-            # OOXML spacing = twips (1pt = 20 twips)
-            sp.set(f"{{{_W}}}val", str(int(pt_val * 20)))
-            parts.append(sp)
+            pos = etree.Element(f"{{{_W}}}position")
+            pos.set(f"{{{_W}}}val", str(int(pt_val * 2)))
+            parts.append(pos)
+    if inline.rtl:
+        parts.append(etree.Element(f"{{{_W}}}rtl"))
 
     if not parts:
         return None
@@ -1383,7 +1821,9 @@ def _build_rpr(inline: TextInline) -> etree._Element | None:
 # ---------------------------------------------------------------------------
 
 
-def _apply_ppr_format(ppr: etree._Element, fmt: object) -> None:
+def _apply_ppr_format(
+    ppr: etree._Element, fmt: object, *, suppress_keep_next: bool = False
+) -> None:
     """Apply BlockFormat properties as w:pPr child elements."""
     from udf.core.schema import BlockFormat
 
@@ -1445,7 +1885,7 @@ def _apply_ppr_format(ppr: etree._Element, fmt: object) -> None:
                 else:
                     ind.set(f"{{{_W}}}hanging", str(int(abs(pt) * 20)))
 
-    if fmt.keep_with_next:
+    if fmt.keep_with_next and not suppress_keep_next:
         etree.SubElement(ppr, f"{{{_W}}}keepNext")
     if fmt.widow_orphan:
         etree.SubElement(ppr, f"{{{_W}}}widowControl")
@@ -1470,6 +1910,18 @@ def _apply_ppr_format(ppr: etree._Element, fmt: object) -> None:
     if hasattr(fmt, "outline_level") and fmt.outline_level is not None:
         ol = etree.SubElement(ppr, f"{{{_W}}}outlineLvl")
         ol.set(f"{{{_W}}}val", str(fmt.outline_level))
+
+    if fmt.tab_stops:
+        tabs = etree.SubElement(ppr, f"{{{_W}}}tabs")
+        for ts in fmt.tab_stops:
+            tab = etree.SubElement(tabs, f"{{{_W}}}tab")
+            tab.set(f"{{{_W}}}val", ts.align or "left")
+            tab.set(f"{{{_W}}}pos", str(int(ts.position * 20)))
+            if ts.leader and ts.leader != "none":
+                tab.set(f"{{{_W}}}leader", ts.leader)
+
+    if fmt.bidi:
+        etree.SubElement(ppr, f"{{{_W}}}bidi")
 
 
 def _apply_cell_format(tcpr: etree._Element, fmt: object) -> None:
@@ -1519,6 +1971,79 @@ def _apply_cell_format(tcpr: etree._Element, fmt: object) -> None:
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
+
+
+def _wrap_in_bordered_table(elements: list[etree._Element], color: str) -> etree._Element:
+    """Wrap elements in a single-cell table with a colored border."""
+    color_val = _strip_hash(color)
+    tbl = etree.Element(f"{{{_W}}}tbl", nsmap=_NSMAP_DOC)
+    tpr = etree.SubElement(tbl, f"{{{_W}}}tblPr")
+    tbl_borders = etree.SubElement(tpr, f"{{{_W}}}tblBorders")
+    for side in ("top", "left", "bottom", "right"):
+        bdr = etree.SubElement(tbl_borders, f"{{{_W}}}{side}")
+        bdr.set(f"{{{_W}}}val", "single")
+        bdr.set(f"{{{_W}}}sz", "4")
+        bdr.set(f"{{{_W}}}space", "0")
+        bdr.set(f"{{{_W}}}color", color_val)
+    insideH = etree.SubElement(tbl_borders, f"{{{_W}}}insideH")
+    insideH.set(f"{{{_W}}}val", "none")
+    insideH.set(f"{{{_W}}}sz", "0")
+    insideH.set(f"{{{_W}}}space", "0")
+    insideH.set(f"{{{_W}}}color", "auto")
+    insideV = etree.SubElement(tbl_borders, f"{{{_W}}}insideV")
+    insideV.set(f"{{{_W}}}val", "none")
+    insideV.set(f"{{{_W}}}sz", "0")
+    insideV.set(f"{{{_W}}}space", "0")
+    insideV.set(f"{{{_W}}}color", "auto")
+    tbl_w = etree.SubElement(tpr, f"{{{_W}}}tblW")
+    tbl_w.set(f"{{{_W}}}w", "5000")
+    tbl_w.set(f"{{{_W}}}type", "pct")
+    tr = etree.SubElement(tbl, f"{{{_W}}}tr")
+    tc = etree.SubElement(tr, f"{{{_W}}}tc")
+    tcpr = etree.SubElement(tc, f"{{{_W}}}tcPr")
+    shd = etree.SubElement(tcpr, f"{{{_W}}}shd")
+    shd.set(f"{{{_W}}}val", "clear")
+    shd.set(f"{{{_W}}}color", "auto")
+    shd.set(f"{{{_W}}}fill", "FFFFFF")
+    for el in elements:
+        tc.append(el)
+    if not elements:
+        tc.append(_make_empty_paragraph())
+    return tbl
+
+
+def _fix_white_text_in_transparent_box(txbx_content: etree._Element) -> None:
+    """Change white text to black inside a textbox with no background fill."""
+    for color_el in txbx_content.findall(f".//{{{_W}}}color"):
+        val = (color_el.get(f"{{{_W}}}val") or "").upper()
+        if val in ("FFFFFF", "FFF"):
+            color_el.set(f"{{{_W}}}val", "000000")
+
+
+def _clip_x(x: float, w: float) -> float:
+    """Clip x so that x+w doesn't exceed page width."""
+    page_w = _page_content_width_twips / 20 + 170
+    if w > 0 and x + w > page_w:
+        x = max(0, page_w - w)
+    return x
+
+
+def _trim_trailing_empty_paragraphs(body: etree._Element) -> None:
+    """Remove trailing empty paragraphs from body, keeping at least one."""
+    children = list(body)
+    remove_from = len(children)
+    for i in range(len(children) - 1, -1, -1):
+        child = children[i]
+        if child.tag != f"{{{_W}}}p":
+            break
+        has_text = child.find(f".//{{{_W}}}t") is not None
+        has_drawing = child.find(f".//{{{_W}}}drawing") is not None
+        if has_text or has_drawing:
+            break
+        remove_from = i
+    keep_one = remove_from
+    for i in range(len(children) - 1, keep_one, -1):
+        body.remove(children[i])
 
 
 def _make_empty_paragraph() -> etree._Element:
@@ -1707,6 +2232,12 @@ def _serialize_section_def(sect: SectionDef) -> etree._Element:
 
     if sect.columns:
         _serialize_column_def(sect_pr, sect.columns)
+    else:
+        cols = etree.SubElement(sect_pr, f"{{{_W}}}cols")
+        cols.set(f"{{{_W}}}space", "425")
+
+    doc_grid = etree.SubElement(sect_pr, f"{{{_W}}}docGrid")
+    doc_grid.set(f"{{{_W}}}linePitch", "360")
 
     return sect_pr
 
@@ -1742,15 +2273,26 @@ _XSI = "http://www.w3.org/2001/XMLSchema-instance"
 
 
 def build_settings_xml() -> bytes:
-    """Generate a minimal word/settings.xml with compatibility mode 15.
-
-    Returns
-    -------
-    bytes
-        UTF-8 encoded XML bytes.
-    """
+    """Generate word/settings.xml with Korean compat and compatibility mode 15."""
     root = etree.Element(f"{{{_W}}}settings", nsmap={"w": _W})
+    ps = etree.SubElement(root, f"{{{_W}}}proofState")
+    ps.set(f"{{{_W}}}spelling", "clean")
+    ps.set(f"{{{_W}}}grammar", "clean")
+    etree.SubElement(root, f"{{{_W}}}doNotHyphenateCaps")
+    etree.SubElement(root, f"{{{_W}}}bordersDoNotSurroundHeader")
+    etree.SubElement(root, f"{{{_W}}}bordersDoNotSurroundFooter")
+    tab_stop = etree.SubElement(root, f"{{{_W}}}defaultTabStop")
+    tab_stop.set(f"{{{_W}}}val", "800")
+    csc = etree.SubElement(root, f"{{{_W}}}characterSpacingControl")
+    csc.set(f"{{{_W}}}val", "doNotCompress")
     compat = etree.SubElement(root, f"{{{_W}}}compat")
+    etree.SubElement(compat, f"{{{_W}}}spaceForUL")
+    etree.SubElement(compat, f"{{{_W}}}balanceSingleByteDoubleByteWidth")
+    etree.SubElement(compat, f"{{{_W}}}doNotLeaveBackslashAlone")
+    etree.SubElement(compat, f"{{{_W}}}ulTrailSpace")
+    etree.SubElement(compat, f"{{{_W}}}doNotExpandShiftReturn")
+    etree.SubElement(compat, f"{{{_W}}}adjustLineHeightInTable")
+    etree.SubElement(compat, f"{{{_W}}}useFELayout")
     cs = etree.SubElement(compat, f"{{{_W}}}compatSetting")
     cs.set(f"{{{_W}}}name", "compatibilityMode")
     cs.set(f"{{{_W}}}uri", "http://schemas.microsoft.com/office/word")

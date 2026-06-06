@@ -11,7 +11,9 @@ import base64
 import zipfile
 from io import BytesIO
 
+from udf.core.loss import collect_render_losses
 from udf.core.schema import (
+    FieldBlock,
     FooterBlock,
     FootnoteBlock,
     HeaderBlock,
@@ -91,10 +93,16 @@ def render_docx(
 
     has_content_change = _detect_content_changes(doc) if has_verbatim else False
 
-    if has_verbatim and has_container and not has_structural_change and not has_content_change:
-        _render_seed_patch(doc, output_path)
-    else:
+    is_from_scratch = not (has_verbatim and has_container and not has_structural_change and not has_content_change)
+
+    if is_from_scratch:
         _render_from_scratch(doc, output_path)
+    else:
+        _render_seed_patch(doc, output_path)
+
+    doc.loss_report = collect_render_losses(
+        doc, "docx", is_from_scratch=is_from_scratch,
+    )
 
 generate_docx = render_docx
 
@@ -125,6 +133,16 @@ def _render_seed_patch(doc: UdfDocument, output_path: str) -> None:
     _write_zip(output_path, original_entries)
 
 
+def _make_page_number_footer() -> FooterBlock:
+    import uuid
+    return FooterBlock(
+        id=str(uuid.uuid4()), type="footer",
+        content=[
+            FieldBlock(id=str(uuid.uuid4()), type="field", field_type="page_number"),
+        ],
+    )
+
+
 def _render_from_scratch(doc: UdfDocument, output_path: str) -> None:
     """From Scratch: Document Model에서 모든 XML을 생성."""
     entries: dict[str, bytes] = {}
@@ -142,6 +160,12 @@ def _render_from_scratch(doc: UdfDocument, output_path: str) -> None:
     headers = [b for b in doc.blocks if isinstance(b, HeaderBlock)]
     footers = [b for b in doc.blocks if isinstance(b, FooterBlock)]
     footnotes = [b for b in doc.blocks if isinstance(b, FootnoteBlock)]
+
+    if not footers and any(
+        isinstance(b, FieldBlock) and b.field_type == "page_number"
+        for b in doc.blocks
+    ):
+        footers = [_make_page_number_footer()]
 
     _REL_HDR = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"
     _REL_FTR = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"

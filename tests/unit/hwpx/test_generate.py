@@ -10,6 +10,7 @@ import pytest
 from udf.core.schema import (
     ColumnDef,
     DocumentMetadata,
+    DrawingBlock,
     EndnoteBlock,
     EquationInline,
     FootnoteRefInline,
@@ -691,3 +692,79 @@ class TestBlockTypeCoverageHwpx:
         ])
         xml = blocks_to_section_xml(doc.blocks, doc).decode("utf-8")
         assert "본문" in xml
+
+
+class TestHwpxLossReport:
+    def test_drawing_block_records_loss(self, tmp_path):
+        doc = UdfDocument(
+            source_format="hwpx",
+            blocks=[
+                ParagraphBlock(type="paragraph", id="b_0", inlines=[TextInline(text="text")]),
+                DrawingBlock(type="drawing", id="d_0"),
+            ],
+        )
+        out = str(tmp_path / "out.hwpx")
+        generate_hwpx(doc, out)
+        assert doc.loss_report is not None
+        assert any("drawing" in b.description for b in doc.loss_report.lossy_blocks)
+
+    def test_from_scratch_sets_loss_report(self, tmp_path):
+        doc = UdfDocument(
+            source_format="hwpx",
+            blocks=[
+                ParagraphBlock(type="paragraph", id="b_0", inlines=[TextInline(text="hello")]),
+            ],
+        )
+        out = str(tmp_path / "out.hwpx")
+        generate_hwpx(doc, out)
+        assert doc.loss_report is not None
+        assert doc.loss_report.total_blocks == 1
+
+
+class TestHwpxCharPrIDRef:
+    """Phase 15d: HWPX charPrIDRef 동적 생성 검증."""
+
+    def test_bold_inline_gets_unique_charpr(self):
+        doc = UdfDocument(
+            source_format="hwpx",
+            blocks=[
+                ParagraphBlock(type="paragraph", id="b1", inlines=[
+                    TextInline(text="normal"),
+                    TextInline(text="bold", bold=True),
+                ]),
+            ],
+        )
+        section_xml = blocks_to_section_xml(doc.blocks, doc).decode("utf-8")
+        header_xml = build_minimal_header_xml(doc).decode("utf-8")
+        assert "charPrIDRef" in section_xml
+        assert "charPr" in header_xml
+        assert "bold" in header_xml.lower() or "fontBold" in header_xml
+
+    def test_multiple_styles_create_multiple_charpr(self):
+        doc = UdfDocument(
+            source_format="hwpx",
+            blocks=[
+                ParagraphBlock(type="paragraph", id="b1", inlines=[
+                    TextInline(text="plain"),
+                    TextInline(text="bold", bold=True),
+                    TextInline(text="italic", italic=True),
+                    TextInline(text="both", bold=True, italic=True),
+                ]),
+            ],
+        )
+        blocks_to_section_xml(doc.blocks, doc)
+        header_xml = build_minimal_header_xml(doc).decode("utf-8")
+        assert header_xml.count("charPr ") >= 3  # default + bold + italic + both
+
+    def test_colored_inline_in_header(self):
+        doc = UdfDocument(
+            source_format="hwpx",
+            blocks=[
+                ParagraphBlock(type="paragraph", id="b1", inlines=[
+                    TextInline(text="red text", color="#ff0000"),
+                ]),
+            ],
+        )
+        blocks_to_section_xml(doc.blocks, doc)
+        header_xml = build_minimal_header_xml(doc).decode("utf-8")
+        assert "textColor" in header_xml

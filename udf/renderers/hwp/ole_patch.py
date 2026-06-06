@@ -52,6 +52,14 @@ def _read_fat(raw: bytes, sector_size: int) -> list[int]:
     return fat
 
 
+def _normalize_fat(fat: list[int], raw_len: int, sector_size: int) -> None:
+    """FAT 끝 미사용 항목을 FREESECT로 정규화 (인메모리 전용)."""
+    total_sectors = (raw_len - 512) // sector_size
+    for i in range(total_sectors, len(fat)):
+        if fat[i] != _FREESECT:
+            fat[i] = _FREESECT
+
+
 def _read_chain(fat: list[int], start: int) -> list[int]:
     """Follow a FAT chain from start sector to end-of-chain."""
     chain: list[int] = []
@@ -135,6 +143,9 @@ def _normalize_mfat(mfat: list[int], entries: list[bytearray], mini_cutoff: int)
     일부 HWP 파일은 unused miniFAT 슬롯에 0 대신 FREESECT를 쓰지 않아
     'mini sector 0 pointed to twice' 오류가 발생한다. 이를 방지하기 위해
     모든 스트림의 체인을 순회해 사용 중인 미니섹터를 파악하고 나머지를 FREESECT로 설정.
+
+    주의: 이 정규화는 인메모리 전용이며, 파일에 쓸 때 원본 패딩을 복원해야 한다.
+    한컴은 unused 슬롯이 0x00000000인 것을 기대한다 (BUG-072).
     """
     used: set[int] = set()
     for entry in entries:
@@ -174,7 +185,8 @@ def _alloc_sector(raw: bytearray, fat: list[int], sector_size: int = 512) -> int
     """파일 끝에 새 섹터를 추가하고 인덱스 반환. 반드시 이 함수로만 섹터 확보 (함정 8)."""
     new_sid = (len(raw) - 512) // sector_size
     raw += b"\x00" * sector_size
-    fat.append(_FREESECT)
+    while len(fat) <= new_sid:
+        fat.append(_FREESECT)
     return new_sid
 
 
@@ -184,8 +196,14 @@ def _write_minifat(
     minifat_start: int,
     mfat: list[int],
     sector_size: int,
+    *,
+    original_mfat: list[int] | None = None,
 ) -> None:
-    """Write the mini FAT back to its sector chain."""
+    """Write the mini FAT back to its sector chain.
+
+    original_mfat이 주어지면, 인메모리 정규화(0→FREESECT)를 되돌려
+    원본 패딩을 보존한다. 한컴은 unused 슬롯이 0이길 기대한다.
+    """
     count = sector_size // 4
     needed = max(1, -(-len(mfat) // count))
     current_chain = _read_chain(fat, minifat_start)
@@ -200,15 +218,28 @@ def _write_minifat(
         off = 512 + sid * sector_size
         for j in range(count):
             fidx = chunk_i * count + j
-            val = mfat[fidx] if fidx < len(mfat) else _FREESECT
+            if fidx < len(mfat):
+                val = mfat[fidx]
+                if original_mfat and fidx < len(original_mfat) and val == _FREESECT and original_mfat[fidx] == 0:
+                    val = 0
+            else:
+                val = 0
             struct.pack_into("<I", raw, off + j * 4, val)
 
 
-def _write_fat(raw: bytearray, fat: list[int], sector_size: int) -> None:
+def _write_fat(
+    raw: bytearray,
+    fat: list[int],
+    sector_size: int,
+    *,
+    original_fat: list[int] | None = None,
+) -> None:
     """Write the FAT back to all FAT sectors in the raw file.
 
     Reads existing FAT sector IDs from both the header DIFAT (109 slots)
     and any DIFAT extension sectors, so large files (>~7MB) are handled.
+
+    original_fat이 주어지면, 정규화(0→FREESECT)를 되돌려 원본 패딩을 보존.
     """
     n_fat_existing = struct.unpack_from("<I", raw, 44)[0]
     difat_start = struct.unpack_from("<I", raw, 68)[0]
@@ -238,7 +269,9 @@ def _write_fat(raw: bytearray, fat: list[int], sector_size: int) -> None:
         needed = max(1, -(-len(fat) // count))
         new_sid = (len(raw) - 512) // sector_size
         raw += b"\x00" * sector_size
-        fat.append(_FATSECT)
+        while len(fat) <= new_sid:
+            fat.append(_FREESECT)
+        fat[new_sid] = _FATSECT
         fat_sids.append(new_sid)
         n_fat = len(fat_sids)
         struct.pack_into("<I", raw, 44, n_fat)
@@ -252,7 +285,9 @@ def _write_fat(raw: bytearray, fat: list[int], sector_size: int) -> None:
             while len(difat_chain) <= difat_idx:
                 ds = (len(raw) - 512) // sector_size
                 raw += b"\xff" * sector_size
-                fat.append(_DIFSECT)
+                while len(fat) <= ds:
+                    fat.append(_FREESECT)
+                fat[ds] = _DIFSECT
                 if difat_chain:
                     prev_off = 512 + difat_chain[-1] * sector_size
                     struct.pack_into("<I", raw, prev_off + sector_size - 4, ds)
@@ -270,7 +305,12 @@ def _write_fat(raw: bytearray, fat: list[int], sector_size: int) -> None:
         off = 512 + sid * sector_size
         for j in range(count):
             fidx = chunk_i * count + j
-            val = fat[fidx] if fidx < len(fat) else _FREESECT
+            if fidx < len(fat):
+                val = fat[fidx]
+                if original_fat and fidx < len(original_fat) and val == _FREESECT and original_fat[fidx] == 0:
+                    val = 0
+            else:
+                val = 0
             struct.pack_into("<I", raw, off + j * 4, val)
 
 
@@ -287,6 +327,116 @@ def _write_dir(
         off = 512 + sid * sector_size
         chunk = dir_data[chunk_i * sector_size : (chunk_i + 1) * sector_size]
         raw[off : off + sector_size] = chunk.ljust(sector_size, b"\x00")
+
+
+# ---------------------------------------------------------------------------
+# Mini-stream 압축
+# ---------------------------------------------------------------------------
+
+
+def _compact_ministream(
+    raw: bytearray,
+    fat: list[int],
+    mfat: list[int],
+    entries: list[bytearray],
+    promoted_idx: int,
+    freed_set: set[int],
+    minifat_start: int,
+    sector_size: int,
+    mini_sector_size: int,
+    mini_cutoff: int,
+    *,
+    original_mfat: list[int] | None = None,
+) -> None:
+    """해제된 미니섹터를 제거하고 후속 섹터를 앞으로 당겨 홀을 없앤다.
+
+    한컴 HWP는 miniFAT에 FREESECT 홀이 있으면 파일을 손상으로 판정한다.
+    승격된 스트림의 미니섹터를 해제한 뒤 반드시 이 함수를 호출해야 한다.
+    """
+    root_entry = entries[0]
+    root_start = struct.unpack_from("<I", root_entry, 116)[0]
+    root_chain = _read_chain(fat, root_start)
+    mspb = sector_size // mini_sector_size
+
+    # 1) 현재 사용 중인 미니섹터 수집 (승격 대상 제외)
+    max_used = -1
+    for ei, e in enumerate(entries):
+        if ei == promoted_idx:
+            continue
+        typ = e[66]
+        sz = struct.unpack_from("<I", e, 120)[0]
+        st = struct.unpack_from("<I", e, 116)[0]
+        if typ == 2 and 0 < sz < mini_cutoff and st < _ENDOFCHAIN:
+            chain = _read_chain(mfat, st)
+            for ms in chain:
+                if ms > max_used:
+                    max_used = ms
+
+    if max_used < 0:
+        struct.pack_into("<I", root_entry, 120, 0)
+        _write_minifat(raw, fat, minifat_start, mfat, sector_size, original_mfat=original_mfat)
+        return
+
+    # 2) 리매핑 테이블 구축: 해제 대상을 건너뛰고 연속 배치
+    remap: dict[int, int] = {}
+    new_pos = 0
+    for old_pos in range(max_used + 1):
+        if old_pos in freed_set:
+            continue
+        remap[old_pos] = new_pos
+        new_pos += 1
+
+    if not any(old != new for old, new in remap.items()):
+        # 리매핑 불필요 (해제된 섹터가 끝에 있었음)
+        for ms in freed_set:
+            if ms < len(mfat):
+                mfat[ms] = 0
+        new_root_size = (max_used + 1 - len(freed_set)) * mini_sector_size
+        struct.pack_into("<I", root_entry, 120, new_root_size)
+        _write_minifat(raw, fat, minifat_start, mfat, sector_size, original_mfat=original_mfat)
+        return
+
+    # 3) 미니섹터 데이터 이동 (임시 버퍼 사용)
+    mini_data: dict[int, bytes] = {}
+    for old_ms in remap:
+        sec_idx = old_ms // mspb
+        sec_off = (old_ms % mspb) * mini_sector_size
+        if sec_idx < len(root_chain):
+            base = 512 + root_chain[sec_idx] * sector_size + sec_off
+            mini_data[old_ms] = bytes(raw[base : base + mini_sector_size])
+
+    for old_ms, new_ms in remap.items():
+        if old_ms == new_ms:
+            continue
+        data = mini_data.get(old_ms, b"\x00" * mini_sector_size)
+        sec_idx = new_ms // mspb
+        sec_off = (new_ms % mspb) * mini_sector_size
+        if sec_idx < len(root_chain):
+            base = 512 + root_chain[sec_idx] * sector_size + sec_off
+            raw[base : base + mini_sector_size] = data
+
+    # 4) miniFAT 체인 재구축
+    new_mfat = [0] * len(mfat)
+    for ei, e in enumerate(entries):
+        if ei == promoted_idx:
+            continue
+        typ = e[66]
+        sz = struct.unpack_from("<I", e, 120)[0]
+        st = struct.unpack_from("<I", e, 116)[0]
+        if typ == 2 and 0 < sz < mini_cutoff and st < _ENDOFCHAIN:
+            old_chain = _read_chain(mfat, st)
+            new_chain = [remap[ms] for ms in old_chain if ms in remap]
+            if new_chain:
+                struct.pack_into("<I", e, 116, new_chain[0])
+                for i, ms in enumerate(new_chain):
+                    new_mfat[ms] = new_chain[i + 1] if i < len(new_chain) - 1 else _ENDOFCHAIN
+    mfat[:] = new_mfat
+
+    # 5) root entry size 축소
+    new_root_size = new_pos * mini_sector_size
+    struct.pack_into("<I", root_entry, 120, new_root_size)
+
+    _write_minifat(raw, fat, minifat_start, mfat, sector_size, original_mfat=original_mfat)
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +481,8 @@ def patch_hwp_stream(
     minifat_start = struct.unpack_from("<I", raw, 60)[0]
 
     fat = _read_fat(bytes(raw), sector_size)
+    original_fat = list(fat)
+    _normalize_fat(fat, len(raw), sector_size)
     entries = _dir_entries(bytes(raw), fat, dir_start, sector_size)
 
     idx = _find_stream(entries, stream_path)
@@ -341,16 +493,17 @@ def patch_hwp_stream(
     old_start = struct.unpack_from("<I", entry, 116)[0]
     old_size = struct.unpack_from("<I", entry, 120)[0]
 
+    original_mfat: list[int] | None = None
+
     if old_size < mini_cutoff and len(new_content) >= mini_cutoff:
         # mini → regular 승격
         mfat = _read_minifat(bytes(raw), fat, minifat_start, sector_size)
+        original_mfat = list(mfat)
         _normalize_mfat(mfat, entries, mini_cutoff)
         old_mini_chain = _read_chain(mfat, old_start)
-        for ms in old_mini_chain:
-            if ms < len(mfat):
-                mfat[ms] = _FREESECT
-        _write_minifat(raw, fat, minifat_start, mfat, sector_size)
+        freed_set = set(old_mini_chain)
 
+        # 새 regular 섹터에 데이터 기록
         n_new = max(1, -(-len(new_content) // sector_size))
         used: list[int] = []
         for _ in range(n_new):
@@ -364,6 +517,14 @@ def patch_hwp_stream(
         struct.pack_into("<I", entry, 116, used[0])
         struct.pack_into("<I", entry, 120, len(new_content))
 
+        # mini-stream 압축: 해제된 미니섹터를 제거하고 후속 섹터를 당겨
+        # FREESECT 홀을 없앤다. 홀이 있으면 한컴이 손상으로 판정.
+        _compact_ministream(
+            raw, fat, mfat, entries, idx, freed_set,
+            minifat_start, sector_size, mini_sector_size, mini_cutoff,
+            original_mfat=original_mfat,
+        )
+
     elif old_size >= mini_cutoff and len(new_content) < mini_cutoff:
         # regular → mini 강등
         old_chain = _read_chain(fat, old_start)
@@ -372,6 +533,7 @@ def patch_hwp_stream(
                 fat[sid] = _FREESECT
 
         mfat = _read_minifat(bytes(raw), fat, minifat_start, sector_size)
+        original_mfat = list(mfat)
         _normalize_mfat(mfat, entries, mini_cutoff)
         root_entry = entries[0]
         root_start = struct.unpack_from("<I", root_entry, 116)[0]
@@ -425,11 +587,12 @@ def patch_hwp_stream(
             )
         struct.pack_into("<I", entry, 116, used_ms[0])
         struct.pack_into("<I", entry, 120, len(new_content))
-        _write_minifat(raw, fat, minifat_start, mfat, sector_size)
+        _write_minifat(raw, fat, minifat_start, mfat, sector_size, original_mfat=original_mfat)
 
     elif old_size < mini_cutoff:
         # mini stream
         mfat = _read_minifat(bytes(raw), fat, minifat_start, sector_size)
+        original_mfat = list(mfat)
         _normalize_mfat(mfat, entries, mini_cutoff)
         root_entry = entries[0]
         root_start = struct.unpack_from("<I", root_entry, 116)[0]
@@ -496,7 +659,7 @@ def patch_hwp_stream(
             raw[off : off + mini_sector_size] = chunk.ljust(mini_sector_size, b"\x00")
         struct.pack_into("<I", entry, 116, used_ms[0])
         struct.pack_into("<I", entry, 120, len(new_content))
-        _write_minifat(raw, fat, minifat_start, mfat, sector_size)
+        _write_minifat(raw, fat, minifat_start, mfat, sector_size, original_mfat=original_mfat)
 
     else:
         # regular stream
@@ -532,7 +695,7 @@ def patch_hwp_stream(
         struct.pack_into("<I", entry, 116, used[0])
         struct.pack_into("<I", entry, 120, len(new_content))
 
-    _write_fat(raw, fat, sector_size)
+    _write_fat(raw, fat, sector_size, original_fat=original_fat)
     _write_dir(raw, fat, entries, dir_start, sector_size)
 
     with open(output_path, "wb") as f:
@@ -571,7 +734,7 @@ def _find_or_create_storage(
             return found
 
     new_idx = len(entries)
-    new_entry = _create_dir_entry(name, 1, _ENDOFCHAIN, 0)
+    new_entry = _create_dir_entry(name, 1, 0, 0)
     entries.append(new_entry)
 
     if child_id == _NOSTREAM or child_id >= len(entries) - 1:
@@ -636,6 +799,8 @@ def add_hwp_stream(
     minifat_start = struct.unpack_from("<I", raw, 60)[0]
 
     fat = _read_fat(bytes(raw), sector_size)
+    original_fat = list(fat)
+    _normalize_fat(fat, len(raw), sector_size)
     entries = _dir_entries(bytes(raw), fat, dir_start, sector_size)
 
     # 이미 존재하면 patch로 대체
@@ -657,6 +822,7 @@ def add_hwp_stream(
     if len(content) < mini_cutoff:
         # mini stream 할당
         mfat = _read_minifat(bytes(raw), fat, minifat_start, sector_size)
+        original_mfat = list(mfat)
         _normalize_mfat(mfat, entries, mini_cutoff)
         root_entry = entries[0]
         root_start = struct.unpack_from("<I", root_entry, 116)[0]
@@ -708,7 +874,7 @@ def add_hwp_stream(
             raw[off : off + mini_sector_size] = chunk.ljust(mini_sector_size, b"\x00")
 
         start_sector = used_ms[0]
-        _write_minifat(raw, fat, minifat_start, mfat, sector_size)
+        _write_minifat(raw, fat, minifat_start, mfat, sector_size, original_mfat=original_mfat)
     else:
         # regular stream 할당
         n_sectors = max(1, -(-len(content) // sector_size))
@@ -748,7 +914,7 @@ def add_hwp_stream(
         dir_chain.append(new_sid)
         dir_capacity += sector_size
 
-    _write_fat(raw, fat, sector_size)
+    _write_fat(raw, fat, sector_size, original_fat=original_fat)
     _write_dir(raw, fat, entries, dir_start, sector_size)
 
     with open(file_path, "wb") as f:

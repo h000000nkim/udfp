@@ -7,12 +7,15 @@ from typing import Any
 
 from lxml import etree
 
+from udf.parsers.docx.omml_to_latex import omml_to_latex
+
 _HUGE_PARSER = etree.XMLParser(huge_tree=True)
 _RECOVER_PARSER = etree.XMLParser(huge_tree=True, recover=True)
 
 from udf.core.ids import make_block_id, make_verbatim_id  # noqa: E402
 from udf.schema import (  # noqa: E402
     Block,
+    BlockFormat,
     CellFormat,
     EndnoteBlock,
     EquationBlock,
@@ -102,6 +105,16 @@ def parse_document_body(
         tag = _local_tag(el)
 
         if tag == "p":
+            omath_para_child = el.find(f"{{{_M}}}oMathPara")
+            if omath_para_child is not None:
+                if list_acc:
+                    blocks.append(_flush_list(list_acc, style_info))
+                    list_acc = []
+                eq = _parse_omath_para(omath_para_child)
+                if eq is not None:
+                    blocks.append(eq)
+                continue
+
             result, has_page_break, img_blocks = _parse_paragraph(el, style_info, verbatim_map)
 
             num_id, ilvl = _get_num_props(el)
@@ -167,11 +180,11 @@ def parse_document_body(
             if list_acc:
                 blocks.append(_flush_list(list_acc, style_info))
                 list_acc = []
-            text = _collect_omath_text(el)
+            latex = omml_to_latex(el) or _collect_omath_text(el)
             blocks.append(EquationBlock(
                 type="equation",
                 id=_next_id(),
-                latex=text if text else None,
+                latex=latex if latex else None,
                 display=True,
             ))
 
@@ -367,6 +380,35 @@ def extract_section_props(doc_bytes: bytes) -> dict[str, str]:
     return result
 
 
+def _apply_style_defaults(
+    fmt: BlockFormat | None,
+    ppr: etree._Element | None,
+    style_info: StyleInfo,
+) -> BlockFormat | None:
+    """Merge style-level format into paragraph format as defaults."""
+    style_fmt: BlockFormat | None = None
+    if ppr is not None:
+        style_el = ppr.find("w:pStyle", NS)
+        if style_el is not None:
+            style_id = style_el.get(f"{{{_W}}}val", "")
+            sdef = style_info.paragraph_styles.get(style_id)
+            if sdef and sdef.format:
+                style_fmt = sdef.format
+    if style_fmt is None:
+        style_fmt = style_info.default_para_format
+    if style_fmt is None:
+        return fmt
+    if fmt is None:
+        return style_fmt
+    updates: dict[str, Any] = {}
+    for field_name in ("line_spacing", "space_before", "space_after"):
+        if getattr(fmt, field_name) is None and getattr(style_fmt, field_name) is not None:
+            updates[field_name] = getattr(style_fmt, field_name)
+    if not updates:
+        return fmt
+    return fmt.model_copy(update=updates)
+
+
 # ---------------------------------------------------------------------------
 # 단락
 # ---------------------------------------------------------------------------
@@ -391,6 +433,7 @@ def _parse_paragraph(
 
     ppr = p_el.find("w:pPr", NS)
     fmt = _parse_ppr(ppr) if ppr is not None else None
+    fmt = _apply_style_defaults(fmt, ppr, style_info)
 
     raw = base64.b64encode(etree.tostring(p_el, encoding="unicode").encode("utf-8")).decode()
     verbatim_map[vref] = VerbatimBlock(raw_bytes=raw)
@@ -603,8 +646,9 @@ def _parse_drawing(
         for child in txbx_content:
             tag = _local_tag(child)
             if tag == "p":
-                pb, _, _ = _parse_paragraph(child, style_info, {})
+                pb, _, img_blocks = _parse_paragraph(child, style_info, {})
                 content.append(pb)
+                content.extend(img_blocks)
             elif tag == "tbl":
                 tbl = _parse_table(child, style_info, {})
                 if tbl is not None:
@@ -930,8 +974,9 @@ def _parse_cell_content(
     for child in tc_el:
         tag = _local_tag(child)
         if tag == "p":
-            pb, has_page_break, _ = _parse_paragraph(child, style_info, verbatim_map)
+            pb, has_page_break, img_blocks = _parse_paragraph(child, style_info, verbatim_map)
             content.append(pb)
+            content.extend(img_blocks)
             if has_page_break:
                 content.append(PageBreakBlock(
                     type="page_break",
@@ -1107,16 +1152,22 @@ def _collect_omath_text(omath_el: etree._Element) -> str:
 
 def _parse_omath_inline(omath_el: etree._Element) -> EquationInline | None:
     """m:oMath → EquationInline."""
-    text = _collect_omath_text(omath_el)
-    return EquationInline(latex=text if text else None)
+    latex = omml_to_latex(omath_el)
+    if not latex:
+        latex = _collect_omath_text(omath_el)
+    return EquationInline(latex=latex if latex else None)
 
 
 def _parse_omath_para(omath_para_el: etree._Element) -> EquationBlock | None:
     """m:oMathPara → EquationBlock (display equation)."""
-    texts: list[str] = []
-    for omath in omath_para_el.iter(f"{{{_M}}}oMath"):
-        texts.append(_collect_omath_text(omath))
-    text = "".join(texts)
+    parts: list[str] = []
+    for omath in omath_para_el.findall(f"{{{_M}}}oMath"):
+        latex = omml_to_latex(omath)
+        if not latex:
+            latex = _collect_omath_text(omath)
+        if latex:
+            parts.append(latex)
+    text = "".join(parts)
     return EquationBlock(
         type="equation",
         id=_next_id(),
@@ -1237,8 +1288,9 @@ def parse_header_xml(
     _resolve_alternate_content(root)
     content: list[Block] = []
     for p in root.findall("w:p", NS):
-        pb, _, _ = _parse_paragraph(p, style_info, {})
+        pb, _, img_blocks = _parse_paragraph(p, style_info, {})
         content.append(pb)
+        content.extend(img_blocks)
     for tbl in root.findall("w:tbl", NS):
         tb = _parse_table(tbl, style_info, {})
         if tb is not None:
@@ -1276,8 +1328,9 @@ def parse_footer_xml(
     _resolve_alternate_content(root)
     content: list[Block] = []
     for p in root.findall("w:p", NS):
-        pb, _, _ = _parse_paragraph(p, style_info, {})
+        pb, _, img_blocks = _parse_paragraph(p, style_info, {})
         content.append(pb)
+        content.extend(img_blocks)
     for tbl in root.findall("w:tbl", NS):
         tb = _parse_table(tbl, style_info, {})
         if tb is not None:

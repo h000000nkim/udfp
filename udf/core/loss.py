@@ -102,6 +102,37 @@ def user_edited_loss(block_id: str, description: str) -> BlockLoss:
     )
 
 
+_UNSUPPORTED_BLOCKS: dict[str, set[str]] = {
+    "docx": {"drawing"},
+    "hwpx": {"drawing", "footnote", "endnote"},
+    "md": {"drawing", "textart", "chart"},
+    "html": {"drawing", "textart", "chart"},
+}
+
+
+def collect_render_losses(
+    doc: "UdfDocument",
+    target_fmt: str,
+    *,
+    is_from_scratch: bool = False,
+) -> "LossReport":
+    lossy: list[BlockLoss] = []
+    unsupported = _UNSUPPORTED_BLOCKS.get(target_fmt, set())
+
+    for block in doc.blocks:
+        bid = getattr(block, "id", "unknown")
+        btype = getattr(block, "type", type(block).__name__)
+
+        if btype in unsupported:
+            lossy.append(format_limit_loss(
+                bid, f"{btype}: not_supported_in_{target_fmt}",
+            ))
+        elif is_from_scratch and not getattr(block, "verbatim_ref", None):
+            lossy.append(format_limit_loss(bid, "verbatim_lost"))
+
+    return build_loss_report(doc, lossy)
+
+
 def _extract_para_text(blk: "ParagraphBlock") -> str:
     """Extract concatenated plain text from a paragraph's text inlines."""
     from udf.core.schema import TextInline as _TI

@@ -14,12 +14,14 @@ from typing import Any
 from udf.core.schema import (
     Block,
     ChartBlock,
+    CodeBlock,
     DrawingBlock,
     EquationBlock,
     EquationInline,
     FieldBlock,
     FootnoteBlock,
     FootnoteRefInline,
+    FooterBlock,
     HeaderBlock,
     HeadingBlock,
     HorizontalRuleBlock,
@@ -342,20 +344,31 @@ def render_html(
     """
     bindata = (doc.verbatim.bindata_streams if doc.verbatim else {}) or {}
 
+    def _find_key(name: str) -> str | None:
+        if name in bindata:
+            return name
+        for key in bindata:
+            if key.rsplit(".", 1)[0] == name:
+                return key
+        return None
+
     def resolve_src(src: str) -> str:
         """Resolve bindata: URIs to file paths or data URIs."""
         if not src.startswith("bindata:"):
             return src
         name = src[len("bindata:"):]
-        if embed_images and name in bindata:
-            ext = name.rsplit(".", 1)[-1].lower()
+        key = _find_key(name)
+        if key is None:
+            return f"{image_dir}/{name}"
+        if embed_images:
+            ext = key.rsplit(".", 1)[-1].lower()
             mime = {
                 "jpg": "image/jpeg", "jpeg": "image/jpeg",
                 "png": "image/png", "gif": "image/gif",
                 "bmp": "image/bmp",
             }.get(ext, "image/jpeg")
-            return f"data:{mime};base64,{bindata[name]}"
-        return f"{image_dir}/{name}"
+            return f"data:{mime};base64,{bindata[key]}"
+        return f"{image_dir}/{key}"
 
     pw, ph, mt, mb, ml, mr = _extract_page_dims(doc)
     cw = pw - ml - mr
@@ -1306,7 +1319,12 @@ def _para_style(block: Block) -> str:
     return ";".join(parts)
 
 
-def _render_inlines_html(inlines: list[Any], ctx: _HtmlCtx | None = None) -> str:
+def _render_inlines_html(
+    inlines: list[Any],
+    ctx: _HtmlCtx | None = None,
+    *,
+    resolve_src: Any = None,
+) -> str:
     """인라인을 HTML로 렌더링. ctx가 있으면 font-size/font-family도 적용."""
     merged = _merge_adjacent_inlines(inlines)
     rich = ctx is not None
@@ -1338,7 +1356,7 @@ def _render_inlines_html(inlines: list[Any], ctx: _HtmlCtx | None = None) -> str
                 if hasattr(il, "background_color") and il.background_color:
                     span_styles.append(f"background:{il.background_color}")
                 if hasattr(il, "letter_spacing") and il.letter_spacing:
-                    span_styles.append(f"letter-spacing:{_to_css_val(il.letter_spacing)}")
+                    span_styles.append(f"letter-spacing:{il.letter_spacing / 100}em")
                 if span_styles:
                     ss = ";".join(span_styles)
                     text = f'<span style="{ss}">{text}</span>'
@@ -1347,7 +1365,12 @@ def _render_inlines_html(inlines: list[Any], ctx: _HtmlCtx | None = None) -> str
             parts.append(f'<a href="{_escape_html(il.url)}">{_escape_html(il.text)}</a>')
         elif isinstance(il, ImageInline):
             alt = _escape_html(il.alt or "")
-            parts.append(f'<img src="{_escape_html(il.src)}" alt="{alt}" style="max-height:1.2em;vertical-align:middle">')
+            src = il.src or ""
+            if resolve_src:
+                src = resolve_src(src)
+            elif ctx and hasattr(ctx, "resolve_src"):
+                src = ctx.resolve_src(src)
+            parts.append(f'<img src="{_escape_html(src)}" alt="{alt}" style="max-height:1.2em;vertical-align:middle">')
         elif isinstance(il, EquationInline):
             latex = il.latex or il.hwp_script or ""
             parts.append(f"\\({_escape_html(latex)}\\)")
@@ -1496,7 +1519,12 @@ def _render_cell_content_html(cell: TableCell, ctx: _HtmlCtx) -> str:
 # ---------------------------------------------------------------------------
 
 
-def render_md(doc: UdfDocument, *, embed_ids: bool = False) -> str:
+def render_md(
+    doc: UdfDocument,
+    *,
+    embed_ids: bool = False,
+    output_path: str | None = None,
+) -> str:
     """Render a UdfDocument to a GFM Markdown string.
 
     Parameters
@@ -1506,13 +1534,29 @@ def render_md(doc: UdfDocument, *, embed_ids: bool = False) -> str:
     embed_ids : bool, default False
         If True, emit ``<!-- id: blk-xxx -->`` comments before each
         block for round-trip ID preservation.
+    output_path : str, optional
+        When provided, images are extracted to ``{stem}_images/``
+        alongside the MD file instead of being inlined as base64.
 
     Returns
     -------
     str
         GFM Markdown text with a trailing newline.
     """
-    ctx = _MdCtx(embed_ids=embed_ids)
+    import os
+
+    bindata = (doc.verbatim.bindata_streams if doc.verbatim else None) or None
+    image_dir: str | None = None
+    if output_path:
+        has_images = bindata or any(
+            b.type == "image" and hasattr(b, "src") and b.src
+            and b.src.startswith("data:")
+            for b in doc.blocks
+        )
+        if has_images:
+            stem = os.path.splitext(output_path)[0]
+            image_dir = f"{stem}_images"
+    ctx = _MdCtx(embed_ids=embed_ids, bindata=bindata, image_dir=image_dir)
     parts: list[str] = []
     for block in doc.blocks:
         rendered = _render_block_md(block, ctx)
@@ -1522,9 +1566,79 @@ def render_md(doc: UdfDocument, *, embed_ids: bool = False) -> str:
 
 
 class _MdCtx:
-    def __init__(self, *, embed_ids: bool) -> None:
+    def __init__(
+        self,
+        *,
+        embed_ids: bool,
+        bindata: dict[str, str] | None = None,
+        image_dir: str | None = None,
+    ) -> None:
         """Initialize Markdown rendering context."""
         self.embed_ids = embed_ids
+        self._bindata = bindata or {}
+        self._image_dir = image_dir
+        self._image_rel_dir: str | None = None
+        if image_dir:
+            import os
+            self._image_rel_dir = os.path.basename(image_dir)
+
+    def _find_bindata_key(self, name: str) -> str | None:
+        """Find bindata key, trying exact match then extension fallback."""
+        if name in self._bindata:
+            return name
+        for key in self._bindata:
+            if key.rsplit(".", 1)[0] == name:
+                return key
+        return None
+
+    def resolve_src(self, src: str) -> str:
+        if self._image_dir and src.startswith("data:"):
+            return self._extract_data_uri(src)
+        if not src.startswith("bindata:"):
+            return src
+        name = src[len("bindata:"):]
+        key = self._find_bindata_key(name)
+        if key is None:
+            return src
+        if self._image_dir:
+            return self._extract_bindata(key)
+        ext = key.rsplit(".", 1)[-1].lower()
+        mime = {
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "gif": "image/gif",
+            "bmp": "image/bmp",
+        }.get(ext, "image/jpeg")
+        return f"data:{mime};base64,{self._bindata[key]}"
+
+    def _extract_data_uri(self, data_uri: str) -> str:
+        import base64
+        import os
+        os.makedirs(self._image_dir, exist_ok=True)
+        header, _, b64data = data_uri.partition(",")
+        ext = "png"
+        if "jpeg" in header or "jpg" in header:
+            ext = "jpg"
+        elif "gif" in header:
+            ext = "gif"
+        elif "bmp" in header:
+            ext = "bmp"
+        if not hasattr(self, "_img_counter"):
+            self._img_counter = 0
+        self._img_counter += 1
+        name = f"image_{self._img_counter:03d}.{ext}"
+        img_path = os.path.join(self._image_dir, name)
+        with open(img_path, "wb") as f:
+            f.write(base64.b64decode(b64data))
+        return f"{self._image_rel_dir}/{name}"
+
+    def _extract_bindata(self, name: str) -> str:
+        import base64
+        import os
+        os.makedirs(self._image_dir, exist_ok=True)
+        img_path = os.path.join(self._image_dir, name)
+        with open(img_path, "wb") as f:
+            f.write(base64.b64decode(self._bindata[name]))
+        return f"{self._image_rel_dir}/{name}"
 
 
 # For backwards compat with any code using _Context
@@ -1537,25 +1651,42 @@ def _render_block_md(block: Block, ctx: _MdCtx) -> str | None:
         f"<!-- id: {block.id} -->\n" if ctx.embed_ids and hasattr(block, "id") else ""
     )
     if isinstance(block, ParagraphBlock):
-        inline_text = _render_inlines_md(block.inlines).lstrip()
+        inline_text = _render_inlines_md(block.inlines, ctx).lstrip()
         if not inline_text:
             return id_comment + "" if id_comment else None
+        fmt = getattr(block, "format", None)
+        bg = getattr(fmt, "background_color", None) if fmt else None
+        if bg and str(bg).lower() not in ("#ffffff", "white", ""):
+            return id_comment + f'<p style="background:{bg};padding:4px">{inline_text}</p>'
         return id_comment + _escape_line_start(inline_text)
     if isinstance(block, HeadingBlock):
         prefix = "#" * max(1, min(6, block.level))
+        fmt = getattr(block, "format", None)
+        bg = getattr(fmt, "background_color", None) if fmt else None
+        if bg and str(bg).lower() not in ("#ffffff", "white", ""):
+            heading_text = _render_inlines_md(block.inlines, ctx) if hasattr(block, "inlines") and block.inlines else _escape_html(block.text)
+            return id_comment + f'<h{block.level} style="background:{bg};padding:4px">{heading_text}</h{block.level}>'
         return id_comment + f"{prefix} {_escape_md(block.text)}"
     if isinstance(block, TableBlock):
         return id_comment + _render_table_md(block, ctx)
     if isinstance(block, ListBlock):
         return id_comment + _render_list_md(block, ctx)
     if isinstance(block, ImageBlock):
-        alt = block.alt or ""
-        return id_comment + f"![{_escape_md(alt)}]({block.src})"
+        alt = _escape_html(block.alt or "")
+        src = ctx.resolve_src(block.src) if block.src else ""
+        style = "max-width:100%"
+        if block.position and block.position.width:
+            w = block.position.width
+            style = f"max-width:100%;width:{w:.0f}pt"
+        return id_comment + f'<img src="{src}" alt="{alt}" style="{style}">'
     if isinstance(block, FootnoteBlock):
         inner = "\n".join(
             p for p in (_render_block_md(b, ctx) or "" for b in block.content) if p
         )
         return id_comment + f"[^{block.ref}]: {inner}"
+    if isinstance(block, CodeBlock):
+        lang = block.language or ""
+        return id_comment + f"```{lang}\n{block.code}\n```"
     if isinstance(block, EquationBlock):
         if block.latex:
             return id_comment + f"$$\n{block.latex}\n$$"
@@ -1564,12 +1695,64 @@ def _render_block_md(block: Block, ctx: _MdCtx) -> str | None:
         return id_comment + "<!-- unsupported: equation -->"
     if isinstance(block, HorizontalRuleBlock):
         return id_comment + "---"
+    if isinstance(block, TextBoxBlock) and block.content:
+        inner = "\n\n".join(
+            p for p in (_render_block_md(b, ctx) for b in block.content) if p
+        )
+        if not inner:
+            return None
+        bg = getattr(block, "background_color", None)
+        lc = getattr(block, "line_color", None)
+        if bg or lc:
+            div_styles: list[str] = []
+            if bg:
+                div_styles.append(f"background:{bg}")
+            if lc:
+                lw = getattr(block, "line_width", None)
+                bw = f"{lw}pt" if lw else "1px"
+                div_styles.append(f"border:{bw} solid {lc}")
+            div_styles.append("padding:8px")
+            ss = ";".join(div_styles)
+            return id_comment + f'<div style="{ss}">\n\n{inner}\n\n</div>'
+        return id_comment + inner
+    if isinstance(block, DrawingBlock) and (block.content or block.children):
+        parts: list[str] = []
+        for child in block.content:
+            rendered = _render_block_md(child, ctx)
+            if rendered:
+                parts.append(rendered)
+        for child_draw in block.children:
+            rendered = _render_block_md(child_draw, ctx)
+            if rendered:
+                parts.append(rendered)
+        inner = "\n\n".join(parts)
+        if not inner:
+            return None
+        bg = getattr(block, "background_color", None)
+        lc = getattr(block, "line_color", None)
+        if bg or lc:
+            div_styles: list[str] = []
+            if bg:
+                div_styles.append(f"background:{bg}")
+            if lc:
+                lw = getattr(block, "line_width", None)
+                bw = f"{lw}pt" if lw else "1px"
+                div_styles.append(f"border:{bw} solid {lc}")
+            div_styles.append("padding:8px")
+            ss = ";".join(div_styles)
+            return id_comment + f'<div style="{ss}">\n\n{inner}\n\n</div>'
+        return id_comment + inner
     if isinstance(block, (DrawingBlock, TextBoxBlock, ChartBlock, TextArtBlock)):
         return id_comment + f"<!-- unsupported: {block.type} -->"
     if isinstance(block, FieldBlock):
-        text = _render_inlines_md(block.inlines) if block.inlines else (block.value or "")
+        text = _render_inlines_md(block.inlines, ctx) if block.inlines else (block.value or "")
         return id_comment + text if text else None
-    if isinstance(block, (HeaderBlock, UnknownBlock)):
+    if isinstance(block, (HeaderBlock, FooterBlock)) and block.content:
+        inner = "\n\n".join(
+            p for p in (_render_block_md(b, ctx) for b in block.content) if p
+        )
+        return id_comment + inner if inner else None
+    if isinstance(block, (HeaderBlock, FooterBlock, UnknownBlock)):
         return None
     return None
 
@@ -1592,8 +1775,15 @@ def _render_table_md(block: TableBlock, ctx: _MdCtx) -> str:
             if cell.width and total_width > 0:
                 pct = round(cell.width / total_width * 100, 1)
                 attrs += f' width="{pct}%"'
+            style_parts: list[str] = []
+            fmt = cell.format if hasattr(cell, "format") and cell.format else None
+            if fmt and fmt.background_color:
+                style_parts.append(f"background-color:{fmt.background_color}")
+            if style_parts:
+                attrs += f' style="{";".join(style_parts)}"'
             content = _render_cell_content_md(cell, ctx)
-            lines.append(f"<td{attrs}>{content}</td>")
+            bid = f' data-bid="{cell.id}"' if ctx.embed_ids else ""
+            lines.append(f"<td{attrs}{bid}>{content}</td>")
         lines.append("</tr>")
     lines.append("</table>")
     return "\n".join(lines)
@@ -1601,12 +1791,30 @@ def _render_table_md(block: TableBlock, ctx: _MdCtx) -> str:
 
 def _render_cell_content_md(cell: TableCell, ctx: _MdCtx) -> str:
     """Render table cell content for Markdown output."""
+    _resolve = ctx.resolve_src if ctx else None
     parts: list[str] = []
     for b in cell.content:
         if isinstance(b, ParagraphBlock):
-            t = _render_inlines_html(b.inlines)
+            t = _render_inlines_html(b.inlines, resolve_src=_resolve)
             if t:
                 parts.append(t)
+        elif isinstance(b, HeadingBlock):
+            parts.append(f"<b>{_escape_html(b.text)}</b>")
+        elif isinstance(b, TextBoxBlock) and b.content:
+            for inner in b.content:
+                if isinstance(inner, ParagraphBlock):
+                    t = _render_inlines_html(inner.inlines, resolve_src=_resolve)
+                    if t:
+                        parts.append(t)
+                elif isinstance(inner, HeadingBlock):
+                    parts.append(f"<b>{_escape_html(inner.text)}</b>")
+        elif isinstance(b, CodeBlock):
+            parts.append(f"<code>{_escape_html(b.code or '')}</code>")
+        elif isinstance(b, ListBlock):
+            for item in b.items:
+                t = _render_inlines_html(item.inlines, resolve_src=_resolve)
+                if t:
+                    parts.append(t)
         elif isinstance(b, EquationBlock):
             if b.latex:
                 parts.append(f"$${b.latex}$$")
@@ -1614,12 +1822,13 @@ def _render_cell_content_md(cell: TableCell, ctx: _MdCtx) -> str:
                 parts.append(f"<!-- hwp-equation: {b.hwp_script} -->")
         elif isinstance(b, ImageBlock):
             alt = _escape_html(b.alt or "")
+            src = ctx.resolve_src(b.src) if b.src else ""
             style = "max-width:100%"
             if b.position and b.position.width:
                 w = b.position.width
                 h = (b.position.height or 0)
                 style = f"width:{w:.0f}pt;height:{h:.0f}pt;max-width:100%"
-            parts.append(f'<img src="{b.src}" alt="{alt}" style="{style}">')
+            parts.append(f'<img src="{src}" alt="{alt}" style="{style}">')
     if len(parts) <= 1:
         return parts[0] if parts else ""
     return "<br>".join(parts)
@@ -1630,11 +1839,17 @@ def _render_list_md(block: ListBlock, ctx: _MdCtx) -> str:
     lines: list[str] = []
     for idx, item in enumerate(block.items):
         prefix = f"{idx + 1}." if block.ordered else "-"
-        text = _render_inlines_md(item.inlines)
-        lines.append(f"{prefix} {text}")
+        text = _render_inlines_md(item.inlines, ctx)
+        if ctx.embed_ids:
+            lines.append(f"<!-- item: {item.id} -->\n{prefix} {text}")
+        else:
+            lines.append(f"{prefix} {text}")
         for child in item.children:
-            child_text = _render_inlines_md(child.inlines)
-            lines.append(f"  - {child_text}")
+            child_text = _render_inlines_md(child.inlines, ctx)
+            if ctx.embed_ids:
+                lines.append(f"  <!-- item: {child.id} -->\n  - {child_text}")
+            else:
+                lines.append(f"  - {child_text}")
     return "\n".join(lines)
 
 
@@ -1643,33 +1858,66 @@ def _render_list_md(block: ListBlock, ctx: _MdCtx) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _render_inlines_md(inlines: list[Any]) -> str:
-    """Render inline elements to Markdown with formatting markers."""
+def _render_inlines_md(inlines: list[Any], ctx: _MdCtx | None = None) -> str:
+    """Render inline elements to Markdown with formatting markers.
+
+    Uses HTML <span> tags for rich formatting (color, font-size, background)
+    that pure Markdown cannot express.
+    """
     merged = _merge_adjacent_inlines(inlines)
     parts: list[str] = []
     for il in merged:
         if isinstance(il, TextInline):
-            text = _escape_md(il.text)
-            lead = text[: len(text) - len(text.lstrip())]
-            trail = text[len(text.rstrip()) :]
-            inner = text.strip()
-            if not inner:
-                parts.append(text)
-                continue
-            if il.bold:
-                inner = f"**{inner}**"
-            if il.italic:
-                inner = f"*{inner}*"
-            if il.strikethrough:
-                inner = f"~~{inner}~~"
-            if il.underline:
-                inner = f"<u>{inner}</u>"
-            parts.append(lead + inner + trail)
+            span_styles: list[str] = []
+            if hasattr(il, "color") and il.color and str(il.color) != "#000000":
+                span_styles.append(f"color:{il.color}")
+            il_bg = getattr(il, "background_color", None)
+            if il_bg and str(il_bg).lower() not in ("#ffffff", "white", ""):
+                span_styles.append(f"background:{il_bg}")
+            il_hl = getattr(il, "highlight_color", None)
+            if il_hl and str(il_hl).lower() not in ("#ffffff", "white", ""):
+                span_styles.append(f"background:{il_hl}")
+            if hasattr(il, "letter_spacing") and il.letter_spacing:
+                span_styles.append(f"letter-spacing:{il.letter_spacing / 100}em")
+
+            if span_styles:
+                text = _escape_html(il.text)
+                if not text.strip():
+                    parts.append(text)
+                    continue
+                if il.bold:
+                    text = f"<strong>{text}</strong>"
+                if il.italic:
+                    text = f"<em>{text}</em>"
+                if il.strikethrough:
+                    text = f"<del>{text}</del>"
+                if il.underline:
+                    text = f"<u>{text}</u>"
+                ss = ";".join(span_styles)
+                parts.append(f'<span style="{ss}">{text}</span>')
+            else:
+                text = _escape_md(il.text)
+                lead = text[: len(text) - len(text.lstrip())]
+                trail = text[len(text.rstrip()) :]
+                inner = text.strip()
+                if not inner:
+                    parts.append(text)
+                    continue
+                if il.bold:
+                    inner = f"**{inner}**"
+                if il.italic:
+                    inner = f"*{inner}*"
+                if il.strikethrough:
+                    inner = f"~~{inner}~~"
+                if il.underline:
+                    inner = f"<u>{inner}</u>"
+                parts.append(lead + inner + trail)
         elif isinstance(il, LinkInline):
             parts.append(f"[{_escape_md(il.text)}]({il.url})")
         elif isinstance(il, ImageInline):
-            alt = il.alt or ""
-            parts.append(f"![{_escape_md(alt)}]({il.src})")
+            alt = _escape_html(il.alt or "")
+            src = ctx.resolve_src(il.src) if ctx and il.src else (il.src or "")
+            parts.append(f'<img src="{src}" alt="{alt}" style="max-width:100%">')
         elif isinstance(il, EquationInline):
             latex = il.latex or il.hwp_script or ""
             if latex:

@@ -15,6 +15,7 @@ from udf.core.schema import (
     HeadingBlock,
     HorizontalRuleBlock,
     ImageBlock,
+    ImageInline,
     ListBlock,
     ListItem,
     ParagraphBlock,
@@ -32,9 +33,13 @@ from udf.renderers.hwp.scratch import (
     collect_shapes,
     generate_hwp_scratch,
     _charshape_from_inline,
+    _charshape_key,
+    _parashape_from_block,
+    _parashape_key,
     _parse_color,
     _parse_font_size_pt,
 )
+from udf.renderers.hwp.docinfo_builder import CharShapeSpec, ParaShapeSpec, pack_char_shape, pack_para_shape
 from udf.parsers.hwp.parse import parse_hwp
 
 SEED = pathlib.Path(__file__).parent.parent.parent / "fixtures" / "hwp" / "f01_plain_text.hwp"
@@ -223,7 +228,7 @@ class TestBlockTypeCompleteness:
         result, loss = self._gen(blocks, seed, tmp_path)
         texts = [b.text_content() for b in result.blocks]
         full = " ".join(texts)
-        assert "1." in full and "첫째" in full
+        assert "첫째" in full and "둘째" in full
         assert loss is None
 
     def test_code_block(self, seed: str, tmp_path) -> None:
@@ -401,3 +406,428 @@ class TestBlockTypeCompleteness:
         full = " ".join(b.text_content() for b in result.blocks)
         assert "before" in full
         assert loss is None
+
+
+    def test_image_in_table_cell(self, seed: str, tmp_path) -> None:
+        """BUG-058: ImageBlock inside table cell renders in-cell, not extracted to top level."""
+        import base64
+        png_1x1 = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+        )
+        img_path = str(tmp_path / "cell_img.png")
+        with open(img_path, "wb") as f:
+            f.write(png_1x1)
+
+        blocks = [
+            ParagraphBlock(type="paragraph", id="p0", inlines=[TextInline(text="before table")]),
+            TableBlock(type="table", id="t1", rows=[
+                TableRow(cells=[
+                    TableCell(id="c1", content=[
+                        ParagraphBlock(type="paragraph", id="cp1", inlines=[TextInline(text="cell text")]),
+                        ImageBlock(type="image", id="img_cell", src=img_path, width=50.0, height=40.0),
+                    ]),
+                    TableCell(id="c2", content=[
+                        ParagraphBlock(type="paragraph", id="cp2", inlines=[TextInline(text="no image")]),
+                    ]),
+                ]),
+            ]),
+            ParagraphBlock(type="paragraph", id="p1", inlines=[TextInline(text="after table")]),
+        ]
+        result, loss = self._gen(blocks, seed, tmp_path)
+        full = " ".join(b.text_content() for b in result.blocks)
+        assert "before table" in full
+        assert "after table" in full
+        assert "cell text" in full
+        assert "no image" in full
+        # Verify file is valid (no loss reported for image)
+        assert loss is None
+
+    def test_image_inline_in_table_cell(self, seed: str, tmp_path) -> None:
+        """BUG-058: ImageInline inside table cell paragraph renders in-cell."""
+        import base64
+        png_1x1 = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+        )
+        img_path = str(tmp_path / "inline_cell_img.png")
+        with open(img_path, "wb") as f:
+            f.write(png_1x1)
+
+        blocks = [
+            ParagraphBlock(type="paragraph", id="p0", inlines=[TextInline(text="intro")]),
+            TableBlock(type="table", id="t1", rows=[
+                TableRow(cells=[
+                    TableCell(id="c1", content=[
+                        ParagraphBlock(type="paragraph", id="cp1", inlines=[
+                            TextInline(text="text with "),
+                            ImageInline(src=img_path, width=30.0, height=20.0),
+                        ]),
+                    ]),
+                ]),
+            ]),
+        ]
+        result, loss = self._gen(blocks, seed, tmp_path)
+        full = " ".join(b.text_content() for b in result.blocks)
+        assert "intro" in full
+        assert "text with" in full
+        assert loss is None
+
+
+class TestPackCharShapeExpanded:
+    """Phase 15a: CharShapeSpec 확장 필드 바이너리 직렬화 검증."""
+
+    def test_default_spec_backward_compat(self) -> None:
+        """기본값 CharShapeSpec은 기존 하드코딩과 동일한 74바이트 생성."""
+        import struct
+        buf = pack_char_shape(CharShapeSpec())
+        assert len(buf) == 74
+        ratios = struct.unpack_from("<7B", buf, 14)
+        assert ratios == (100,) * 7
+        spacings = struct.unpack_from("<7b", buf, 21)
+        assert spacings == (0,) * 7
+        rel_sizes = struct.unpack_from("<7B", buf, 28)
+        assert rel_sizes == (100,) * 7
+        offsets = struct.unpack_from("<7b", buf, 35)
+        assert offsets == (0,) * 7
+        shade = struct.unpack_from("<I", buf, 60)[0]
+        assert shade == 0x00FFFFFF
+
+    def test_outline_bit(self) -> None:
+        import struct
+        buf = pack_char_shape(CharShapeSpec(outline=True))
+        attr = struct.unpack_from("<I", buf, 46)[0]
+        assert (attr >> 8) & 0x07 == 1
+
+    def test_shadow_type(self) -> None:
+        import struct
+        buf = pack_char_shape(CharShapeSpec(shadow_type=2))
+        attr = struct.unpack_from("<I", buf, 46)[0]
+        assert (attr >> 11) & 0x03 == 2
+
+    def test_emboss_engrave_bits(self) -> None:
+        import struct
+        buf = pack_char_shape(CharShapeSpec(emboss=True, engrave=True))
+        attr = struct.unpack_from("<I", buf, 46)[0]
+        assert bool(attr & (1 << 13))
+        assert bool(attr & (1 << 14))
+
+    def test_char_scale_ratio(self) -> None:
+        import struct
+        buf = pack_char_shape(CharShapeSpec(char_scale=150))
+        ratios = struct.unpack_from("<7B", buf, 14)
+        assert ratios == (150,) * 7
+
+    def test_letter_spacing_signed(self) -> None:
+        import struct
+        buf = pack_char_shape(CharShapeSpec(letter_spacing=-10))
+        spacings = struct.unpack_from("<7b", buf, 21)
+        assert spacings == (-10,) * 7
+
+    def test_superscript_synthesis(self) -> None:
+        import struct
+        buf = pack_char_shape(CharShapeSpec(superscript=True))
+        rel_sizes = struct.unpack_from("<7B", buf, 28)
+        assert rel_sizes == (70,) * 7
+        offsets = struct.unpack_from("<7b", buf, 35)
+        assert all(o > 0 for o in offsets)
+
+    def test_subscript_synthesis(self) -> None:
+        import struct
+        buf = pack_char_shape(CharShapeSpec(subscript=True))
+        rel_sizes = struct.unpack_from("<7B", buf, 28)
+        assert rel_sizes == (70,) * 7
+        offsets = struct.unpack_from("<7b", buf, 35)
+        assert all(o < 0 for o in offsets)
+
+    def test_underline_color(self) -> None:
+        import struct
+        buf = pack_char_shape(CharShapeSpec(underline_color_r=255, underline_color_g=0, underline_color_b=128))
+        raw = struct.unpack_from("<I", buf, 56)[0]
+        assert raw & 0xFF == 255
+        assert (raw >> 8) & 0xFF == 0
+        assert (raw >> 16) & 0xFF == 128
+
+    def test_bg_color(self) -> None:
+        import struct
+        buf = pack_char_shape(CharShapeSpec(bg_color_r=200, bg_color_g=200, bg_color_b=200))
+        raw = struct.unpack_from("<I", buf, 60)[0]
+        assert raw == (200 | (200 << 8) | (200 << 16))
+
+    def test_strike_color(self) -> None:
+        import struct
+        buf = pack_char_shape(CharShapeSpec(strike_color_r=255, strike_color_g=0, strike_color_b=0))
+        raw = struct.unpack_from("<I", buf, 70)[0]
+        assert raw == 255
+
+
+class TestCharShapeFromInlineExpanded:
+    """Phase 15a: TextInline → CharShapeSpec 확장 매핑 검증."""
+
+    def test_outline_shadow(self) -> None:
+        il = TextInline(text="x", outline=True, shadow=True)
+        cs = _charshape_from_inline(il)
+        assert cs.outline is True
+        assert cs.shadow_type == 1
+
+    def test_emboss_engrave(self) -> None:
+        il = TextInline(text="x", emboss=True, engrave=True)
+        cs = _charshape_from_inline(il)
+        assert cs.emboss is True
+        assert cs.engrave is True
+
+    def test_superscript_subscript(self) -> None:
+        il_sup = TextInline(text="x", superscript=True)
+        il_sub = TextInline(text="x", subscript=True)
+        assert _charshape_from_inline(il_sup).superscript is True
+        assert _charshape_from_inline(il_sub).subscript is True
+
+    def test_char_scale_from_ratio(self) -> None:
+        from udf.schema.types import Ratio
+        il = TextInline(text="x", char_scale=Ratio(percent=150))
+        cs = _charshape_from_inline(il)
+        assert cs.char_scale == 150
+
+    def test_letter_spacing(self) -> None:
+        il = TextInline(text="x", letter_spacing=-5.0)
+        cs = _charshape_from_inline(il)
+        assert cs.letter_spacing == -5
+
+    def test_colors_mapped(self) -> None:
+        il = TextInline(
+            text="x",
+            underline_color="#ff0000",
+            background_color="#00ff00",
+            strikeout_color="#0000ff",
+        )
+        cs = _charshape_from_inline(il)
+        assert (cs.underline_color_r, cs.underline_color_g, cs.underline_color_b) == (255, 0, 0)
+        assert (cs.bg_color_r, cs.bg_color_g, cs.bg_color_b) == (0, 255, 0)
+        assert (cs.strike_color_r, cs.strike_color_g, cs.strike_color_b) == (0, 0, 255)
+
+
+class TestCharShapeKeyExpanded:
+    """Phase 15a: 확장 필드가 dedup 키에 포함되는지 검증."""
+
+    def test_distinct_outline_creates_distinct_key(self) -> None:
+        a = CharShapeSpec()
+        b = CharShapeSpec(outline=True)
+        assert _charshape_key(a) != _charshape_key(b)
+
+    def test_distinct_char_scale_creates_distinct_key(self) -> None:
+        a = CharShapeSpec()
+        b = CharShapeSpec(char_scale=80)
+        assert _charshape_key(a) != _charshape_key(b)
+
+    def test_same_spec_same_key(self) -> None:
+        a = CharShapeSpec(outline=True, char_scale=120, letter_spacing=-3)
+        b = CharShapeSpec(outline=True, char_scale=120, letter_spacing=-3)
+        assert _charshape_key(a) == _charshape_key(b)
+
+
+class TestPackParaShapeExpanded:
+    """Phase 15b: ParaShapeSpec 확장 필드 바이너리 직렬화 검증."""
+
+    def test_default_spec_58_bytes(self) -> None:
+        buf = pack_para_shape(ParaShapeSpec())
+        assert len(buf) == 58
+
+    def test_line_spacing_type_bits(self) -> None:
+        import struct
+        buf = pack_para_shape(ParaShapeSpec(line_spacing_type=1))
+        attr = struct.unpack_from("<I", buf, 0)[0]
+        assert (attr & 0x03) == 1
+
+    def test_widow_orphan_bit(self) -> None:
+        import struct
+        buf = pack_para_shape(ParaShapeSpec(widow_orphan=True))
+        attr = struct.unpack_from("<I", buf, 0)[0]
+        assert bool(attr & (1 << 5))
+
+    def test_page_break_before_bit(self) -> None:
+        import struct
+        buf = pack_para_shape(ParaShapeSpec(page_break_before=True))
+        attr = struct.unpack_from("<I", buf, 0)[0]
+        assert bool(attr & (1 << 6))
+
+    def test_keep_with_next_bit(self) -> None:
+        import struct
+        buf = pack_para_shape(ParaShapeSpec(keep_with_next=True))
+        attr = struct.unpack_from("<I", buf, 0)[0]
+        assert bool(attr & (1 << 7))
+
+    def test_indent_spacing_values(self) -> None:
+        import struct
+        buf = pack_para_shape(ParaShapeSpec(
+            indent_left=1000, indent_right=500,
+            space_before=200, space_after=300, indent_first=400,
+        ))
+        left, right = struct.unpack_from("<II", buf, 4)
+        first = struct.unpack_from("<i", buf, 12)[0]
+        s_before, s_after, ls = struct.unpack_from("<III", buf, 16)
+        assert (left, right, first, s_before, s_after, ls) == (1000, 500, 400, 200, 300, 160)
+
+
+class TestParaShapeFromBlockExpanded:
+    """Phase 15b: BlockFormat → ParaShapeSpec 확장 매핑 검증."""
+
+    def test_indent_mapped_pt_to_hwpunit(self) -> None:
+        from udf.schema.formats import BlockFormat
+        blk = ParagraphBlock(
+            type="paragraph", id="p1",
+            inlines=[TextInline(text="x")],
+            format=BlockFormat(indent_left=10.0, indent_right=5.0),
+        )
+        ps = _parashape_from_block(blk)
+        assert ps.indent_left == 1000  # 10pt * 100
+        assert ps.indent_right == 500
+
+    def test_space_before_after(self) -> None:
+        from udf.schema.formats import BlockFormat
+        blk = ParagraphBlock(
+            type="paragraph", id="p1",
+            inlines=[TextInline(text="x")],
+            format=BlockFormat(space_before=6.0, space_after=12.0),
+        )
+        ps = _parashape_from_block(blk)
+        assert ps.space_before == 600
+        assert ps.space_after == 1200
+
+    def test_keep_with_next(self) -> None:
+        from udf.schema.formats import BlockFormat
+        blk = ParagraphBlock(
+            type="paragraph", id="p1",
+            inlines=[TextInline(text="x")],
+            format=BlockFormat(keep_with_next=True),
+        )
+        ps = _parashape_from_block(blk)
+        assert ps.keep_with_next is True
+
+    def test_page_break_before(self) -> None:
+        from udf.schema.formats import BlockFormat
+        blk = ParagraphBlock(
+            type="paragraph", id="p1",
+            inlines=[TextInline(text="x")],
+            format=BlockFormat(page_break_before=True),
+        )
+        ps = _parashape_from_block(blk)
+        assert ps.page_break_before is True
+
+    def test_default_format_unchanged(self) -> None:
+        blk = ParagraphBlock(
+            type="paragraph", id="p1",
+            inlines=[TextInline(text="x")],
+        )
+        ps = _parashape_from_block(blk)
+        assert ps.indent_left == 0
+        assert ps.keep_with_next is False
+
+
+class TestParaShapeKeyExpanded:
+    """Phase 15b: 확장 필드가 dedup 키에 포함되는지 검증."""
+
+    def test_distinct_keep_with_next(self) -> None:
+        a = ParaShapeSpec()
+        b = ParaShapeSpec(keep_with_next=True)
+        assert _parashape_key(a) != _parashape_key(b)
+
+    def test_same_spec_same_key(self) -> None:
+        a = ParaShapeSpec(alignment="center", keep_with_next=True)
+        b = ParaShapeSpec(alignment="center", keep_with_next=True)
+        assert _parashape_key(a) == _parashape_key(b)
+
+
+class TestNativeNumbering:
+    """Phase 15e: ListBlock 네이티브 번호 매기기 검증."""
+
+    @pytest.fixture
+    def seed(self) -> str:
+        assert SEED.exists()
+        return str(SEED)
+
+    def test_ordered_list_creates_numbering_record(self, seed: str, tmp_path) -> None:
+        from udf.parsers.hwp.records import HWPTAG_NUMBERING, iter_records
+        from udf.parsers.hwp.ole import OleReader
+
+        doc = UdfDocument(source_format="udf", blocks=[
+            ParagraphBlock(type="paragraph", id="p0", inlines=[TextInline(text="intro")]),
+            ListBlock(type="list", id="l1", ordered=True, items=[
+                ListItem(id="li1", inlines=[TextInline(text="item1")]),
+                ListItem(id="li2", inlines=[TextInline(text="item2")]),
+            ]),
+        ])
+        out = str(tmp_path / "out.hwp")
+        generate_hwp_scratch(doc, out, seed)
+
+        with OleReader.open(out) as ole:
+            di = ole.read_stream(["DocInfo"])
+        num_count = sum(1 for r in iter_records(di) if r.tag_id == HWPTAG_NUMBERING)
+        with OleReader.open(seed) as ole:
+            seed_di = ole.read_stream(["DocInfo"])
+        seed_num_count = sum(1 for r in iter_records(seed_di) if r.tag_id == HWPTAG_NUMBERING)
+        assert num_count > seed_num_count
+
+    def test_unordered_list_creates_numbering_record(self, seed: str, tmp_path) -> None:
+        from udf.parsers.hwp.records import HWPTAG_NUMBERING, iter_records
+        from udf.parsers.hwp.ole import OleReader
+
+        doc = UdfDocument(source_format="udf", blocks=[
+            ParagraphBlock(type="paragraph", id="p0", inlines=[TextInline(text="intro")]),
+            ListBlock(type="list", id="l1", ordered=False, items=[
+                ListItem(id="li1", inlines=[TextInline(text="bullet1")]),
+            ]),
+        ])
+        out = str(tmp_path / "out.hwp")
+        generate_hwp_scratch(doc, out, seed)
+
+        with OleReader.open(out) as ole:
+            di = ole.read_stream(["DocInfo"])
+        num_count = sum(1 for r in iter_records(di) if r.tag_id == HWPTAG_NUMBERING)
+        with OleReader.open(seed) as ole:
+            seed_di = ole.read_stream(["DocInfo"])
+        seed_num_count = sum(1 for r in iter_records(seed_di) if r.tag_id == HWPTAG_NUMBERING)
+        assert num_count > seed_num_count
+
+    def test_list_items_preserve_text(self, seed: str, tmp_path) -> None:
+        doc = UdfDocument(source_format="udf", blocks=[
+            ParagraphBlock(type="paragraph", id="p0", inlines=[TextInline(text="intro")]),
+            ListBlock(type="list", id="l1", ordered=True, items=[
+                ListItem(id="li1", inlines=[TextInline(text="항목A")]),
+                ListItem(id="li2", inlines=[TextInline(text="항목B")]),
+            ]),
+        ])
+        out = str(tmp_path / "out.hwp")
+        generate_hwp_scratch(doc, out, seed)
+        result = parse_hwp(out)
+        full = " ".join(b.text_content() for b in result.blocks)
+        assert "항목A" in full and "항목B" in full
+
+
+class TestClickhereField:
+    """Phase 15f: FieldBlock clickhere 서식 검증."""
+
+    @pytest.fixture
+    def seed(self) -> str:
+        assert SEED.exists()
+        return str(SEED)
+
+    def test_clickhere_field_renders(self, seed: str, tmp_path) -> None:
+        doc = UdfDocument(source_format="udf", blocks=[
+            ParagraphBlock(type="paragraph", id="p0", inlines=[TextInline(text="before")]),
+            FieldBlock(type="field", id="f1", field_type="clickhere",
+                       inlines=[TextInline(text="여기를 클릭")]),
+        ])
+        out = str(tmp_path / "out.hwp")
+        generate_hwp_scratch(doc, out, seed)
+        result = parse_hwp(out)
+        full = " ".join(b.text_content() for b in result.blocks)
+        assert "여기를 클릭" in full
+
+    def test_clickhere_with_value(self, seed: str, tmp_path) -> None:
+        doc = UdfDocument(source_format="udf", blocks=[
+            ParagraphBlock(type="paragraph", id="p0", inlines=[TextInline(text="before")]),
+            FieldBlock(type="field", id="f1", field_type="clickhere", value="입력값"),
+        ])
+        out = str(tmp_path / "out.hwp")
+        generate_hwp_scratch(doc, out, seed)
+        result = parse_hwp(out)
+        full = " ".join(b.text_content() for b in result.blocks)
+        assert "입력값" in full

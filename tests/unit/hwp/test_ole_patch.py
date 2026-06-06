@@ -65,56 +65,44 @@ class TestMiniToRegular:
         assert _stream_size(tmp.name, ["BodyText", "Section0"]) == 5000
 
 
+@pytest.fixture
+def f15_path():
+    return f"{_FIXTURES}/f15_math_hanoi.hwp"
+
+
 class TestRegularToRegular:
-    def test_same_size(self):
-        src = "workspace/math_hanoi.hwp"
-        try:
-            original = _read_stream(src, ["BodyText", "Section0"])
-        except FileNotFoundError:
-            pytest.skip("math_hanoi.hwp not available")
+    def test_same_size(self, f15_path: str):
+        original = _read_stream(f15_path, ["BodyText", "Section0"])
         with tempfile.NamedTemporaryFile(suffix=".hwp", delete=False) as tmp:
-            patch_hwp_stream(src, tmp.name, ["BodyText", "Section0"], original)
+            patch_hwp_stream(f15_path, tmp.name, ["BodyText", "Section0"], original)
             result = _read_stream(tmp.name, ["BodyText", "Section0"])
         assert result == original
 
-    def test_larger_regular(self):
-        src = "workspace/math_hanoi.hwp"
-        try:
-            _read_stream(src, ["BodyText", "Section0"])
-        except FileNotFoundError:
-            pytest.skip("math_hanoi.hwp not available")
+    def test_larger_regular(self, f15_path: str):
         new_content = b"\xEF" * 20000
         with tempfile.NamedTemporaryFile(suffix=".hwp", delete=False) as tmp:
-            patch_hwp_stream(src, tmp.name, ["BodyText", "Section0"], new_content)
+            patch_hwp_stream(f15_path, tmp.name, ["BodyText", "Section0"], new_content)
             result = _read_stream(tmp.name, ["BodyText", "Section0"])
         assert result == new_content
 
 
 class TestRegularToMini:
-    def test_demotion(self):
-        src = "workspace/math_hanoi.hwp"
-        try:
-            old_size = _stream_size(src, ["BodyText", "Section0"])
-        except FileNotFoundError:
-            pytest.skip("math_hanoi.hwp not available")
+    def test_demotion(self, f15_path: str):
+        old_size = _stream_size(f15_path, ["BodyText", "Section0"])
         assert old_size >= 4096, f"Source must be regular stream, got {old_size}B"
         new_content = b"\x42" * 500
         with tempfile.NamedTemporaryFile(suffix=".hwp", delete=False) as tmp:
-            patch_hwp_stream(src, tmp.name, ["BodyText", "Section0"], new_content)
+            patch_hwp_stream(f15_path, tmp.name, ["BodyText", "Section0"], new_content)
             result = _read_stream(tmp.name, ["BodyText", "Section0"])
             size = _stream_size(tmp.name, ["BodyText", "Section0"])
         assert result == new_content
         assert size == 500
 
-    def test_demotion_preserves_other_streams(self):
-        src = "workspace/math_hanoi.hwp"
-        try:
-            old_docinfo = _read_stream(src, ["DocInfo"])
-        except FileNotFoundError:
-            pytest.skip("math_hanoi.hwp not available")
+    def test_demotion_preserves_other_streams(self, f15_path: str):
+        old_docinfo = _read_stream(f15_path, ["DocInfo"])
         new_content = b"\x42" * 500
         with tempfile.NamedTemporaryFile(suffix=".hwp", delete=False) as tmp:
-            patch_hwp_stream(src, tmp.name, ["BodyText", "Section0"], new_content)
+            patch_hwp_stream(f15_path, tmp.name, ["BodyText", "Section0"], new_content)
             new_docinfo = _read_stream(tmp.name, ["DocInfo"])
         assert new_docinfo == old_docinfo
 

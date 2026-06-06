@@ -2,17 +2,16 @@
 
 UdfDocument의 블록 목록을 받아 HWP BodyText/Section0 스트림 bytes를 생성한다.
 
-PARA_HEADER 레이아웃 (24 bytes, hwp.md §4 기준):
+PARA_HEADER 레이아웃 (22 bytes, hwp.md §5.1 기준):
   0-3    charCnt: uint32 (lower 30 bits) | (is_last << 31)
   4-7    controlMask: uint32
   8-9    para_shape_id: uint16
   10     style_id: uint8
-  11     para_flags: uint8
+  11     colSplit: uint8
   12-13  csCount: uint16
   14-15  rtCount: uint16
   16-17  lsCount: uint16
-  18-21  ??? (seed 관찰값: 0xba0994d2)
-  22-23  ???: uint16
+  18-21  instanceId: uint32
 
 PARA_CHAR_SHAPE (PCS) 엔트리 (8 bytes):
   0-3    pos: uint32
@@ -45,6 +44,7 @@ from udf.parsers.hwp.records import (
     HWPTAG_EQEDIT,
     HWPTAG_SHAPE_COMPONENT,
     HWPTAG_SHAPE_COMPONENT_PIC,
+    HWPTAG_SHAPE_COMPONENT_RECT,
     iter_records,
 )
 
@@ -71,6 +71,14 @@ class TextSpan:
     cs_id: int = 0
 
 
+@dataclass
+class CellImageInfo:
+    """셀 내 이미지의 BinData 참조 + 크기 정보."""
+    bin_item_id: int   # 1-based BIN_DATA index
+    img_width: int     # HWPUNIT
+    img_height: int    # HWPUNIT
+
+
 # ---------------------------------------------------------------------------
 # 레코드 직렬화 헬퍼 (body_writer.py와 동일 로직)
 # ---------------------------------------------------------------------------
@@ -86,14 +94,56 @@ def _pack_record(tag_id: int, level: int, payload: bytes) -> bytes:
     return struct.pack("<II", h, size) + payload
 
 
+def _bump_record_levels(data: bytes, delta: int) -> bytes:
+    """Bump the level field of every HWP record header in *data* by *delta*."""
+    out = bytearray()
+    pos = 0
+    while pos + 4 <= len(data):
+        h = struct.unpack_from("<I", data, pos)[0]
+        tag = h & 0x3FF
+        lvl = (h >> 10) & 0x3FF
+        sz = (h >> 20) & 0xFFF
+        pos += 4
+        if sz == 0xFFF:
+            if pos + 4 > len(data):
+                break
+            sz = struct.unpack_from("<I", data, pos)[0]
+            pos += 4
+        if pos + sz > len(data):
+            break
+        payload = data[pos:pos + sz]
+        pos += sz
+        out += _pack_record(tag, lvl + delta, payload)
+    return bytes(out)
+
+
 # ---------------------------------------------------------------------------
 # 개별 레코드 빌더
 # ---------------------------------------------------------------------------
 
 
+def _ctrl_mask_from_text(text: str) -> int:
+    """텍스트 내 제어 문자에 대응하는 controlMask 비트를 반환한다."""
+    mask = 0
+    for ch in text:
+        cp = ord(ch)
+        if cp <= 0x001F and cp != 0x000D:
+            mask |= (1 << cp)
+    return mask
+
+
+def _sanitize_text(text: str) -> str:
+    """From Scratch 생성 시 안전하지 않은 제어 문자를 치환한다.
+
+    HWP TAB(0x0009)은 TabDef 레코드 없이 사용하면 한컴이 '형식 복구'를
+    발생시킨다. 0x000A(줄바꿈)도 별도 레코드가 필요하므로 공백으로 치환.
+    """
+    return text.replace("\t", " ").replace("\n", " ")
+
+
 def _build_para_text(text: str) -> bytes:
     """PARA_TEXT 페이로드: UTF-16LE + 0x000D(CR)."""
-    return text.encode("utf-16-le") + b"\x0d\x00"
+    return _sanitize_text(text).encode("utf-16-le") + b"\x0d\x00"
 
 
 def _build_pcs(spans: list[TextSpan]) -> bytes:
@@ -121,7 +171,7 @@ def _build_pls(
     line_spacing_pct: 줄 간격 퍼센트 (예: 160).
     """
     ty = h * 85 // 100
-    colx = h * (line_spacing_pct - 100) // 100
+    colx = max(0, h * (line_spacing_pct - 100) // 100)
     return struct.pack(
         "<9I",
         0,                    # tpos
@@ -176,6 +226,7 @@ def _build_pls_multi(
 
     total_width = _estimate_text_width(text, font_size_hu)
     n_lines = max(1, math.ceil(total_width / content_width))
+    n_lines = min(n_lines, char_cnt)
     line_height = max(_DEFAULT_LINE_HEIGHT, font_size_hu * line_spacing_pct // 100)
 
     if n_lines == 1:
@@ -186,7 +237,7 @@ def _build_pls_multi(
     text_len = len(text)
     avg_char_width = total_width / text_len if text_len else font_size_hu
     ty = font_size_hu * 85 // 100
-    colx = font_size_hu * (line_spacing_pct - 100) // 100
+    colx = max(0, font_size_hu * (line_spacing_pct - 100) // 100)
 
     buf = b""
     tpos = 0
@@ -235,7 +286,7 @@ def _build_para_header(
     buf += struct.pack("<H", cs_count)                      # 12-13
     buf += struct.pack("<H", 0)                             # 14-15 rtCount
     buf += struct.pack("<H", ls_count)                      # 16-17
-    buf += struct.pack("<I", _PH_MAGIC)                     # 18-21
+    buf += struct.pack("<I", 0)                             # 18-21 instanceId
     buf += struct.pack("<H", 0)                             # 22-23
     assert len(buf) == 24
     return buf
@@ -318,6 +369,7 @@ def build_paragraph(
         ls_count=ls_count,
         ps_id=ps_id,
         style_id=style_id,
+        control_mask=_ctrl_mask_from_text(text),
         is_last=is_last,
     )
 
@@ -392,6 +444,7 @@ def build_secd_paragraph(
     is_last: bool = False,
     dist: int = 42520,
     line_spacing_pct: int = 160,
+    extra_inline_ctrls: list[bytes] | None = None,
 ) -> bytes:
     """Reconstruct the secd paragraph from seed, merging new text content.
 
@@ -467,16 +520,27 @@ def build_secd_paragraph(
             else:
                 break  # 일반 텍스트 시작 → 버림
 
-    new_pt = inline_bytes + text.encode("utf-16-le") + b"\x0d\x00"
+    extra_bytes = b""
+    if extra_inline_ctrls:
+        for ctrl in extra_inline_ctrls:
+            extra_bytes += ctrl
+
+    new_pt = inline_bytes + extra_bytes + _sanitize_text(text).encode("utf-16-le") + b"\x0d\x00"
     char_cnt = len(new_pt) // 2
 
     ctrl_mask = struct.unpack_from("<I", first_ph_payload, 4)[0]
+    if extra_inline_ctrls:
+        for ctrl in extra_inline_ctrls:
+            ctrl_code = struct.unpack_from("<H", ctrl, 0)[0]
+            ctrl_mask |= (1 << ctrl_code)
+    ctrl_mask |= _ctrl_mask_from_text(text)
     seed_ps_id = struct.unpack_from("<H", first_ph_payload, 8)[0]
     seed_style_id = first_ph_payload[10]
     ps_id = ps_id_override if ps_id_override is not None else seed_ps_id
     style_id = style_id_override if style_id_override is not None else seed_style_id
 
-    inline_ctrl_count = len(inline_bytes) // 16
+    all_inline_bytes = inline_bytes + extra_bytes
+    inline_ctrl_count = len(all_inline_bytes) // 16
     if not text or cs_id == 0:
         n_pcs = 1
         pcs_entries = struct.pack("<II", 0, 0)
@@ -525,8 +589,8 @@ _CTRL_ID_FN = b"\x20\x20\x6e\x66"    # 'fn  ' LE (reversed)
 _CTRL_ID_EN = b"\x20\x20\x6e\x65"    # 'en  ' LE (reversed)
 _CTRL_ID_GSO = b"\x20\x6f\x73\x67"   # 'gso ' LE (reversed)
 
-_TBL_CTRL_ATTR = 0x002A0310
-_TBL_TABLE_ATTR = 0x00000006
+_TBL_CTRL_ATTR = 0x082A2210
+_TBL_TABLE_ATTR = 0x04000006
 _DEFAULT_CELL_PADDING_H = 510   # 좌우 셀 패딩 (≈5.1pt = 1.8mm)
 _DEFAULT_CELL_PADDING_V = 141   # 상하 셀 패딩 (≈1.41pt = 0.5mm)
 _DEFAULT_CELL_BF_ID = 3
@@ -583,7 +647,7 @@ def _build_inline_ctrl_obj(ctrl_code: int, ctrl_id_bytes: bytes) -> bytes:
 
 
 def _build_ctrl_header_tbl(width: int, height: int, instance_id: int = 0) -> bytes:
-    """CTRL_HEADER 'tbl ' 페이로드."""
+    """CTRL_HEADER 'tbl ' 페이로드 (46B, 한컴 실제 파일 기준)."""
     buf = _CTRL_ID_TBL
     buf += struct.pack("<I", _TBL_CTRL_ATTR)
     buf += struct.pack("<ii", 0, 0)  # y, x offset
@@ -591,19 +655,25 @@ def _build_ctrl_header_tbl(width: int, height: int, instance_id: int = 0) -> byt
     buf += struct.pack("<hh", 0, 0)  # z_order, unknown
     buf += struct.pack("<4H", 283, 283, 283, 283)  # margins (≈2.83pt ≈1mm)
     buf += struct.pack("<I", instance_id)
-    buf += struct.pack("<H", 0)  # trailing field (원본 관찰)
+    buf += struct.pack("<I", 0)  # captionAttr (한컴 46B 기준)
+    buf += struct.pack("<H", 0)  # trailing
+    assert len(buf) == 46
     return buf
 
 
-def _build_table_record(n_rows: int, n_cols: int, bf_id: int = _DEFAULT_CELL_BF_ID) -> bytes:
+def _build_table_record(
+    n_rows: int, n_cols: int, bf_id: int = _DEFAULT_CELL_BF_ID,
+    cells_per_row: list[int] | None = None,
+) -> bytes:
     """TABLE (tag=77) 레코드 페이로드."""
     buf = struct.pack("<I", _TBL_TABLE_ATTR)
     buf += struct.pack("<HH", n_rows, n_cols)
     buf += struct.pack("<H", 0)  # cell_spacing
     buf += struct.pack("<4H", _DEFAULT_CELL_PADDING_H, _DEFAULT_CELL_PADDING_H,
                        _DEFAULT_CELL_PADDING_V, _DEFAULT_CELL_PADDING_V)
-    for _ in range(n_rows):
-        buf += struct.pack("<H", n_cols)
+    for ri in range(n_rows):
+        cnt = cells_per_row[ri] if cells_per_row and ri < len(cells_per_row) else n_cols
+        buf += struct.pack("<H", cnt)
     buf += struct.pack("<H", bf_id)
     buf += struct.pack("<H", 0)  # trailing field (원본 관찰)
     return buf
@@ -612,10 +682,11 @@ def _build_table_record(n_rows: int, n_cols: int, bf_id: int = _DEFAULT_CELL_BF_
 def _build_list_header(
     row: int, col: int, colspan: int, rowspan: int,
     size_x: int, size_y: int, bf_id: int = _DEFAULT_CELL_BF_ID,
+    para_count: int = 1,
 ) -> bytes:
-    """LIST_HEADER (tag=72) 셀 페이로드."""
+    """LIST_HEADER (tag=72) 셀 페이로드 (47B, 한컴 실제 파일 기준)."""
     listflags = 0x00000020  # v_align=top (bits 2-3 = 0)
-    buf = struct.pack("<HH", 1, 0)  # paragraphs=1, unknown
+    buf = struct.pack("<HH", para_count, 0)  # paragraphs, unknown
     buf += struct.pack("<I", listflags)
     buf += struct.pack("<HH", col, row)
     buf += struct.pack("<HH", colspan, rowspan)
@@ -623,6 +694,9 @@ def _build_list_header(
     buf += struct.pack("<4H", _DEFAULT_CELL_PADDING_H, _DEFAULT_CELL_PADDING_H,
                        _DEFAULT_CELL_PADDING_V, _DEFAULT_CELL_PADDING_V)
     buf += struct.pack("<H", bf_id)
+    buf += struct.pack("<I", size_x)  # textWidth (한컴 47B 기준)
+    buf += b"\x00" * 9
+    assert len(buf) == 47
     return buf
 
 
@@ -638,55 +712,86 @@ def build_table(
     line_spacing_pct: int = 160,
     bf_id: int = _DEFAULT_CELL_BF_ID,
     cell_bf_ids: list[list[int]] | None = None,
+    cell_ps_ids: list[list[int]] | None = None,
+    cell_merges: list[list[tuple[int, int]]] | None = None,
+    cell_images: list[list[list[CellImageInfo]]] | None = None,
 ) -> tuple[bytes, int]:
     """Build a complete HWP table record set for a TableBlock.
 
-    Parameters
-    ----------
-    n_rows : int
-        Number of rows.
-    n_cols : int
-        Number of columns.
-    cell_texts : list[list[list[TextSpan]]]
-        Cell text spans indexed as ``[row][col]``.
-    content_width : int
-        Content area width in HWPUNIT.
-    vpos : int
-        Vertical start position in HWPUNIT.
-    col_widths : list[int] or None
-        Per-column widths in HWPUNIT. If None, columns are equally divided.
-    level : int, default 0
-        Record nesting level.
-    font_size_hu : int, default 1000
-        Font size in HWPUNIT.
-    line_spacing_pct : int, default 160
-        Line spacing percentage.
-    bf_id : int
-        Default BorderFill ID for table cells.
-    cell_bf_ids : list[list[int]] or None
-        Per-cell BorderFill IDs as ``[row][col]``. Falls back to ``bf_id``.
-
-    Returns
-    -------
-    tuple[bytes, int]
-        Record bytes and total table height in HWPUNIT.
+    cell_merges: per-row list of (col_span, row_span) for each cell in that row.
+    Rows in cell_merges correspond to the actual cells emitted per row (after merge).
+    cell_images: per-row, per-cell list of CellImageInfo for images to embed in cells.
     """
     if not col_widths:
         col_widths = _auto_col_widths(n_cols, cell_texts, content_width, font_size_hu)
     table_width = sum(col_widths)
 
-    row_heights = [_MIN_CELL_HEIGHT] * n_rows
+    # Build a grid to track which cells are covered by rowspan from above.
+    # covered[ri][ci] = True means (ri, ci) is covered by a rowspan from a cell above.
+    covered: list[list[bool]] = [[False] * n_cols for _ in range(n_rows)]
+    if cell_merges:
+        for ri in range(n_rows):
+            logical_ci = 0
+            if ri < len(cell_merges):
+                for mi, (cs, rs) in enumerate(cell_merges[ri]):
+                    while logical_ci < n_cols and covered[ri][logical_ci]:
+                        logical_ci += 1
+                    if logical_ci >= n_cols:
+                        break
+                    for dr in range(rs):
+                        for dc in range(cs):
+                            if ri + dr < n_rows and logical_ci + dc < n_cols:
+                                if dr > 0 or dc > 0:
+                                    covered[ri + dr][logical_ci + dc] = True
+                    logical_ci += cs
+
+    line_h = max(_DEFAULT_LINE_HEIGHT, font_size_hu * line_spacing_pct // 100)
+    row_heights = [max(_MIN_CELL_HEIGHT, line_h)] * n_rows
     for ri in range(n_rows):
-        for ci in range(n_cols):
-            if ri < len(cell_texts) and ci < len(cell_texts[ri]):
-                text = "".join(s.text for s in cell_texts[ri][ci])
-                if text and col_widths[ci] > 0:
+        if ri < len(cell_texts):
+            for ci_data, spans in enumerate(cell_texts[ri]):
+                text = "".join(s.text for s in spans)
+                col_w = col_widths[0] if col_widths else content_width
+                if ci_data < n_cols:
+                    col_w = col_widths[ci_data]
+                if text and col_w > 0:
                     tw = _estimate_text_width(text, font_size_hu)
-                    n_lines = max(1, math.ceil(tw / max(1, col_widths[ci] - 2 * _DEFAULT_CELL_PADDING_H)))
-                    h = n_lines * (font_size_hu * line_spacing_pct // 100)
+                    n_lines = max(1, math.ceil(tw / max(1, col_w - 2 * _DEFAULT_CELL_PADDING_H)))
+                    n_lines = min(n_lines, len(text) + 1)
+                    h = n_lines * line_h
                     row_heights[ri] = max(row_heights[ri], h)
+        # Account for image heights in cells
+        if cell_images and ri < len(cell_images):
+            for ci_data, imgs in enumerate(cell_images[ri]):
+                for img_info in imgs:
+                    col_w = col_widths[ci_data] if ci_data < len(col_widths) else content_width
+                    cell_content_w = max(1, col_w - 2 * _DEFAULT_CELL_PADDING_H)
+                    ih = img_info.img_height
+                    iw = img_info.img_width
+                    if iw > cell_content_w:
+                        ih = int(ih * cell_content_w / iw)
+                    row_heights[ri] = max(row_heights[ri], row_heights[ri] + ih)
 
     table_height = sum(row_heights)
+
+    # Compute actual cells per row for TABLE record
+    cells_per_row: list[int] | None = None
+    if cell_merges:
+        cells_per_row = []
+        for ri in range(n_rows):
+            cnt = 0
+            logical_ci = 0
+            if ri < len(cell_merges):
+                for cs, rs in cell_merges[ri]:
+                    while logical_ci < n_cols and covered[ri][logical_ci]:
+                        logical_ci += 1
+                    if logical_ci >= n_cols:
+                        break
+                    cnt += 1
+                    logical_ci += cs
+            else:
+                cnt = sum(1 for c in range(n_cols) if not covered[ri][c])
+            cells_per_row.append(cnt)
 
     # 1. Host paragraph: PH + PT(inline ctrl) + PCS + PLS
     inline_obj = _build_inline_ctrl_obj(_CTRL_CODE_TABLE, _CTRL_ID_TBL)
@@ -706,31 +811,84 @@ def build_table(
     out += _pack_record(HWPTAG_CTRL_HEADER, level + 1, ctrl_payload)
 
     # 3. TABLE record
-    tbl_payload = _build_table_record(n_rows, n_cols, bf_id=bf_id)
+    tbl_payload = _build_table_record(n_rows, n_cols, bf_id=bf_id, cells_per_row=cells_per_row)
     out += _pack_record(HWPTAG_TABLE, level + 2, tbl_payload)
 
     # 4. Cell LIST_HEADER + cell paragraphs
     for ri in range(n_rows):
-        for ci in range(n_cols):
-            size_x = col_widths[ci]
-            size_y = row_heights[ri]
+        logical_ci = 0
+        data_ci = 0
+        while logical_ci < n_cols:
+            if covered[ri][logical_ci]:
+                logical_ci += 1
+                continue
+            cs, rs = 1, 1
+            if cell_merges and ri < len(cell_merges) and data_ci < len(cell_merges[ri]):
+                cs, rs = cell_merges[ri][data_ci]
+            size_x = sum(col_widths[logical_ci:logical_ci + cs])
+            size_y = sum(row_heights[ri:ri + rs])
             cell_bf = bf_id
-            if cell_bf_ids and ri < len(cell_bf_ids) and ci < len(cell_bf_ids[ri]):
-                cell_bf = cell_bf_ids[ri][ci]
-            lh = _build_list_header(ri, ci, 1, 1, size_x, size_y, bf_id=cell_bf)
+            if cell_bf_ids and ri < len(cell_bf_ids) and data_ci < len(cell_bf_ids[ri]):
+                cell_bf = cell_bf_ids[ri][data_ci]
+
+            # Determine images for this cell
+            imgs: list[CellImageInfo] = []
+            if cell_images and ri < len(cell_images) and data_ci < len(cell_images[ri]):
+                imgs = cell_images[ri][data_ci]
+
+            # paragraph count = 1 (text) + number of images
+            para_count = 1 + len(imgs)
+            lh = _build_list_header(
+                ri, logical_ci, cs, rs, size_x, size_y,
+                bf_id=cell_bf, para_count=para_count,
+            )
             out += _pack_record(HWPTAG_LIST_HEADER, level + 2, lh)
 
             spans = [TextSpan("", 0)]
-            if ri < len(cell_texts) and ci < len(cell_texts[ri]):
-                spans = cell_texts[ri][ci] or [TextSpan("", 0)]
+            if ri < len(cell_texts) and data_ci < len(cell_texts[ri]):
+                spans = cell_texts[ri][data_ci] or [TextSpan("", 0)]
 
+            cell_ps = 0
+            if cell_ps_ids and ri < len(cell_ps_ids) and data_ci < len(cell_ps_ids[ri]):
+                cell_ps = cell_ps_ids[ri][data_ci]
+
+            has_imgs = len(imgs) > 0
             cell_para, _ = build_paragraph(
-                spans, level=level + 2, is_last=True, vpos=0,
-                content_width=size_x - 2 * _DEFAULT_CELL_PADDING_H,
+                spans, ps_id=cell_ps, level=level + 2,
+                is_last=(not has_imgs),  # only last if no images follow
+                vpos=0,
+                content_width=max(1, size_x - 2 * _DEFAULT_CELL_PADDING_H),
                 font_size_hu=font_size_hu,
                 line_spacing_pct=line_spacing_pct,
             )
             out += cell_para
+
+            # Emit image paragraphs inside the cell
+            for img_idx, img_info in enumerate(imgs):
+                cell_content_w = max(1, size_x - 2 * _DEFAULT_CELL_PADDING_H)
+                iw = img_info.img_width
+                ih = img_info.img_height
+                if iw > cell_content_w:
+                    ratio = cell_content_w / iw
+                    iw = cell_content_w
+                    ih = int(ih * ratio)
+                img_rec, _ = build_image(
+                    img_info.bin_item_id, iw, ih, vpos=0,
+                    level=level + 2,
+                    font_size_hu=font_size_hu,
+                    line_spacing_pct=line_spacing_pct,
+                )
+                # Set MSB on last image paragraph in cell
+                if img_idx == len(imgs) - 1:
+                    img_rec = bytearray(img_rec)
+                    if len(img_rec) >= 8:
+                        ph_val = struct.unpack_from('<I', img_rec, 4)[0]
+                        struct.pack_into('<I', img_rec, 4, ph_val | _MSB)
+                    img_rec = bytes(img_rec)
+                out += img_rec
+
+            logical_ci += cs
+            data_ci += 1
 
     line_height = font_size_hu * line_spacing_pct // 100
     total_height = table_height + line_height
@@ -1013,6 +1171,18 @@ def _build_note_records(
 # 머리글/바닥글 빌더
 # ---------------------------------------------------------------------------
 
+_HF_INLINE_CTRL_CODE = 0x0010
+
+
+def build_hf_inline_anchor(is_footer: bool) -> bytes:
+    """Build 16-byte inline ctrl anchor for header/footer in PARA_TEXT."""
+    ctrl_id = _CTRL_ID_FOOT if is_footer else _CTRL_ID_HEAD
+    buf = struct.pack("<H", _HF_INLINE_CTRL_CODE)
+    buf += ctrl_id
+    buf += b"\x00" * 8
+    buf += struct.pack("<H", _HF_INLINE_CTRL_CODE)
+    return buf
+
 _CTRL_ID_HEAD = b"\x64\x61\x65\x68"  # 'head' LE (reversed)
 _CTRL_ID_FOOT = b"\x74\x6f\x6f\x66"  # 'foot' LE (reversed)
 
@@ -1031,8 +1201,8 @@ def build_header_footer(
     """Build header/footer CTRL_HEADER + LIST_HEADER + content paragraph.
 
     Record tree:
-      CTRL_HEADER 'head'/'foot' (level)     — 8 bytes
-        LIST_HEADER (level+1)                — 16 bytes
+      CTRL_HEADER 'head'/'foot' (level)     — 12 bytes
+        LIST_HEADER (level+1)                — 34 bytes
         PARA_HEADER (level+1)                — content paragraph
           PARA_TEXT (level+2)
           PARA_CHAR_SHAPE (level+2)
@@ -1040,13 +1210,18 @@ def build_header_footer(
     """
     ctrl_id = _CTRL_ID_FOOT if is_footer else _CTRL_ID_HEAD
     attr = _APPLY_TO_MAP.get(apply_to, 0)
-    ctrl_payload = ctrl_id + struct.pack("<I", attr)
+    ctrl_payload = ctrl_id + struct.pack("<II", 0, attr)
     out = _pack_record(HWPTAG_CTRL_HEADER, level, ctrl_payload)
 
-    lh = struct.pack("<IIII", 1, 0, 0, 0)
+    hf_height = font_size_hu * line_spacing_pct // 100
+    lh = struct.pack("<HH", 1, 0)
+    lh += struct.pack("<I", 0)
+    lh += struct.pack("<I", content_width)
+    lh += struct.pack("<I", hf_height)
+    lh += b"\x00" * 18
     out += _pack_record(HWPTAG_LIST_HEADER, level + 1, lh)
 
-    text = "".join(s.text for s in spans) if spans else ""
+    text = _sanitize_text("".join(s.text for s in spans)) if spans else ""
     pt = text.encode("utf-16-le") + b"\x0d\x00"
     char_cnt = len(pt) // 2
     first_cs = spans[0].cs_id if spans else 0
@@ -1056,7 +1231,8 @@ def build_header_footer(
     ph = _build_para_header(char_cnt, 1, 1, is_last=True)
 
     out += _pack_record(HWPTAG_PARA_HEADER, level + 1, ph)
-    out += _pack_record(HWPTAG_PARA_TEXT, level + 2, pt)
+    if text:
+        out += _pack_record(HWPTAG_PARA_TEXT, level + 2, pt)
     out += _pack_record(HWPTAG_PARA_CHAR_SHAPE, level + 2, pcs)
     out += _pack_record(HWPTAG_PARA_LINE_SEG, level + 2, pls)
     return out
@@ -1067,31 +1243,56 @@ def build_header_footer(
 # ---------------------------------------------------------------------------
 
 _SHAPE_TYPE_PIC = b"\x63\x69\x70\x24"   # '$pic' reversed
+_SHAPE_TYPE_REC = b"\x63\x65\x72\x24"   # '$rec' reversed
 
-_GSO_CTRL_ATTR = 0x042A2311
+_GSO_CTRL_ATTR = 0x040A2311
+_GSO_INST_COUNTER = 0x70000001
 
 
-def _build_gso_ctrl_header(width: int, height: int) -> bytes:
-    """CTRL_HEADER 'gso ' 페이로드 (44B, hwplib 역분석 기준)."""
+def _next_gso_instance_id() -> int:
+    global _GSO_INST_COUNTER
+    val = _GSO_INST_COUNTER
+    _GSO_INST_COUNTER += 1
+    return val
+
+
+_GSO_CTRL_ATTR_FLOATING = 0x040A2310  # reference HWP: square flow, floating
+
+
+def _build_gso_ctrl_header(
+    width: int, height: int,
+    x_offset: int = 0, y_offset: int = 0,
+    floating: bool = False, flow: str | None = None,
+) -> bytes:
+    """CTRL_HEADER 'gso ' 페이로드 (46B, 한컴 실제 파일 기준)."""
+    inst_id = _next_gso_instance_id()
+    if flow == 'back':
+        attr = 0x04AA2310  # textWrap=5(behind) at bits 21-23
+    elif floating:
+        attr = _GSO_CTRL_ATTR_FLOATING
+    else:
+        attr = _GSO_CTRL_ATTR
     buf = _CTRL_ID_GSO
-    buf += struct.pack("<I", _GSO_CTRL_ATTR)
-    buf += struct.pack("<ii", 0, 0)            # yOffset, xOffset
+    buf += struct.pack("<I", attr)
+    buf += struct.pack("<ii", y_offset, x_offset)
     buf += struct.pack("<II", width, height)
     buf += struct.pack("<I", 0)                # zOrder
     buf += struct.pack("<2H", 0, 0)            # margins left, right
     buf += struct.pack("<2H", 0, 0)            # margins top, bottom
-    buf += struct.pack("<I", 0)                # instanceId
-    buf += struct.pack("<I", 0)                # description (0 = no text)
-    assert len(buf) == 44
+    buf += struct.pack("<I", inst_id)          # instanceId
+    buf += struct.pack("<H", 0)                # preventPageBreak
+    buf += struct.pack("<H", 0)                # descriptionLen (0 = no text)
+    buf += struct.pack("<H", 0)                # reserved
+    assert len(buf) == 46
     return buf
 
 
 def _build_shape_component_pic(width: int, height: int) -> bytes:
-    """SHAPE_COMPONENT '$pic' 페이로드.
+    """SHAPE_COMPONENT '$pic' 페이로드 (196 bytes).
 
-    레이아웃:
+    레이아웃 (한컴 실제 파일 역분석 기준):
       0-3:   shapeType '$pic'
-      4-7:   shapeType '$pic' (repeated for container)
+      4-7:   shapeType '$pic' (repeated)
       8-11:  instId (0)
       12-15: xOffset (0)
       16-17: flags (0)
@@ -1100,14 +1301,15 @@ def _build_shape_component_pic(width: int, height: int) -> bytes:
       24-27: origHeight
       28-31: curWidth
       32-35: curHeight
-      36-39: property (0x24000000 = pic + inline)
-      40-43: rotateAngle (0)
-      44-47: rotateXCenter (width/2)
-      48-51: rotateYCenter (height/2)
-      52-53: nScaleRotatePairs (0)
-      54-197: 2 identity matrices (2 × 6 doubles × 8B = 96B), total 54+96=150B
+      36-39: property (0x00080000)
+      40-41: rotateAngle (uint16, 0)
+      42-45: rotateXCenter (width/2)
+      46-49: rotateYCenter (height/2)
+      50-51: nScaleRotatePairs (1)
+      52-147: 2 base identity matrices (2 × 6 doubles = 96B)
+      148-195: 1 scale-rotate identity matrix (6 doubles = 48B)
     """
-    buf = bytearray(150)
+    buf = bytearray(196)
     struct.pack_into("<4s", buf, 0, _SHAPE_TYPE_PIC)
     struct.pack_into("<4s", buf, 4, _SHAPE_TYPE_PIC)
     struct.pack_into("<i", buf, 8, 0)            # instId
@@ -1118,37 +1320,45 @@ def _build_shape_component_pic(width: int, height: int) -> bytes:
     struct.pack_into("<I", buf, 24, height)      # origHeight
     struct.pack_into("<I", buf, 28, width)       # curWidth
     struct.pack_into("<I", buf, 32, height)      # curHeight
-    struct.pack_into("<I", buf, 36, 0x24000000)  # property: pic + inline
-    struct.pack_into("<I", buf, 40, 0)           # rotateAngle
-    struct.pack_into("<i", buf, 44, width // 2)  # rotateXCenter
-    struct.pack_into("<i", buf, 48, height // 2) # rotateYCenter
-    struct.pack_into("<H", buf, 52, 0)           # nScaleRotatePairs
-    # Identity matrix 1: [1,0,0,1,0,0] as 6 doubles
-    struct.pack_into("<d", buf, 54, 1.0)
-    struct.pack_into("<d", buf, 62, 0.0)
-    struct.pack_into("<d", buf, 70, 0.0)
-    struct.pack_into("<d", buf, 78, 1.0)
-    struct.pack_into("<d", buf, 86, 0.0)
-    struct.pack_into("<d", buf, 94, 0.0)
-    # Identity matrix 2: [1,0,0,1,0,0]
-    struct.pack_into("<d", buf, 102, 1.0)
-    struct.pack_into("<d", buf, 110, 0.0)
-    struct.pack_into("<d", buf, 118, 0.0)
-    struct.pack_into("<d", buf, 126, 1.0)
-    struct.pack_into("<d", buf, 134, 0.0)
-    struct.pack_into("<d", buf, 142, 0.0)
+    struct.pack_into("<I", buf, 36, 0x24080000)  # property (bit 19 = inline)
+    struct.pack_into("<H", buf, 40, 0)           # rotateAngle (uint16)
+    struct.pack_into("<i", buf, 42, width // 2)  # rotateXCenter
+    struct.pack_into("<i", buf, 46, height // 2) # rotateYCenter
+    struct.pack_into("<H", buf, 50, 1)           # nScaleRotatePairs
+    # Base identity matrix 1: [1,0,0,0,1,0]
+    struct.pack_into("<d", buf, 52, 1.0)
+    struct.pack_into("<d", buf, 60, 0.0)
+    struct.pack_into("<d", buf, 68, 0.0)
+    struct.pack_into("<d", buf, 76, 0.0)
+    struct.pack_into("<d", buf, 84, 1.0)
+    struct.pack_into("<d", buf, 92, 0.0)
+    # Base identity matrix 2: [1,0,0,0,1,0]
+    struct.pack_into("<d", buf, 100, 1.0)
+    struct.pack_into("<d", buf, 108, 0.0)
+    struct.pack_into("<d", buf, 116, 0.0)
+    struct.pack_into("<d", buf, 124, 0.0)
+    struct.pack_into("<d", buf, 132, 1.0)
+    struct.pack_into("<d", buf, 140, 0.0)
+    # Scale-rotate pair identity matrix: [1,0,0,0,1,0]
+    struct.pack_into("<d", buf, 148, 1.0)
+    struct.pack_into("<d", buf, 156, 0.0)
+    struct.pack_into("<d", buf, 164, 0.0)
+    struct.pack_into("<d", buf, 172, 0.0)
+    struct.pack_into("<d", buf, 180, 1.0)
+    struct.pack_into("<d", buf, 188, 0.0)
     return bytes(buf)
 
 
 def _build_shape_pic_payload(
     width: int, height: int, bin_item_id: int,
+    orig_width: int = 0, orig_height: int = 0,
 ) -> bytes:
     """SHAPE_COMPONENT_PIC 페이로드.
 
     Layout:
       0-3:   borderColor (0)
       4-7:   borderThickness (0)
-      8-11:  borderProperty (0xC0000000 = no border visible)
+      8-11:  borderProperty (0 = no border)
       12-15: leftTopX (0)
       16-19: leftTopY (0)
       20-23: rightTopX (width)
@@ -1163,18 +1373,20 @@ def _build_shape_pic_payload(
       56-59: bottomAfterCutting (height)
       60-63: brightness (0)
       64-67: contrast (0)
-      68:    effect (0)
-      69-70: binItemId (uint16 LE)
-      71:    borderTransparency (0)
-      72-75: instanceId (0)
-      76-79: imageTransparency (0)
-      80-83: brightImageWidth (width)
-      84-87: brightImageHeight (height)
+      68-70: effect + padding (3B)
+      71-72: binItemId (uint16 LE)
+      73:    borderTransparency (0)
+      74-77: instanceId (counter-based)
+      78-81: imageTransparency (0)
+      82-85: brightImageWidth (orig pixel dims)
+      86-89: brightImageHeight (orig pixel dims)
     """
-    buf = bytearray(88)
+    bw = orig_width if orig_width else width
+    bh = orig_height if orig_height else height
+    buf = bytearray(90)
     struct.pack_into("<I", buf, 0, 0)              # borderColor
     struct.pack_into("<I", buf, 4, 0)              # borderThickness
-    struct.pack_into("<I", buf, 8, 0xC0000000)     # borderProperty
+    struct.pack_into("<I", buf, 8, 0)              # borderProperty
     struct.pack_into("<i", buf, 12, 0)             # leftTopX
     struct.pack_into("<i", buf, 16, 0)             # leftTopY
     struct.pack_into("<i", buf, 20, width)         # rightTopX
@@ -1190,12 +1402,13 @@ def _build_shape_pic_payload(
     struct.pack_into("<I", buf, 60, 0)             # brightness
     struct.pack_into("<I", buf, 64, 0)             # contrast
     struct.pack_into("<B", buf, 68, 0)             # effect
-    struct.pack_into("<H", buf, 69, bin_item_id)   # binItemId
-    struct.pack_into("<B", buf, 71, 0)             # borderTransparency
-    struct.pack_into("<I", buf, 72, 0)             # instanceId
-    struct.pack_into("<I", buf, 76, 0)             # imageTransparency
-    struct.pack_into("<I", buf, 80, width)         # brightImageWidth
-    struct.pack_into("<I", buf, 84, height)        # brightImageHeight
+    # 69-70: padding
+    struct.pack_into("<H", buf, 71, bin_item_id)   # binItemId (spec offset 71)
+    struct.pack_into("<B", buf, 73, 0)             # borderTransparency
+    struct.pack_into("<I", buf, 74, _next_gso_instance_id())  # instanceId
+    struct.pack_into("<I", buf, 78, 0)             # imageTransparency
+    struct.pack_into("<I", buf, 82, bw)            # brightImageWidth
+    struct.pack_into("<I", buf, 86, bh)            # brightImageHeight
     return bytes(buf)
 
 
@@ -1207,6 +1420,11 @@ def build_image(
     level: int = 0,
     font_size_hu: int = 1000,
     line_spacing_pct: int = 160,
+    orig_width: int = 0,
+    orig_height: int = 0,
+    x_offset: int = 0,
+    y_offset: int = 0,
+    flow: str | None = None,
 ) -> tuple[bytes, int]:
     """Build an image record set (host paragraph + CTRL_HEADER + SHAPE_COMPONENT + PIC).
 
@@ -1226,6 +1444,14 @@ def build_image(
         Font size in HWPUNIT.
     line_spacing_pct : int, default 160
         Line spacing percentage.
+    orig_width : int, default 0
+        Original image width in HWPUNIT (for PIC brightImageWidth).
+    orig_height : int, default 0
+        Original image height in HWPUNIT (for PIC brightImageHeight).
+    x_offset : int, default 0
+        Horizontal offset in HWPUNIT.
+    y_offset : int, default 0
+        Vertical offset in HWPUNIT.
 
     Returns
     -------
@@ -1238,7 +1464,11 @@ def build_image(
     char_cnt = len(pt_payload) // 2
     ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00000800)
     pcs = struct.pack("<II", 0, 0)
-    pls = _build_pls(char_cnt, vpos=vpos)
+    is_floating = x_offset != 0 or y_offset != 0 or flow in ('back', 'front')
+    if is_floating:
+        pls = _build_pls(char_cnt, vpos=vpos, h=0)
+    else:
+        pls = _build_pls(char_cnt, vpos=vpos)
 
     out = _pack_record(HWPTAG_PARA_HEADER, level, ph)
     out += _pack_record(HWPTAG_PARA_TEXT, level + 1, pt_payload)
@@ -1247,7 +1477,9 @@ def build_image(
 
     # 2. CTRL_HEADER 'gso ' (46B)
     out += _pack_record(HWPTAG_CTRL_HEADER, level + 1,
-                        _build_gso_ctrl_header(img_width, img_height))
+                        _build_gso_ctrl_header(img_width, img_height,
+                                               x_offset=x_offset, y_offset=y_offset,
+                                               floating=is_floating, flow=flow))
 
     # 3. SHAPE_COMPONENT (tag=76) — '$pic' (196B)
     out += _pack_record(HWPTAG_SHAPE_COMPONENT, level + 2,
@@ -1255,10 +1487,207 @@ def build_image(
 
     # 4. SHAPE_COMPONENT_PIC (tag=85) — child of SHAPE_COMPONENT (level+3)
     out += _pack_record(HWPTAG_SHAPE_COMPONENT_PIC, level + 3,
-                        _build_shape_pic_payload(img_width, img_height, bin_item_id))
+                        _build_shape_pic_payload(img_width, img_height, bin_item_id,
+                                                 orig_width, orig_height))
 
     line_height = font_size_hu * line_spacing_pct // 100
+    if is_floating:
+        return out, 0
     return out, max(line_height, img_height)
+
+
+def _build_shape_component_rec(width: int, height: int) -> bytes:
+    """SHAPE_COMPONENT '$rec' payload for rectangle textbox (196B base)."""
+    buf = bytearray(196)
+    struct.pack_into("<4s", buf, 0, _SHAPE_TYPE_REC)
+    struct.pack_into("<4s", buf, 4, _SHAPE_TYPE_REC)
+    struct.pack_into("<i", buf, 8, 0)
+    struct.pack_into("<i", buf, 12, 0)
+    struct.pack_into("<H", buf, 16, 0)
+    struct.pack_into("<H", buf, 18, 1)
+    struct.pack_into("<I", buf, 20, width)
+    struct.pack_into("<I", buf, 24, height)
+    struct.pack_into("<I", buf, 28, width)
+    struct.pack_into("<I", buf, 32, height)
+    struct.pack_into("<I", buf, 36, 0)            # property=0: no fill/line/shadow data
+    struct.pack_into("<H", buf, 40, 0)
+    struct.pack_into("<i", buf, 42, width // 2)
+    struct.pack_into("<i", buf, 46, height // 2)
+    struct.pack_into("<H", buf, 50, 1)
+    struct.pack_into("<d", buf, 52, 1.0)
+    struct.pack_into("<d", buf, 84, 1.0)
+    struct.pack_into("<d", buf, 100, 1.0)
+    struct.pack_into("<d", buf, 132, 1.0)
+    struct.pack_into("<d", buf, 148, 1.0)
+    struct.pack_into("<d", buf, 180, 1.0)
+    return bytes(buf)
+
+
+def _build_textbox_list_header(width: int, height: int) -> bytes:
+    """LIST_HEADER for textbox content (33B, matching real HWP files)."""
+    buf = struct.pack("<I", 1)                      # nPara
+    buf += struct.pack("<I", 0x00000020)             # listFlags
+    buf += struct.pack("<4H", 283, 283, 283, 283)   # margins
+    buf += struct.pack("<I", width)                  # textWidth
+    buf += b"\x00" * 13                              # reserved/padding
+    return buf
+
+
+def _build_shape_rect_payload(
+    width: int, height: int, round_corner: int = 0,
+) -> bytes:
+    """SHAPE_COMPONENT_RECT payload (33B: round corner + 4 corner points + fill byte)."""
+    buf = bytearray(33)
+    struct.pack_into("<I", buf, 0, round_corner)
+    struct.pack_into("<i", buf, 4, 0)              # leftTopX
+    struct.pack_into("<i", buf, 8, 0)              # leftTopY
+    struct.pack_into("<i", buf, 12, width)          # rightTopX
+    struct.pack_into("<i", buf, 16, 0)              # rightTopY
+    struct.pack_into("<i", buf, 20, width)          # rightBottomX
+    struct.pack_into("<i", buf, 24, height)         # rightBottomY
+    struct.pack_into("<i", buf, 28, 0)              # leftBottomX
+    buf[32] = 0                                     # fill type (0=none)
+    return bytes(buf)
+
+
+def _css_hex_to_rgb(color: str) -> tuple[int, int, int]:
+    """'#RRGGBB' → (r, g, b)."""
+    c = color.lstrip("#")
+    if len(c) >= 6:
+        return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+    return 0, 0, 0
+
+
+def _build_fill_line_bytes(
+    fill_color: str | None,
+    line_color: str | None,
+    line_width_pt: float | None,
+) -> bytes:
+    """Build fill + line style bytes to append after SHAPE_COMPONENT payload.
+
+    Simplified version: solid fill + solid line only.
+    Layout (appended to SHAPE_COMPONENT payload BEFORE the matrices):
+      LineShape: 10 bytes (color(4) + width(4) + style(1) + endcap(1))
+      Fill: 1 byte type + variable payload
+    This is a simplified serialization that matches common real HWP files.
+    """
+    buf = b""
+    if line_color:
+        r, g, b = _css_hex_to_rgb(line_color)
+        lc = struct.pack("<I", r | (g << 8) | (b << 16))
+        lw = struct.pack("<I", int((line_width_pt or 0.4) * 100))
+        buf += lc + lw + b"\x00\x00"
+    if fill_color:
+        r, g, b = _css_hex_to_rgb(fill_color)
+        fc = r | (g << 8) | (b << 16)
+        buf += struct.pack("<I", fc)
+    return buf
+
+
+def _build_rec_shcomp(
+    width: int, height: int,
+    line_color: str | None = None,
+    fill_color: str | None = None,
+) -> bytes:
+    """Build a template-based $rec SHAPE_COMPONENT (252B) with patched dimensions/colors."""
+    buf = bytearray(252)
+    buf[0:4] = _SHAPE_TYPE_REC
+    buf[4:8] = _SHAPE_TYPE_REC
+    struct.pack_into("<H", buf, 18, 1)           # nGrp
+    struct.pack_into("<I", buf, 20, width)        # initW
+    struct.pack_into("<I", buf, 24, height)       # initH
+    struct.pack_into("<I", buf, 28, width)        # curW
+    struct.pack_into("<I", buf, 32, height)       # curH
+    struct.pack_into("<I", buf, 36, 0x01080000)   # prop
+    struct.pack_into("<i", buf, 42, width // 2)   # rotCX
+    struct.pack_into("<i", buf, 46, height // 2)  # rotCY
+    struct.pack_into("<H", buf, 50, 1)            # nPairs
+    struct.pack_into("<d", buf, 52, 1.0)
+    struct.pack_into("<d", buf, 84, 1.0)
+    struct.pack_into("<d", buf, 100, 1.0)
+    struct.pack_into("<d", buf, 132, 1.0)
+    struct.pack_into("<d", buf, 148, 1.0)
+    struct.pack_into("<d", buf, 180, 1.0)
+    extra_off = 196
+    if line_color:
+        r, g, b = _css_hex_to_rgb(line_color)
+        struct.pack_into("<BBBB", buf, extra_off, r, g, b, 0)
+    else:
+        struct.pack_into("<I", buf, extra_off, 0)
+    struct.pack_into("<I", buf, extra_off + 4, 0x00000021)
+    struct.pack_into("<I", buf, extra_off + 8, 0xD1000041)
+    struct.pack_into("<I", buf, extra_off + 12, 0x00000100)
+    if fill_color:
+        r, g, b = _css_hex_to_rgb(fill_color)
+        struct.pack_into("<BBBB", buf, extra_off + 16, 0, r, g, b)
+    else:
+        struct.pack_into("<BBBB", buf, extra_off + 16, 0, 0xFF, 0xFF, 0xFF)
+    struct.pack_into("<I", buf, extra_off + 20, 0x00999999)
+    struct.pack_into("<I", buf, extra_off + 24, 0xFFFFFFFF)
+    buf[extra_off + 28:extra_off + 56] = b'\x00' * 28
+    return bytes(buf)
+
+
+def build_textbox_shape(
+    content_records: bytes,
+    width: int,
+    height: int,
+    vpos: int,
+    fill_color: str | None = None,
+    line_color: str | None = None,
+    line_width_pt: float | None = None,
+    level: int = 0,
+    font_size_hu: int = 1000,
+    line_spacing_pct: int = 160,
+) -> tuple[bytes, int]:
+    """Build a GSO textbox rectangle with two SHAPE_COMPONENTs (template-based)."""
+    inline_obj = _build_inline_ctrl_obj(_CTRL_CODE_GSO, _CTRL_ID_GSO)
+    pt_payload = inline_obj + b"\x0d\x00"
+    char_cnt = len(pt_payload) // 2
+    ph = _build_para_header(char_cnt, 1, 1, control_mask=0x00000800)
+    pcs = struct.pack("<II", 0, 0)
+    pls = _build_pls(char_cnt, vpos=vpos)
+
+    out = _pack_record(HWPTAG_PARA_HEADER, level, ph)
+    out += _pack_record(HWPTAG_PARA_TEXT, level + 1, pt_payload)
+    out += _pack_record(HWPTAG_PARA_CHAR_SHAPE, level + 1, pcs)
+    out += _pack_record(HWPTAG_PARA_LINE_SEG, level + 1, pls)
+
+    out += _pack_record(HWPTAG_CTRL_HEADER, level + 1,
+                        _build_gso_ctrl_header(width, height))
+
+    # Single SHAPE_COMPONENT $rec (matching reference)
+    shcomp = _build_rec_shcomp(width, height, line_color=line_color, fill_color=fill_color)
+    out += _pack_record(HWPTAG_SHAPE_COMPONENT, level + 2, shcomp)
+
+    # LIST_HEADER (45B template)
+    lh = bytearray(45)
+    struct.pack_into("<I", lh, 0, 1)                      # nPara
+    struct.pack_into("<I", lh, 4, 0x00000020)              # flags
+    struct.pack_into("<4H", lh, 8, 283, 283, 141, 141)    # margins
+    struct.pack_into("<I", lh, 16, width)                  # textWidth
+    # bytes 20-44: zeros + trailing template bytes
+    lh[33] = 0xFF; lh[34] = 0x1B; lh[35] = 0x02; lh[36] = 0x01  # template pattern
+    struct.pack_into("<I", lh, 40, 0x00000140)             # template trailing
+    out += _pack_record(HWPTAG_LIST_HEADER, level + 3, bytes(lh))
+
+    # Content at level+3 (same as LIST_HEADER)
+    out += _bump_record_levels(content_records, level + 3)
+
+    # RECT (33B template) at level+3
+    rect = bytearray(33)
+    struct.pack_into("<I", rect, 0, 0)                     # roundCorner
+    struct.pack_into("<i", rect, 4, 0)
+    struct.pack_into("<i", rect, 8, width)
+    struct.pack_into("<i", rect, 12, 0)
+    struct.pack_into("<i", rect, 16, width)
+    struct.pack_into("<i", rect, 20, height)
+    struct.pack_into("<i", rect, 24, 0)
+    struct.pack_into("<i", rect, 28, height)
+    out += _pack_record(HWPTAG_SHAPE_COMPONENT_RECT, level + 3, bytes(rect))
+
+    line_height = font_size_hu * line_spacing_pct // 100
+    return out, max(line_height, height)
 
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 from lxml import etree
@@ -14,11 +15,13 @@ from udf.schema import (
     CellFormat,
     EndnoteBlock,
     EquationInline,
+    FieldBlock,
     FooterBlock,
     FootnoteBlock,
     FootnoteRefInline,
     HeaderBlock,
     HeadingBlock,
+    ImageBlock,
     ImageInline,
     LinkInline,
     ListBlock,
@@ -229,10 +232,13 @@ def _collect_inlines(
 
     hp:t (텍스트), hp:pic (이미지), hp:eqEdit (수식), hp:ctrl (하이퍼링크 등),
     hp:footNote, hp:endNote, hp:container (텍스트박스) 를 처리한다.
+    fieldBegin/fieldEnd: HYPERLINK, CLICK_HERE, FORMULA 필드를 처리한다.
 
     extra_blocks가 주어지면, 각주/미주 블록을 해당 리스트에 추가한다.
     """
     inlines: list[Any] = []
+    active_field_url: str | None = None
+    field_text_parts: list[str] = []
 
     for run in p_el.iterfind("hp:run", NS):
         char_pr_id = int(run.get("charPrIDRef", "0"))
@@ -242,7 +248,19 @@ def _collect_inlines(
             tag = _local_tag(child)
 
             if tag == "t":
-                _collect_text_inlines(child, cs, info, inlines)
+                if active_field_url is not None:
+                    text = child.text or ""
+                    if child.tail:
+                        text += child.tail
+                    for sub in child:
+                        if sub.text:
+                            text += sub.text
+                        if sub.tail:
+                            text += sub.tail
+                    if text:
+                        field_text_parts.append(unicodedata.normalize("NFC", text))
+                else:
+                    _collect_text_inlines(child, cs, info, inlines)
             elif tag == "pic":
                 img = _parse_pic(child)
                 if img is not None:
@@ -257,6 +275,35 @@ def _collect_inlines(
                     link = _parse_hyperlink_ctrl(child, info)
                     if link is not None:
                         inlines.append(link)
+                else:
+                    fb = child.find("hp:fieldBegin", NS)
+                    if fb is not None:
+                        ft = fb.get("type", "")
+                        if ft == "HYPERLINK":
+                            url = _extract_field_param(fb, "Path")
+                            if url:
+                                active_field_url = url
+                                field_text_parts = []
+                        elif ft == "CLICK_HERE":
+                            direction = _extract_field_param(fb, "Direction") or ""
+                            if direction and extra_blocks is not None:
+                                fb_block = FieldBlock(
+                                    type="field",
+                                    id=_next_block_id(),
+                                    field_type="click_here",
+                                    value=direction,
+                                    inlines=[TextInline(text=direction)],
+                                )
+                                extra_blocks.append(fb_block)
+                    fe = child.find("hp:fieldEnd", NS)
+                    if fe is not None and active_field_url is not None:
+                        link_text = "".join(field_text_parts)
+                        inlines.append(LinkInline(
+                            text=link_text or active_field_url,
+                            url=active_field_url,
+                        ))
+                        active_field_url = None
+                        field_text_parts = []
             elif tag == "footNote" or tag == "endNote":
                 ref_inline, note_block = _parse_note(child, tag, info)
                 if ref_inline is not None:
@@ -264,11 +311,68 @@ def _collect_inlines(
                 if note_block is not None and extra_blocks is not None:
                     extra_blocks.append(note_block)
             elif tag == "container":
-                tb = _parse_textbox_from_container(child, info)
-                if tb is not None and extra_blocks is not None:
-                    extra_blocks.append(tb)
+                result = _parse_textbox_from_container(child, info)
+                if result is not None and extra_blocks is not None:
+                    if isinstance(result, list):
+                        extra_blocks.extend(result)
+                    else:
+                        extra_blocks.append(result)
+            elif tag in ("rect", "ellipse", "arc", "polygon", "curve", "connectLine"):
+                draw_blocks = _collect_draw_content(child, info)
+                bg = _extract_fill_color(child)
+                bg_img = _extract_fill_image(child)
+                lc, lw_val = _extract_line_color(child)
+                pos_info = _extract_position_info(child)
+                if draw_blocks and extra_blocks is not None:
+                    for db in draw_blocks:
+                        if isinstance(db, TextBoxBlock):
+                            if bg:
+                                db.background_color = db.background_color or bg
+                            if bg_img:
+                                db.background_image = db.background_image or bg_img
+                            if lc:
+                                db.line_color = db.line_color or lc
+                            if lw_val:
+                                db.line_width = db.line_width or lw_val
+                            if pos_info and not db.position:
+                                db.position = pos_info
+                    extra_blocks.extend(draw_blocks)
+                elif bg_img and extra_blocks is not None:
+                    # Shape with fill image but no text content — emit as image
+                    sz = child.find("hp:curSz", NS)
+                    if sz is None:
+                        sz = child.find("hp:orgSz", NS)
+                    iw = float(sz.get("width", "0")) / 100 if sz is not None else None
+                    ih = float(sz.get("height", "0")) / 100 if sz is not None else None
+                    if iw and iw <= 0:
+                        iw = None
+                    if ih and ih <= 0:
+                        ih = None
+                    img_inline = ImageInline(src=bg_img, width=iw, height=ih)
+                    p_id = _next_block_id()
+                    extra_blocks.append(ParagraphBlock(
+                        type="paragraph", id=p_id, inlines=[img_inline],
+                    ))
+
+    if active_field_url is not None:
+        link_text = "".join(field_text_parts)
+        inlines.append(LinkInline(
+            text=link_text or active_field_url,
+            url=active_field_url,
+        ))
 
     return inlines
+
+
+def _extract_field_param(field_el: etree._Element, param_name: str) -> str | None:
+    """fieldBegin의 parameters에서 특정 이름의 stringParam 값을 추출."""
+    params = field_el.find("hp:parameters", NS)
+    if params is None:
+        return None
+    for sp in params.iterfind("hp:stringParam", NS):
+        if sp.get("name", "") == param_name:
+            return sp.text or sp.get("value", "")
+    return None
 
 
 def _local_tag(el: etree._Element) -> str:
@@ -317,6 +421,7 @@ def _collect_text_inlines(
     # 직접 텍스트
     text = t_el.text or ""
     if text:
+        text = unicodedata.normalize("NFC", text)
         inlines.append(_make_text_inline(text))
 
     # 하위 요소 (tab, lineBreak 등)
@@ -328,7 +433,8 @@ def _collect_text_inlines(
             inlines.append(TextInline(text="\n"))
         # tail 텍스트 (하위 요소 뒤의 텍스트)
         if sub.tail:
-            inlines.append(_make_text_inline(sub.tail))
+            tail = unicodedata.normalize("NFC", sub.tail)
+            inlines.append(_make_text_inline(tail))
 
 
 def _resolve_font_name(cs: dict[str, Any], info: DocInfoResult) -> str | None:
@@ -363,6 +469,8 @@ def _parse_pic(pic_el: etree._Element) -> ImageInline | None:
     이미지 소스는 hp:img 요소의 binaryItemIDRef 속성에서 가져온다.
     """
     sz_el = pic_el.find("hp:sz", NS)
+    if sz_el is None:
+        sz_el = pic_el.find("hp:curSz", NS)
     width: float | None = None
     height: float | None = None
     if sz_el is not None:
@@ -372,9 +480,21 @@ def _parse_pic(pic_el: etree._Element) -> ImageInline | None:
             width = hwpunit_to_pt(w)
         if h:
             height = hwpunit_to_pt(h)
+    if not width or not height:
+        org_el = pic_el.find("hp:orgSz", NS)
+        if org_el is not None:
+            ow = int(org_el.get("width", "0"))
+            oh = int(org_el.get("height", "0"))
+            if ow and not width:
+                width = hwpunit_to_pt(ow)
+            if oh and not height:
+                height = hwpunit_to_pt(oh)
 
-    # hp:img는 여러 경로에 있을 수 있음
-    img_el = pic_el.find(".//hp:img", NS)
+    # img 요소는 hc (core) 네임스페이스에 있음
+    img_el = pic_el.find(".//hc:img", NS)
+    if img_el is None:
+        # fallback: hp 네임스페이스로도 시도
+        img_el = pic_el.find(".//hp:img", NS)
     if img_el is None:
         return None
 
@@ -478,31 +598,327 @@ def _parse_note(
 
 def _parse_textbox_from_container(
     container_el: etree._Element, info: DocInfoResult
-) -> TextBoxBlock | None:
-    """<hp:container> → TextBoxBlock.
+) -> TextBoxBlock | list[Block] | None:
+    """<hp:container> → TextBoxBlock or list[Block].
 
-    drawText > subList 안의 단락들을 파싱한다.
+    컨테이너 내부의 모든 drawText (rect, ellipse 등 도형 내부)에서
+    텍스트를 추출한다. 중첩 컨테이너도 재귀적으로 처리한다.
+    컨테이너의 sz/curSz에서 크기 정보를 추출하여 설정한다.
+    컨테이너의 pos에서 위치 정보를 추출하여 자식에 전파한다.
     """
-    # hp:drawText 또는 직접 hp:subList 찾기
-    sub_list = container_el.find(".//hp:subList", NS)
-    if sub_list is None:
+    blocks = _collect_draw_content(container_el, info)
+    if not blocks:
         return None
 
-    content: list[Block] = []
+    container_bg = _extract_fill_color(container_el)
+    container_lc, container_lw = _extract_line_color(container_el)
+    if container_bg or container_lc:
+        for b in blocks:
+            if isinstance(b, TextBoxBlock):
+                if container_bg:
+                    b.background_color = b.background_color or container_bg
+                if container_lc:
+                    b.line_color = b.line_color or container_lc
+                if container_lw:
+                    b.line_width = b.line_width or container_lw
+
+    container_pos = _extract_position_info(container_el)
+
+    sz = container_el.find("hp:sz", NS)
+    if sz is None:
+        sz = container_el.find("hp:curSz", NS)
+    if sz is not None:
+        cw = float(sz.get("width", "0")) / 100
+        ch = float(sz.get("height", "0")) / 100
+        if cw > 0 and ch > 0:
+            for b in blocks:
+                if isinstance(b, TextBoxBlock) and not b.width:
+                    b.width = cw
+                if isinstance(b, TextBoxBlock) and not b.height:
+                    b.height = ch
+
+    if container_pos:
+        for b in blocks:
+            if isinstance(b, TextBoxBlock) and b.position:
+                b.position.hrelto = b.position.hrelto or container_pos.hrelto
+                b.position.vrelto = b.position.vrelto or container_pos.vrelto
+
+    _clip_overlapping_widths(blocks)
+
+    if len(blocks) == 1:
+        return blocks[0]
+    return blocks
+
+
+def _clip_overlapping_widths(blocks: list[Block]) -> None:
+    """Clip TextBoxBlock widths to prevent horizontal overlap at same Y."""
+    positioned = [
+        b for b in blocks
+        if isinstance(b, TextBoxBlock) and b.position and b.position.x is not None and b.width
+    ]
+    if len(positioned) < 2:
+        return
+    for i, a in enumerate(positioned):
+        a_end = a.position.x + a.width
+        for b in positioned:
+            if b is a:
+                continue
+            if b.position.y is None or a.position.y is None:
+                continue
+            if abs(b.position.y - a.position.y) > 5:
+                continue
+            if b.position.x > a.position.x and b.position.x < a_end:
+                a.width = b.position.x - a.position.x
+
+
+def _extract_fill_color(shape_el: etree._Element) -> str | None:
+    """Extract background color from a shape's fillBrush > winBrush."""
+    fb = shape_el.find("hp:fillBrush", NS)
+    if fb is None:
+        fb = shape_el.find("hc:fillBrush", NS)
+    if fb is None:
+        return None
+    wb = fb.find("hp:winBrush", NS)
+    if wb is None:
+        wb = fb.find("hc:winBrush", NS)
+    if wb is not None:
+        color = wb.get("faceColor", "")
+        alpha = wb.get("alpha", "0")
+        if color and color != "#FFFFFF" and alpha != "255":
+            return color
+    return None
+
+
+def _extract_fill_image(shape_el: etree._Element) -> str | None:
+    """Extract background image source from a shape's fillBrush > imgFill > img.
+
+    Returns a 'bindata:<binaryItemIDRef>' string if an image fill is found.
+    """
+    fb = shape_el.find("hp:fillBrush", NS)
+    if fb is None:
+        fb = shape_el.find("hc:fillBrush", NS)
+    if fb is None:
+        return None
+    img_fill = fb.find("hp:imgFill", NS)
+    if img_fill is None:
+        img_fill = fb.find("hc:imgFill", NS)
+    if img_fill is None:
+        return None
+    img_el = img_fill.find("hp:img", NS)
+    if img_el is None:
+        img_el = img_fill.find("hc:img", NS)
+    if img_el is None:
+        return None
+    binary_ref = img_el.get("binaryItemIDRef", "")
+    if not binary_ref:
+        return None
+    return f"bindata:{binary_ref}"
+
+
+def _extract_line_color(shape_el: etree._Element) -> tuple[str | None, float | None]:
+    """Extract line color and width from a shape's lineShape element."""
+    ls = shape_el.find("hp:lineShape", NS)
+    if ls is None:
+        return None, None
+    color = ls.get("color", "")
+    if not color or color == "#000000":
+        return None, None
+    width_raw = ls.get("width", "0")
+    width_pt = float(width_raw) / 100 if width_raw else None
+    return color, width_pt
+
+
+_HRELTO_MAP = {"PAPER": "paper", "PAGE": "page", "COLUMN": "column", "PARA": "paragraph"}
+_VRELTO_MAP = {"PAPER": "paper", "PAGE": "page", "PARA": "paragraph"}
+_FLOW_MAP = {"BLOCK": "block", "BACK": "back", "FRONT": "front", "TIGHT": "tight", "THROUGH": "through"}
+
+
+def _to_signed32(val: int) -> int:
+    """Convert unsigned 32-bit integer to signed."""
+    if val >= 0x80000000:
+        return val - 0x100000000
+    return val
+
+
+def _extract_offset_as_position(shape_el: etree._Element) -> PositionInfo | None:
+    """Extract offset element from a shape inside a container as position info."""
+    off = shape_el.find("hp:offset", NS)
+    if off is None:
+        off = shape_el.find("hc:offset", NS)
+    if off is None:
+        return None
+    x_val = off.get("x", "")
+    y_val = off.get("y", "")
+    if not x_val and not y_val:
+        return None
+    x = _to_signed32(int(x_val)) / _HWPUNIT_PER_PT if x_val else 0.0
+    y = _to_signed32(int(y_val)) / _HWPUNIT_PER_PT if y_val else 0.0
+    if x < 0:
+        x = 0.0
+    if y < 0:
+        y = 0.0
+    return PositionInfo(
+        x=x, y=y,
+        hrelto="paper", vrelto="paper",
+        overlap_others=True,
+    )
+
+
+def _extract_position_info(shape_el: etree._Element) -> PositionInfo | None:
+    """Extract position/size info from a shape element's pos/sz children."""
+    pos_el = shape_el.find("hp:pos", NS)
+    sz_el = shape_el.find("hp:sz", NS)
+    if pos_el is None and sz_el is None:
+        return None
+
+    pi = PositionInfo()
+
+    if pos_el is not None:
+        pi.like_char = pos_el.get("treatAsChar") == "1"
+        pi.overlap_others = pos_el.get("allowOverlap") == "1"
+        pi.affect_line_spacing = pos_el.get("affectLSpacing") == "1"
+
+        h_off = pos_el.get("horzOffset", "")
+        v_off = pos_el.get("vertOffset", "")
+        if h_off:
+            pi.x = int(h_off) / _HWPUNIT_PER_PT
+        if v_off:
+            pi.y = int(v_off) / _HWPUNIT_PER_PT
+
+        pi.hrelto = _HRELTO_MAP.get(pos_el.get("horzRelTo", ""), None)
+        pi.vrelto = _VRELTO_MAP.get(pos_el.get("vertRelTo", ""), None)
+
+        h_align = pos_el.get("horzAlign", "")
+        if h_align and h_align != "LEFT":
+            pi.halign = h_align.lower()
+        v_align = pos_el.get("vertAlign", "")
+        if v_align and v_align != "TOP":
+            pi.valign = v_align.lower()
+
+        text_flow = pos_el.get("textFlow", "")
+        if text_flow and text_flow in _FLOW_MAP:
+            pi.flow = _FLOW_MAP[text_flow]
+        elif pos_el.get("flowWithText", "0") == "1" and not pi.like_char:
+            pi.flow = "float"
+
+    if sz_el is not None:
+        w = int(sz_el.get("width", "0"))
+        h = int(sz_el.get("height", "0"))
+        if w > 0:
+            pi.width = w / _HWPUNIT_PER_PT
+        if h > 0:
+            pi.height = h / _HWPUNIT_PER_PT
+        pi.width_relto = sz_el.get("widthRelTo", "").lower() or None
+        pi.height_relto = sz_el.get("heightRelTo", "").lower() or None
+
+    return pi
+
+
+def _collect_draw_content(
+    el: etree._Element, info: DocInfoResult
+) -> list[Block]:
+    """도형 요소 트리에서 모든 텍스트/이미지/테이블 블록을 수집한다.
+
+    hp:rect, hp:ellipse, hp:polygon 등의 도형에서 hp:drawText > hp:subList를
+    파싱하고, hp:container (그룹)은 재귀 탐색한다. hp:pic, hp:tbl도 처리한다.
+    """
+    blocks: list[Block] = []
     dummy_verbatim: dict[str, VerbatimBlock] = {}
-    for sub_p in sub_list.iterfind("hp:p", NS):
-        block = _parse_paragraph(sub_p, info, dummy_verbatim)
-        if block is not None:
-            if isinstance(block, list):
-                content.extend(block)
-            else:
-                content.append(block)
 
-    if not content:
-        return None
+    for child in el:
+        tag = _local_tag(child)
 
-    tb_id = _next_block_id()
-    return TextBoxBlock(type="text_box", id=tb_id, content=content)
+        if tag == "drawText":
+            # drawText > subList 안의 단락 파싱
+            sub_list = child.find("hp:subList", NS)
+            if sub_list is not None:
+                tb_content: list[Block] = []
+                for sub_p in sub_list.iterfind("hp:p", NS):
+                    block = _parse_paragraph(sub_p, info, dummy_verbatim)
+                    if block is not None:
+                        if isinstance(block, list):
+                            tb_content.extend(block)
+                        else:
+                            tb_content.append(block)
+                if tb_content:
+                    tb_id = _next_block_id()
+                    tb = TextBoxBlock(type="text_box", id=tb_id, content=tb_content)
+                    parent_bg = _extract_fill_color(el)
+                    parent_lc, parent_lw = _extract_line_color(el)
+                    if parent_bg:
+                        tb.background_color = parent_bg
+                    if parent_lc:
+                        tb.line_color = parent_lc
+                    if parent_lw:
+                        tb.line_width = parent_lw
+                    blocks.append(tb)
+
+        elif tag in ("rect", "ellipse", "arc", "polygon", "curve", "connectLine"):
+            shape_blocks = _collect_draw_content(child, info)
+            bg = _extract_fill_color(child)
+            bg_img = _extract_fill_image(child)
+            lc, lw = _extract_line_color(child)
+            pos_info = _extract_position_info(child)
+            if pos_info is None:
+                pos_info = _extract_offset_as_position(child)
+            sz = child.find("hp:curSz", NS)
+            if sz is None:
+                sz = child.find("hp:orgSz", NS)
+            w = float(sz.get("width", "0")) / 100 if sz is not None else None
+            h = float(sz.get("height", "0")) / 100 if sz is not None else None
+            if w and w <= 0:
+                w = None
+            if h and h <= 0:
+                h = None
+            for sb in shape_blocks:
+                if isinstance(sb, TextBoxBlock):
+                    if bg:
+                        sb.background_color = sb.background_color or bg
+                    if bg_img:
+                        sb.background_image = sb.background_image or bg_img
+                    if lc:
+                        sb.line_color = sb.line_color or lc
+                    if lw:
+                        sb.line_width = sb.line_width or lw
+                    if w:
+                        sb.width = sb.width or w
+                    if h:
+                        sb.height = sb.height or h
+                    if pos_info and not sb.position:
+                        sb.position = pos_info
+            # Shape with fill image but no content — emit as standalone image
+            if bg_img and not shape_blocks:
+                img_inline = ImageInline(src=bg_img, width=w, height=h)
+                p_id = _next_block_id()
+                shape_blocks = [ParagraphBlock(
+                    type="paragraph", id=p_id, inlines=[img_inline],
+                )]
+            blocks.extend(shape_blocks)
+
+        elif tag == "container":
+            # 중첩 그룹 컨테이너 재귀 탐색
+            blocks.extend(_collect_draw_content(child, info))
+
+        elif tag == "pic":
+            img = _parse_pic(child)
+            if img is not None:
+                pos_info = _extract_position_info(child)
+                if pos_info is None:
+                    pos_info = _extract_offset_as_position(child)
+                if pos_info and img.width and img.height and img.width > 400 and img.height > 600:
+                    pos_info.flow = "back"
+                p_id = _next_block_id()
+                img_block = ImageBlock(
+                    type="image", id=p_id,
+                    src=img.src, width=img.width, height=img.height,
+                    position=pos_info,
+                )
+                blocks.append(img_block)
+
+        elif tag == "tbl":
+            blocks.append(_parse_table(child, info, dummy_verbatim))
+
+    return blocks
 
 
 def _extract_header_footer(
@@ -706,12 +1122,27 @@ def _parse_table(
         row = _parse_table_row(tr_el, info, verbatim_map)
         rows.append(row)
 
+    # 테이블 폭 + 컬럼 폭 추출
+    tbl_width: float | None = None
+    if sz_el is not None:
+        w = int(sz_el.get("width", "0"))
+        if w:
+            tbl_width = w / _HWPUNIT_PER_PT
+    from udf.schema.blocks import TableColumnDef
+    col_widths: list[TableColumnDef] = []
+    if rows:
+        for cell in rows[0].cells:
+            if cell.width:
+                col_widths.append(TableColumnDef(width=cell.width))
+
     verbatim_map[vid] = VerbatimBlock(decoded={"rowCnt": row_cnt, "colCnt": col_cnt})
 
     return TableBlock(
         type="table",
         id=block_id,
         rows=rows,
+        width=tbl_width,
+        col_widths=col_widths,
         position=position,
         cell_spacing=hwpunit_to_pt(cell_spacing) if cell_spacing else None,
         border_fill_id=int(border_fill_id_ref) if border_fill_id_ref else None,
@@ -761,7 +1192,7 @@ def _parse_table_cell(
             height = h / _HWPUNIT_PER_PT
 
     # format
-    tc_el.get("borderFillIDRef")
+    bf_id_ref = tc_el.get("borderFillIDRef")
     cell_margin_el = tc_el.find("hp:cellMargin", NS)
     sub_list_el = tc_el.find("hp:subList", NS)
 
@@ -793,12 +1224,34 @@ def _parse_table_cell(
         if pb:
             padding_bottom = hwpunit_to_pt(pb)
 
+    bg_color: str | None = None
+    cell_borders: dict[str, str] = {}
+    if bf_id_ref:
+        bf_key = str(int(bf_id_ref) - 1) if bf_id_ref.isdigit() and int(bf_id_ref) > 0 else bf_id_ref
+        bf_def = info.global_resources.border_fills.get(bf_key)
+        if bf_def:
+            if bf_def.fill_color:
+                bg_color = bf_def.fill_color
+            _CSS_BORDER = {"dash": "dashed", "dot": "dotted", "dash_dot": "dashed"}
+            for side in ("top", "bottom", "left", "right"):
+                sc = getattr(bf_def, f"border_{side}_color", None)
+                ss = getattr(bf_def, f"border_{side}_style", None)
+                sw = getattr(bf_def, f"border_{side}_width", None)
+                if sc and ss and ss != "none":
+                    w_pt = round((sw if sw else 0.1) * 2.835, 1)
+                    cell_borders[side] = f"{w_pt}pt {_CSS_BORDER.get(ss, 'solid')} {sc}"
+
     cell_format = CellFormat(
         vertical_align=vert_align,
         padding_left=padding_left,
         padding_right=padding_right,
         padding_top=padding_top,
         padding_bottom=padding_bottom,
+        background_color=bg_color,
+        border_top=cell_borders.get("top"),
+        border_bottom=cell_borders.get("bottom"),
+        border_left=cell_borders.get("left"),
+        border_right=cell_borders.get("right"),
     )
 
     # 셀 내용 (subList 안의 단락들)
@@ -898,3 +1351,28 @@ def _extract_from_page_pr(page_pr: etree._Element) -> dict[str, Any]:
             result["column_same_width"] = same_width
 
     return result
+
+
+def parse_masterpage_xml(
+    mp_bytes: bytes, info: DocInfoResult
+) -> list[Block]:
+    """Parse a masterpage XML and extract drawable content (images, shapes)."""
+    root = etree.fromstring(mp_bytes)
+    blocks: list[Block] = []
+    sub_list = root.find("hp:subList", NS)
+    if sub_list is None:
+        return blocks
+
+    for p_el in sub_list.iterfind("hp:p", NS):
+        extra_blocks: list[Block] = []
+        inlines = _collect_inlines(p_el, info, extra_blocks=extra_blocks)
+        if inlines:
+            has_image = any(isinstance(il, ImageInline) for il in inlines)
+            if has_image:
+                block_id = _next_block_id()
+                blocks.append(ParagraphBlock(
+                    type="paragraph", id=block_id, inlines=inlines
+                ))
+        blocks.extend(extra_blocks)
+
+    return blocks

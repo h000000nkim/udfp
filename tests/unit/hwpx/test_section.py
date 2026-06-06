@@ -722,6 +722,128 @@ class TestMixedContent:
 
 
 # ===========================================================================
+# Phase: Shape fill image extraction
+# ===========================================================================
+
+
+class TestShapeFillImage:
+    """fillBrush > imgFill > img에서 배경 이미지를 추출하는 테스트."""
+
+    def test_rect_with_imgfill_and_drawtext(self):
+        """rect with imgFill + drawText → TextBoxBlock with background_image."""
+        xml = _wrap_section(
+            _wrap_para(
+                _wrap_run(
+                    '<hp:rect>'
+                    '  <hc:fillBrush>'
+                    '    <hc:imgFill>'
+                    '      <hc:img binaryItemIDRef="BIN0001.png" />'
+                    '    </hc:imgFill>'
+                    '  </hc:fillBrush>'
+                    '  <hp:drawText>'
+                    '    <hp:subList>'
+                    '      <hp:p paraPrIDRef="0" styleIDRef="0">'
+                    '        <hp:run charPrIDRef="0"><hp:t>Hello</hp:t></hp:run>'
+                    '      </hp:p>'
+                    '    </hp:subList>'
+                    '  </hp:drawText>'
+                    '</hp:rect>'
+                )
+            )
+        )
+        info = _make_info()
+        blocks, _ = parse_section_xml(xml, info, "section0.xml")
+        # The rect produces a TextBoxBlock via extra_blocks
+        tb_blocks = [b for b in blocks if isinstance(b, TextBoxBlock)]
+        assert len(tb_blocks) >= 1
+        tb = tb_blocks[0]
+        assert tb.background_image == "bindata:BIN0001.png"
+
+    def test_rect_with_imgfill_no_content(self):
+        """rect with imgFill but no drawText → standalone image."""
+        xml = _wrap_section(
+            _wrap_para(
+                _wrap_run(
+                    '<hp:rect>'
+                    '  <hp:curSz width="10000" height="8000" />'
+                    '  <hc:fillBrush>'
+                    '    <hc:imgFill>'
+                    '      <hc:img binaryItemIDRef="BIN0002.jpg" />'
+                    '    </hc:imgFill>'
+                    '  </hc:fillBrush>'
+                    '</hp:rect>'
+                )
+            )
+        )
+        info = _make_info()
+        blocks, _ = parse_section_xml(xml, info, "section0.xml")
+        # Should produce a ParagraphBlock with an ImageInline
+        img_inlines = []
+        for b in blocks:
+            if isinstance(b, ParagraphBlock):
+                for il in b.inlines:
+                    if isinstance(il, ImageInline):
+                        img_inlines.append(il)
+        assert len(img_inlines) >= 1
+        assert img_inlines[0].src == "bindata:BIN0002.jpg"
+
+    def test_rect_with_winbrush_only_no_image(self):
+        """rect with winBrush only (no imgFill) → no background_image."""
+        xml = _wrap_section(
+            _wrap_para(
+                _wrap_run(
+                    '<hp:rect>'
+                    '  <hc:fillBrush>'
+                    '    <hc:winBrush faceColor="#FF0000" hatchColor="#000000" alpha="0" />'
+                    '  </hc:fillBrush>'
+                    '  <hp:drawText>'
+                    '    <hp:subList>'
+                    '      <hp:p paraPrIDRef="0" styleIDRef="0">'
+                    '        <hp:run charPrIDRef="0"><hp:t>Text</hp:t></hp:run>'
+                    '      </hp:p>'
+                    '    </hp:subList>'
+                    '  </hp:drawText>'
+                    '</hp:rect>'
+                )
+            )
+        )
+        info = _make_info()
+        blocks, _ = parse_section_xml(xml, info, "section0.xml")
+        tb_blocks = [b for b in blocks if isinstance(b, TextBoxBlock)]
+        assert len(tb_blocks) >= 1
+        assert tb_blocks[0].background_image is None
+        assert tb_blocks[0].background_color == "#FF0000"
+
+    def test_imgfill_hp_namespace(self):
+        """imgFill under hp: namespace also works."""
+        xml = _wrap_section(
+            _wrap_para(
+                _wrap_run(
+                    '<hp:rect>'
+                    '  <hp:fillBrush>'
+                    '    <hp:imgFill>'
+                    '      <hp:img binaryItemIDRef="BIN0003.png" />'
+                    '    </hp:imgFill>'
+                    '  </hp:fillBrush>'
+                    '  <hp:drawText>'
+                    '    <hp:subList>'
+                    '      <hp:p paraPrIDRef="0" styleIDRef="0">'
+                    '        <hp:run charPrIDRef="0"><hp:t>Content</hp:t></hp:run>'
+                    '      </hp:p>'
+                    '    </hp:subList>'
+                    '  </hp:drawText>'
+                    '</hp:rect>'
+                )
+            )
+        )
+        info = _make_info()
+        blocks, _ = parse_section_xml(xml, info, "section0.xml")
+        tb_blocks = [b for b in blocks if isinstance(b, TextBoxBlock)]
+        assert len(tb_blocks) >= 1
+        assert tb_blocks[0].background_image == "bindata:BIN0003.png"
+
+
+# ===========================================================================
 # 유틸리티
 # ===========================================================================
 

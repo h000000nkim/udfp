@@ -53,6 +53,12 @@ from udf.schema import (
 )
 
 
+try:
+    import pdfplumber
+    _HAS_PDFPLUMBER = True
+except ImportError:
+    _HAS_PDFPLUMBER = False
+
 # ---------------------------------------------------------------------------
 # 추출 결과 컨테이너
 # ---------------------------------------------------------------------------
@@ -212,9 +218,81 @@ def _detect_table_regions(page: LTPage) -> list[_GridRegion]:
             x1=cluster_v_xs[-1], y1=cluster[-1],
             col_xs=cluster_v_xs, row_ys=cluster,
         )
+        page_w = page.x1 - page.x0
+        page_h = page.y1 - page.y0
+        region_w = region.x1 - region.x0
+        region_h = region.y1 - region.y0
+        covers_page = (region_w > page_w * 0.9 and region_h > page_h * 0.9)
+        too_few_lines = len(cluster) < 4 and len(cluster_v_xs) < 4
+        if covers_page and too_few_lines:
+            continue
         regions.append(region)
 
     return regions
+
+
+def _detect_tables_pdfplumber(
+    path: str, page_num_0: int, page_height: float,
+    block_counter: itertools.count[int],
+) -> list[tuple[float, _ExtractedBlock]]:
+    """pdfplumber를 사용한 테이블 감지 (기존 벡터 감지의 보충)."""
+    if not _HAS_PDFPLUMBER:
+        return []
+    results: list[tuple[float, _ExtractedBlock]] = []
+    try:
+        pdf = pdfplumber.open(path)
+        if page_num_0 >= len(pdf.pages):
+            pdf.close()
+            return []
+        plumber_page = pdf.pages[page_num_0]
+        tables = plumber_page.extract_tables()
+        table_objs = plumber_page.find_tables()
+        for tbl_idx, tbl_data in enumerate(tables):
+            if not tbl_data or len(tbl_data) < 2:
+                continue
+            rows: list[TableRow] = []
+            for row_data in tbl_data:
+                if not row_data:
+                    continue
+                cells: list[TableCell] = []
+                for cell_val in row_data:
+                    cell_id = f"pdf_cell_{next(block_counter)}"
+                    content = []
+                    if cell_val:
+                        content.append(ParagraphBlock(
+                            type="paragraph",
+                            id=f"pdf_p_{next(block_counter)}",
+                            inlines=[TextInline(text=str(cell_val))],
+                        ))
+                    cells.append(TableCell(id=cell_id, content=content))
+                if cells:
+                    rows.append(TableRow(cells=cells))
+            if rows:
+                tbl_block = TableBlock(
+                    type="table",
+                    id=f"pdf_tbl_{next(block_counter)}",
+                    rows=rows,
+                )
+                bbox = (0.0, 0.0, 0.0, 0.0)
+                if tbl_idx < len(table_objs):
+                    tb = table_objs[tbl_idx].bbox
+                    bbox = (tb[0], page_height - tb[3], tb[2], page_height - tb[1])
+                y_top = bbox[3] if bbox[3] else page_height / 2
+                eb = _ExtractedBlock(
+                    block=tbl_block,
+                    bbox=bbox,
+                    verbatim_data={
+                        "bbox": list(bbox),
+                        "object_type": "table",
+                        "page": page_num_0 + 1,
+                        "source": "pdfplumber",
+                    },
+                )
+                results.append((y_top, eb))
+        pdf.close()
+    except Exception:
+        pass
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +342,7 @@ _MIN_IMAGE_DIM_PT = 5.0  # 5pt 이하 폭/높이는 유령 이미지(선/장식)
 def _collect_page_images(page: LTPage, page_num: int) -> list[_ImageRef]:
     """페이지에서 이미지 위치 정보를 수집한다.
 
+    LTFigure를 재귀 탐색하여 중첩 이미지도 수집한다.
     0pt/미세 차원 이미지(장식선 등)는 제외한다.
     """
     refs: list[_ImageRef] = []
@@ -273,23 +352,21 @@ def _collect_page_images(page: LTPage, page_num: int) -> list[_ImageRef]:
         x0, y0, x1, y1 = bbox
         w, h = x1 - x0, y1 - y0
         if w < _MIN_IMAGE_DIM_PT or h < _MIN_IMAGE_DIM_PT:
-            return  # 유령 이미지 제외
+            return
         if name not in seen_names:
             refs.append(_ImageRef(name=name, bbox=bbox))
             seen_names.add(name)
 
-    for obj in page:  # 최상위 객체만 순회 (좌표 혼동 방지)
-        if isinstance(obj, LTImage):
-            name = obj.name or f"img_p{page_num}_{id(obj)}"
-            _add(name, (obj.x0, obj.y0, obj.x1, obj.y1))
-        elif isinstance(obj, LTFigure):
-            inner_images = [s for s in obj if isinstance(s, LTImage)]
-            if inner_images:
-                for sub in inner_images:
-                    # PDF XObject 이름만 사용 (id() 기반 합성 이름은 pypdf 매칭 불가)
-                    if sub.name:
-                        _add(sub.name, (obj.x0, obj.y0, obj.x1, obj.y1))
+    def _scan(container: Any, fallback_bbox: tuple[float, float, float, float] | None = None) -> None:
+        for obj in container:
+            if isinstance(obj, LTImage):
+                name = obj.name or f"img_p{page_num}_{id(obj)}"
+                _add(name, (obj.x0, obj.y0, obj.x1, obj.y1))
+            elif isinstance(obj, LTFigure):
+                fig_bbox = (obj.x0, obj.y0, obj.x1, obj.y1)
+                _scan(obj, fig_bbox)
 
+    _scan(page)
     return refs
 
 
@@ -464,12 +541,25 @@ def _text_in_rect(
     boxes: list[LTTextBox],
     x0: float, y0: float, x1: float, y1: float,
 ) -> str:
+    tol = _SNAP
     parts: list[str] = []
     for box in boxes:
         cx = (box.x0 + box.x1) / 2
         cy = (box.y0 + box.y1) / 2
-        if x0 - _SNAP <= cx <= x1 + _SNAP and y0 - _SNAP <= cy <= y1 + _SNAP:
+        if x0 - tol <= cx <= x1 + tol and y0 - tol <= cy <= y1 + tol:
             parts.append(box.get_text().strip())
+            continue
+        # Overlap fallback: if box bbox intersects cell rect, assign to this cell
+        if box.x0 < x1 + tol and box.x1 > x0 - tol and box.y0 < y1 + tol and box.y1 > y0 - tol:
+            # Compute overlap fraction relative to the text box
+            ow = min(box.x1, x1) - max(box.x0, x0)
+            oh = min(box.y1, y1) - max(box.y0, y0)
+            bw = box.x1 - box.x0
+            bh = box.y1 - box.y0
+            if bw > 0 and bh > 0 and ow > 0 and oh > 0:
+                overlap_ratio = (ow * oh) / (bw * bh)
+                if overlap_ratio >= 0.3:
+                    parts.append(box.get_text().strip())
     return " ".join(parts)
 
 
@@ -935,18 +1025,20 @@ def extract_pages(
     all_spans: list[_RichSpan] = []
     page_data: list[tuple[LTPage, list[LTTextBox], int]] = []
 
+    def _collect_text_boxes(container: LTContainer, out: list[LTTextBox]) -> None:
+        for obj in container:
+            if isinstance(obj, LTTextBox):
+                out.append(obj)
+            elif isinstance(obj, LTFigure):
+                _collect_text_boxes(obj, out)
+
     for page_num_0, page in enumerate(_get_pages(path)):
         text_boxes: list[LTTextBox] = []
         for obj in page:
             if isinstance(obj, LTTextBox):
                 text_boxes.append(obj)
             elif isinstance(obj, LTFigure):
-                # LTFigure에 이미지가 없으면 텍스트만 수집
-                has_image = any(isinstance(s, LTImage) for s in obj)
-                if not has_image:
-                    for sub in obj:
-                        if isinstance(sub, LTTextBox):
-                            text_boxes.append(sub)
+                _collect_text_boxes(obj, text_boxes)
         page_data.append((page, text_boxes, page_num_0 + 1))
 
         for box in text_boxes:
@@ -1045,21 +1137,32 @@ def extract_pages(
                     },
                 )))
 
-        # 테이블
-        for region in table_regions:
-            tbl = _build_table_block(region, text_boxes, block_counter)
-            if tbl.rows:
-                bbox = (region.x0, region.y0, region.x1, region.y1)
-                eb = _ExtractedBlock(
-                    block=tbl,
-                    bbox=bbox,
-                    verbatim_data={
-                        "bbox": list(bbox),
-                        "object_type": "table",
-                        "page": page_num,
-                    },
-                )
-                positioned.append((region.y1, eb))
+        # 테이블 (pdfplumber 우선, 없으면 벡터 감지 보충)
+        plumber_tables = _detect_tables_pdfplumber(
+            path, page_num - 1, page_height, block_counter,
+        )
+        if plumber_tables:
+            for y_top, eb in plumber_tables:
+                positioned.append((y_top, eb))
+                for i, box in enumerate(text_boxes):
+                    if _box_in_bbox(box, eb.bbox):
+                        table_box_indices.add(i)
+        elif table_regions:
+            for region in table_regions:
+                tbl = _build_table_block(region, text_boxes, block_counter)
+                if tbl.rows:
+                    bbox = (region.x0, region.y0, region.x1, region.y1)
+                    eb = _ExtractedBlock(
+                        block=tbl,
+                        bbox=bbox,
+                        verbatim_data={
+                            "bbox": list(bbox),
+                            "object_type": "table",
+                            "page": page_num,
+                        },
+                    )
+                    positioned.append((region.y1, eb))
+        # (pdfplumber fallback removed — now called first above)
 
         # 차트 (벡터 그래픽 밀집 영역)
         for cbbox in chart_bboxes:
