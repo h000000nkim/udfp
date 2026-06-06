@@ -1,0 +1,2988 @@
+
+<!doctype html>
+<html lang="ko" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Parse, transform, and render documents across HWP, HWPX, DOCX, PDF, and Markdown through a single unified Document Model.">
+      
+      
+        <meta name="author" content="Hoon Kim">
+      
+      
+        <link rel="canonical" href="https://h000000nkim.github.io/udfp/unsupported/hwp-unsupports/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>HWP 미지원 기능 목록 - UDF — Universal Document Format</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Sans+KR:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Noto Sans KR";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#hwp" class="md-skip">
+          콘텐츠로 이동
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="상단/헤더">
+    <a href="../.." title="UDF — Universal Document Format" class="md-header__button md-logo" aria-label="UDF — Universal Document Format" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            UDF — Universal Document Format
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              HWP 미지원 기능 목록
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="검색" placeholder="검색" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="검색">
+        
+        <button type="reset" class="md-search__icon md-icon" title="지우기" aria-label="지우기" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            검색 초기화
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/h000000nkim/udfp" title="저장소로 이동" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    h000000nkim/udfp
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="탭" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/document-model/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../cli/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  CLI
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../mcp/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  MCP Server
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../formats/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Supported Formats
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="네비게이션" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="UDF — Universal Document Format" class="md-nav__button md-logo" aria-label="UDF — Universal Document Format" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    UDF — Universal Document Format
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/h000000nkim/udfp" title="저장소로 이동" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    h000000nkim/udfp
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/document-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Document Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/conversion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Format Conversion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/generation-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generation Modes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Top-Level Functions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/document/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UdfDocument
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/builder/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DocumentBuilder
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../formats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Supported Formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="목차">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      목차
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        범례
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-ctrl_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 컨트롤(ctrl_id) 단위 미지원
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. 컨트롤(ctrl_id) 단위 미지원">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 완전 미지원 컨트롤
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-verbatim-skip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 Verbatim 보존만 되는 컨트롤 (skip 리스트)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.3 미지원 필드 컨트롤 (% 접두사)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-hwptag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. HWPTAG 레코드 단위 미지원
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. HWPTAG 레코드 단위 미지원">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-docinfo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 DocInfo 미지원 레코드
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-bodytext" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 BodyText 미지원 레코드
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-charshape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 글자 모양 (CharShape) 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-parashape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. 문단 모양 (ParaShape) 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-borderfill" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 테두리/배경 (BorderFill) 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. 표 (Table) 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. 이미지/그림 (Image) 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-gsodrawing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. 그리기 개체 (GSO/Drawing) 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-textbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. 글상자 (TextBox) 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. 각주/미주 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. 머리말/꼬리말 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-numberingbullet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. 번호 매기기 (Numbering/Bullet) 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-style" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. 스타일 (Style) 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. 페이지 설정 / 구역 정의 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15-column" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15. 다단 (Column) 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#16-track-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16. 변경 추적 (Track Changes)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#17-master-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        17. 바탕쪽 (Master Page)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        18. 보안 / 암호화
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#19-ole" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        19. OLE / 차트 / 글맵시 / 동영상
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#20-equation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        20. 수식 (Equation) 누락 속성
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        21. 쪽 번호 관련 컨트롤 누락
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        22. 한글 고유 기능 미지원
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#23" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        23. 문서 메타데이터 / 기타 스트림 미지원
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#24-from-scratch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        24. From Scratch 생성 불가 블록
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#25" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        25. 프레젠테이션 / 메일머지 / 라벨
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#26-2024" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        26. 다이어그램 (한컴 2024+)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="hwp">HWP 미지원 기능 목록<a class="headerlink" href="#hwp" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><strong>조사 기준</strong>: HWP 5.x 공식 스펙(rev 1.3), 한컴 공식 도움말(help.hancom.com), 오픈소스 파서 교차 분석</p>
+<p><strong>조사 대상 코드</strong>: <code>udf/parsers/hwp/</code>, <code>udf/renderers/hwp/</code>, <code>udf/schema/</code></p>
+<p><strong>작성일</strong>: 2026-05-30</p>
+</blockquote>
+<hr />
+<h2 id="_1">범례<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>상태</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>미지원</td>
+<td>파싱·모델링 없음, 관련 데이터 무시됨</td>
+</tr>
+<tr>
+<td>부분 지원</td>
+<td>파싱은 되나 일부 속성 누락 또는 생성 불가</td>
+</tr>
+<tr>
+<td>Verbatim 보존</td>
+<td>원본 바이트 보존만 (의미 해석 없음, 동일 포맷 라운드트립은 가능)</td>
+</tr>
+<tr>
+<td>스키마만 존재</td>
+<td>Document Model에 타입이 있으나 HWP 파서 미연결</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="1-ctrl_id">1. 컨트롤(ctrl_id) 단위 미지원<a class="headerlink" href="#1-ctrl_id" title="Permanent link">&para;</a></h2>
+<h3 id="11">1.1 완전 미지원 컨트롤<a class="headerlink" href="#11" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>ctrl_id</th>
+<th>이름</th>
+<th>설명</th>
+<th>상태</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>'tcmt'</code></td>
+<td>메모/숨은 설명</td>
+<td>본문에 연결된 메모. CommentBlock 스키마 있음</td>
+<td>스키마만 존재</td>
+</tr>
+<tr>
+<td><code>'tdut'</code></td>
+<td>덧말 (Ruby)</td>
+<td>글자 위/아래 보조 텍스트 (한자 독음 등). RubyInline 스키마 있음</td>
+<td>스키마만 존재</td>
+</tr>
+<tr>
+<td><code>'form'</code></td>
+<td>양식 개체</td>
+<td>텍스트입력/라디오/체크박스/콤보박스/리스트박스/버튼 (tag=95)</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td><code>'idxm'</code></td>
+<td>색인 마크</td>
+<td>색인 항목 등록 (주항목/부항목/페이지범위)</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td><code>'pgct'</code></td>
+<td>홀짝수 쪽 번호 조정</td>
+<td>홀수/짝수 쪽 번호 보정</td>
+<td>미지원</td>
+</tr>
+</tbody>
+</table>
+<h3 id="12-verbatim-skip">1.2 Verbatim 보존만 되는 컨트롤 (skip 리스트)<a class="headerlink" href="#12-verbatim-skip" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>ctrl_id</th>
+<th>이름</th>
+<th>설명</th>
+<th>비고</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>'bokm'</code></td>
+<td>책갈피</td>
+<td>하이퍼링크/상호참조/목차의 점프 대상. BookmarkBlock 스키마 있음</td>
+<td>스키마만 존재</td>
+</tr>
+<tr>
+<td><code>'secd'</code></td>
+<td>구역 정의</td>
+<td>구역별 용지/여백/단/머리글/꼬리글 설정 (PAGE_DEF, FOOTNOTE_SHAPE, PAGE_BORDER_FILL 포함)</td>
+<td>Verbatim 보존</td>
+</tr>
+<tr>
+<td><code>'cold'</code></td>
+<td>단 정의</td>
+<td>다단 레이아웃 (단 수, 간격, 구분선, 균등배분)</td>
+<td>Verbatim 보존</td>
+</tr>
+<tr>
+<td><code>'nwno'</code></td>
+<td>새 번호 지정</td>
+<td>특정 위치부터 번호 다시 시작</td>
+<td>Verbatim 보존</td>
+</tr>
+<tr>
+<td><code>'pghd'</code></td>
+<td>페이지 감추기</td>
+<td>쪽 번호 숨김 처리</td>
+<td>Verbatim 보존</td>
+</tr>
+<tr>
+<td><code>'tcps'</code></td>
+<td>글자 겹침</td>
+<td>두 글자를 겹쳐 도장처럼 표시</td>
+<td>Verbatim 보존</td>
+</tr>
+<tr>
+<td><code>'%bmk'</code></td>
+<td>책갈피 범위</td>
+<td>책갈피 시작/끝 마커</td>
+<td>Verbatim 보존</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13">1.3 미지원 필드 컨트롤 (% 접두사)<a class="headerlink" href="#13" title="Permanent link">&para;</a></h3>
+<p>현재 <code>%hlk</code>(하이퍼링크)만 파싱. 나머지 전부 미지원:</p>
+<table>
+<thead>
+<tr>
+<th>ctrl_id</th>
+<th>이름</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>'%dt '</code></td>
+<td>날짜</td>
+<td>현재 날짜 자동 삽입</td>
+</tr>
+<tr>
+<td><code>'%tm '</code></td>
+<td>시간</td>
+<td>현재 시간 자동 삽입</td>
+</tr>
+<tr>
+<td><code>'%mf '</code></td>
+<td>파일 이름/경로</td>
+<td>현재 파일 정보</td>
+</tr>
+<tr>
+<td><code>'%ti '</code></td>
+<td>제목</td>
+<td>문서 제목</td>
+</tr>
+<tr>
+<td><code>'%su '</code></td>
+<td>주제</td>
+<td>문서 주제</td>
+</tr>
+<tr>
+<td><code>'%au '</code></td>
+<td>작성자</td>
+<td>문서 작성자</td>
+</tr>
+<tr>
+<td><code>'%fn '</code></td>
+<td>각주 번호</td>
+<td>각주 참조 번호</td>
+</tr>
+<tr>
+<td><code>'%en '</code></td>
+<td>미주 번호</td>
+<td>미주 참조 번호</td>
+</tr>
+<tr>
+<td><code>'%cc '</code></td>
+<td>누름틀 (ClickHere)</td>
+<td>양식 입력 필드 (정부/기업 양식에 빈번 사용)</td>
+</tr>
+<tr>
+<td><code>'%ga '</code></td>
+<td>그림 번호</td>
+<td>그림 캡션 자동 번호</td>
+</tr>
+<tr>
+<td><code>'%ta '</code></td>
+<td>표 번호</td>
+<td>표 캡션 자동 번호</td>
+</tr>
+<tr>
+<td><code>'%eq '</code></td>
+<td>수식 번호</td>
+<td>수식 캡션 자동 번호</td>
+</tr>
+<tr>
+<td><code>'%tc '</code></td>
+<td>목차</td>
+<td>목차 자동 생성 필드</td>
+</tr>
+<tr>
+<td><code>'%ix '</code></td>
+<td>색인</td>
+<td>색인 생성 필드</td>
+</tr>
+<tr>
+<td><code>'%xr '</code></td>
+<td>상호 참조</td>
+<td>각주/미주/그림/표/수식/책갈피 번호 자동 참조</td>
+</tr>
+<tr>
+<td><code>'%bt '</code></td>
+<td>책갈피 텍스트</td>
+<td>책갈피 위치 텍스트</td>
+</tr>
+<tr>
+<td><code>'%si '</code></td>
+<td>문서 요약 정보</td>
+<td>문서 메타데이터</td>
+</tr>
+<tr>
+<td><code>'%kw '</code></td>
+<td>키워드</td>
+<td>문서 키워드</td>
+</tr>
+<tr>
+<td><code>'%wp '</code></td>
+<td>글자수</td>
+<td>문서 글자수</td>
+</tr>
+<tr>
+<td><code>'%ai '</code></td>
+<td>작성일</td>
+<td>문서 작성일</td>
+</tr>
+<tr>
+<td><code>'%mi '</code></td>
+<td>최종 수정일</td>
+<td>문서 최종 수정일</td>
+</tr>
+<tr>
+<td><code>'%me '</code></td>
+<td>메모</td>
+<td>메모 필드</td>
+</tr>
+<tr>
+<td><code>'%hd '</code></td>
+<td>머리말 텍스트</td>
+<td>머리말 참조</td>
+</tr>
+<tr>
+<td><code>'%ft '</code></td>
+<td>꼬리말 텍스트</td>
+<td>꼬리말 참조</td>
+</tr>
+<tr>
+<td><code>'%ms '</code></td>
+<td>메모 요약</td>
+<td>메모 요약</td>
+</tr>
+<tr>
+<td><code>'%pR '</code></td>
+<td>전체 쪽수</td>
+<td>문서 전체 페이지 수</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-hwptag">2. HWPTAG 레코드 단위 미지원<a class="headerlink" href="#2-hwptag" title="Permanent link">&para;</a></h2>
+<h3 id="21-docinfo">2.1 DocInfo 미지원 레코드<a class="headerlink" href="#21-docinfo" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>tag</th>
+<th>이름</th>
+<th>설명</th>
+<th>상태</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>27</td>
+<td><code>HWPTAG_DOC_DATA</code></td>
+<td>문서 데이터</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>28</td>
+<td><code>HWPTAG_DISTRIBUTE_DOC_DATA</code></td>
+<td>배포용 문서 데이터</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>30</td>
+<td><code>HWPTAG_LAYOUT_COMPATIBILITY</code></td>
+<td>레이아웃 호환성 플래그</td>
+<td>Verbatim 보존</td>
+</tr>
+<tr>
+<td>31</td>
+<td><code>HWPTAG_TRACKCHANGE</code></td>
+<td>변경 추적 메타</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>32</td>
+<td><code>HWPTAG_MEMO_SHAPE</code></td>
+<td>메모 모양 (배경색/테두리/너비)</td>
+<td>Verbatim 보존</td>
+</tr>
+<tr>
+<td>33</td>
+<td><code>HWPTAG_FORBIDDEN_CHAR</code></td>
+<td>금지 문자 (줄바꿈 금지 문자 목록)</td>
+<td>Verbatim 보존</td>
+</tr>
+<tr>
+<td>34</td>
+<td><code>HWPTAG_TRACK_CHANGE_AUTHOR</code></td>
+<td>변경 추적 작성자 (이름/날짜/색상)</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>35</td>
+<td><code>HWPTAG_TRACK_CHANGE</code></td>
+<td>변경 추적 항목 (삽입/삭제/서식변경)</td>
+<td>미지원</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22-bodytext">2.2 BodyText 미지원 레코드<a class="headerlink" href="#22-bodytext" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>tag</th>
+<th>이름</th>
+<th>설명</th>
+<th>상태</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>76</td>
+<td><code>HWPTAG_MEMO_LIST</code></td>
+<td>메모 리스트</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>80</td>
+<td>(변경 추적 블록)</td>
+<td>변경 추적 컨텐츠 블록</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>94</td>
+<td><code>HWPTAG_SHAPE_COMPONENT_TEXTART</code></td>
+<td>글맵시 내부 구조 (모양/글꼴/그림자)</td>
+<td>Verbatim 보존</td>
+</tr>
+<tr>
+<td>95</td>
+<td><code>HWPTAG_FORM_OBJECT</code></td>
+<td>양식 개체 속성</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>96</td>
+<td><code>HWPTAG_CHART_DATA</code></td>
+<td>차트 데이터 (VtChart 바이너리 트리)</td>
+<td>Verbatim 보존</td>
+</tr>
+<tr>
+<td>97</td>
+<td><code>HWPTAG_VIDEO_DATA</code></td>
+<td>동영상 데이터</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>99</td>
+<td><code>HWPTAG_SHAPE_COMPONENT_UNKNOWN</code></td>
+<td>미확인 도형</td>
+<td>미지원</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-charshape">3. 글자 모양 (CharShape) 누락 속성<a class="headerlink" href="#3-charshape" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: bold, italic, underline(기본), strikeout(기본), 색상 5종, 크기, 자간, 장평, 위치, 위/아래첨자, emboss, engrave, outline(기본), shadow(기본), border_fill_id</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+<th>스펙 위치</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>강조점 종류</td>
+<td>글자 위 점 표시 종류 (점/원/쉼표/사성점 등)</td>
+<td>CharShape attr bits</td>
+</tr>
+<tr>
+<td>외곽선 세분화</td>
+<td>실선/점선/굵은선/파선/일점쇄선/이점쇄선 6종</td>
+<td>CharShape attr bits 8-10</td>
+</tr>
+<tr>
+<td>그림자 세분화</td>
+<td>비연속/연속 유형 + X/Y 오프셋</td>
+<td>CharShape shadowGap[2]</td>
+</tr>
+<tr>
+<td>밑줄 세분화</td>
+<td>둥근선/직선 형태, 6+종 (점선/파선/물결/이중/굵은/굵은파선)</td>
+<td>CharShape underlineShape</td>
+</tr>
+<tr>
+<td>취소선 세분화</td>
+<td>점선/물결/이중 등 종류</td>
+<td>CharShape strikeOutType</td>
+</tr>
+<tr>
+<td>커닝 플래그</td>
+<td>영문 글자 간격 자동 조정</td>
+<td>CharShape attr bit</td>
+</tr>
+<tr>
+<td>useFontSpace</td>
+<td>글꼴 자간 사용 여부</td>
+<td>CharShape field</td>
+</tr>
+<tr>
+<td>빈칸 폭</td>
+<td>본래 폭 / 글자 크기의 1/2</td>
+<td>CharShape 확장 속성</td>
+</tr>
+<tr>
+<td>숨김 텍스트</td>
+<td>화면 표시만, 인쇄 제외</td>
+<td>CharShape attr bit</td>
+</tr>
+<tr>
+<td>작은 대문자 (SmallCaps)</td>
+<td>소문자를 작은 대문자로</td>
+<td>CharShape attr bit</td>
+</tr>
+<tr>
+<td>글자 테두리 종류 (borderType)</td>
+<td>글자 단위 테두리 종류</td>
+<td>CharShape field</td>
+</tr>
+<tr>
+<td>형광펜 (Highlight)</td>
+<td>CharShape 배경과 별도인 형광펜 색상</td>
+<td>별도 속성</td>
+</tr>
+<tr>
+<td>글자 회전</td>
+<td>세로쓰기 등에서 개별 글자 회전</td>
+<td>CharShape 확장</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="4-parashape">4. 문단 모양 (ParaShape) 누락 속성<a class="headerlink" href="#4-parashape" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: 정렬, 줄간격(타입+값), 왼쪽/오른쪽 여백, 첫줄 들여쓰기, 문단 위/아래 간격, protect, start_new_page, with_next_paragraph, tab_def_id, numbering_id, border_fill_id, outline_level</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+<th>스펙 위치</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>한글 줄나눔 기준</td>
+<td>글자 단위 / 어절 단위</td>
+<td>attr bit, breakNonLatinWord</td>
+</tr>
+<tr>
+<td>영어 줄나눔 기준</td>
+<td>글자 / 어절 / 하이픈</td>
+<td>attr bit, breakLatinWord</td>
+</tr>
+<tr>
+<td>자동 하이픈 연결</td>
+<td>영문 하이픈 자동 삽입</td>
+<td>attr bit, breakHyphenation</td>
+</tr>
+<tr>
+<td>드롭캡</td>
+<td>단락 첫 글자 확대 (줄 수, 거리)</td>
+<td>ParaShape dropCapLines, dropCapDistance</td>
+</tr>
+<tr>
+<td>텍스트 방향</td>
+<td>세로/가로 쓰기 방향</td>
+<td>ParaShape textDirection</td>
+</tr>
+<tr>
+<td>글꼴 기준 줄 높이</td>
+<td>글꼴 메트릭 기반 줄 높이</td>
+<td>ParaShape fontLineHeight</td>
+</tr>
+<tr>
+<td>자동 간격 타입</td>
+<td>CJK/Latin 혼합 시 자동 간격</td>
+<td>ParaShape autoSpacingType (attr bits 20-22)</td>
+</tr>
+<tr>
+<td>테두리 타입</td>
+<td>문단 테두리 적용 방식</td>
+<td>ParaShape borderType (attr bits 16-19)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-borderfill">5. 테두리/배경 (BorderFill) 누락 속성<a class="headerlink" href="#5-borderfill" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: 4변 테두리 (종류/두께/색상), 단색 채움</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+<th>스펙 위치</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>대각선 테두리</td>
+<td>좌상→우하, 우상→좌하 각각 독립, 5가지 선 종류</td>
+<td>BorderFill 대각선 6바이트</td>
+</tr>
+<tr>
+<td>그라데이션 채움</td>
+<td>선형/원형/원뿔/사각형, 시작/끝 색상, 각도, 단계</td>
+<td>BorderFill fill_type bit</td>
+</tr>
+<tr>
+<td>이미지 채움</td>
+<td>늘이기/바둑판/가운데/실제크기, 이미지 ID</td>
+<td>BorderFill fill_type bit</td>
+</tr>
+<tr>
+<td>무늬 채움</td>
+<td>무늬 종류, 전경/배경 색</td>
+<td>BorderFill fill_type bit</td>
+</tr>
+<tr>
+<td>투명도</td>
+<td>채움 투명도 (0~100%)</td>
+<td>BorderFill alpha 필드</td>
+</tr>
+<tr>
+<td>테두리 3D 효과</td>
+<td>입체 테두리</td>
+<td>BorderFill 확장</td>
+</tr>
+<tr>
+<td>테두리 그림자</td>
+<td>테두리에 그림자</td>
+<td>BorderFill 확장</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6-table">6. 표 (Table) 누락 속성<a class="headerlink" href="#6-table" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: 행/열 수, 셀병합(colspan/rowspan), 셀 크기, 셀 패딩, 셀 수직정렬, 셀 테두리/배경, 반복헤더(attr bit)</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+<th>스펙 위치</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>셀 대각선</td>
+<td>셀 내 대각선 (좌상→우하, 우상→좌하 독립)</td>
+<td>CELL_BORDER_FILL diagonal 필드</td>
+</tr>
+<tr>
+<td>셀 보호</td>
+<td>편집 불가 셀</td>
+<td>LIST_HEADER attr bit</td>
+</tr>
+<tr>
+<td>캡션</td>
+<td>표 제목 (위치, 자동 번호, 텍스트)</td>
+<td>별도 캡션 서브레코드</td>
+</tr>
+<tr>
+<td>제목줄 반복</td>
+<td>페이지 넘김 시 첫 행 자동 반복</td>
+<td>TABLE attr bit (파싱되나 모델에 미반영)</td>
+</tr>
+<tr>
+<td>쪽 넘김 허용</td>
+<td>행 단위 페이지 분리 여부</td>
+<td>TABLE attr bit</td>
+</tr>
+<tr>
+<td>계산식</td>
+<td>셀 참조 수식 (SUM, AVG 등)</td>
+<td>셀 필드</td>
+</tr>
+<tr>
+<td>자동 채우기</td>
+<td>연속 데이터 자동 입력</td>
+<td>표 편집 기능</td>
+</tr>
+<tr>
+<td>블록 계산</td>
+<td>합계/평균/곱</td>
+<td>표 편집 기능</td>
+</tr>
+<tr>
+<td>셀 텍스트 줄바꿈 모드</td>
+<td>자동 줄바꿈 여부</td>
+<td>LIST_HEADER attr</td>
+</tr>
+<tr>
+<td>행 높이 자동 맞춤</td>
+<td>내용에 따라 높이 자동 조절</td>
+<td>TABLE attr</td>
+</tr>
+<tr>
+<td>표 레이아웃 모드</td>
+<td>고정/자동 레이아웃</td>
+<td>TABLE attr</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7-image">7. 이미지/그림 (Image) 누락 속성<a class="headerlink" href="#7-image" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: src(BinData 참조), crop(L/R/T/B), brightness, contrast</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+<th>스펙 위치</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>회전 각도</td>
+<td>자유 회전 (0~360도)</td>
+<td>SHAPE_COMPONENT 회전 필드</td>
+</tr>
+<tr>
+<td>투명 색상 처리</td>
+<td>특정 색상을 투명으로 (chroma key)</td>
+<td>그림 속성</td>
+</tr>
+<tr>
+<td>그레이스케일/흑백</td>
+<td>이미지 색상 모드 변환</td>
+<td>그림 속성</td>
+</tr>
+<tr>
+<td>워터마크 모드</td>
+<td>흐리게 표시</td>
+<td>그림 속성</td>
+</tr>
+<tr>
+<td>채도 조절</td>
+<td>이미지 채도</td>
+<td>그림 속성</td>
+</tr>
+<tr>
+<td>반사 효과</td>
+<td>거리, 크기, 투명도</td>
+<td>그림 효과</td>
+</tr>
+<tr>
+<td>네온/발광 효과</td>
+<td>색상, 크기</td>
+<td>그림 효과</td>
+</tr>
+<tr>
+<td>그림자 효과</td>
+<td>종류, 색상, X/Y 오프셋, 투명도</td>
+<td>그림 효과</td>
+</tr>
+<tr>
+<td>좌우/상하 뒤집기</td>
+<td>수평/수직 반전</td>
+<td>SHAPE_COMPONENT 변환 필드</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-gsodrawing">8. 그리기 개체 (GSO/Drawing) 누락 속성<a class="headerlink" href="#8-gsodrawing" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: 위치(x,y), 크기(w,h), shape_type, fill_color, line_color, line_width, z_order</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+<th>스펙 위치</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>회전 각도</td>
+<td>개체 회전</td>
+<td>SHAPE_COMPONENT rotation 필드</td>
+</tr>
+<tr>
+<td>화살표 속성</td>
+<td>선 시작/끝 화살표 형태, 크기, 채움</td>
+<td>SHAPE_COMPONENT_LINE</td>
+</tr>
+<tr>
+<td>선 캡/조인 스타일</td>
+<td>끝모양(둥근/각진/평평), 연결점</td>
+<td>SHAPE_COMPONENT line 속성</td>
+</tr>
+<tr>
+<td>선 대시 패턴</td>
+<td>점선/파선/혼합 등 세부 패턴</td>
+<td>SHAPE_COMPONENT line 속성</td>
+</tr>
+<tr>
+<td>그림자</td>
+<td>종류, 색상, X/Y 오프셋, 투명도</td>
+<td>SHAPE_COMPONENT shadowInfo</td>
+</tr>
+<tr>
+<td>반사 효과</td>
+<td>거리, 크기, 투명도</td>
+<td>SHAPE_COMPONENT effect</td>
+</tr>
+<tr>
+<td>네온/발광 효과</td>
+<td>색상, 크기</td>
+<td>SHAPE_COMPONENT effect</td>
+</tr>
+<tr>
+<td>3D 효과</td>
+<td>회전, 깊이, 조명</td>
+<td>SHAPE_COMPONENT 3D</td>
+</tr>
+<tr>
+<td>그룹 계층</td>
+<td>그룹 개체 내 부모-자식 계층 구조</td>
+<td>GSO 그룹 container</td>
+</tr>
+<tr>
+<td>잠금 여부</td>
+<td>위치/크기 잠금</td>
+<td>SHAPE_COMPONENT attr</td>
+</tr>
+<tr>
+<td>세밀 배치 기준</td>
+<td>쪽/단/문단/셀 기준 좌표 세분화</td>
+<td>CTRL_HEADER 배치 속성</td>
+</tr>
+<tr>
+<td>곡선 제어점</td>
+<td>베지에 곡선 제어점 목록</td>
+<td>SHAPE_COMPONENT_CURVE</td>
+</tr>
+<tr>
+<td>연결선</td>
+<td>개체 간 연결선 (경유점 포함)</td>
+<td>GSO connector</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="9-textbox">9. 글상자 (TextBox) 누락 속성<a class="headerlink" href="#9-textbox" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: 내부 텍스트(단락 리스트), 위치, 크기, 테두리</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>내부 다단</td>
+<td>글상자 내 다단 설정</td>
+</tr>
+<tr>
+<td>세로쓰기</td>
+<td>글상자 내 세로 방향 텍스트</td>
+</tr>
+<tr>
+<td>크기 자동 조정</td>
+<td>내용에 맞게 높이 자동 조정</td>
+</tr>
+<tr>
+<td>글상자 연결</td>
+<td>넘치는 텍스트를 다음 글상자로 연결</td>
+</tr>
+<tr>
+<td>안쪽 여백</td>
+<td>글상자 내부 L/R/T/B 여백</td>
+</tr>
+<tr>
+<td>세로 정렬</td>
+<td>내부 텍스트 위/가운데/아래 정렬</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="10">10. 각주/미주 누락 속성<a class="headerlink" href="#10" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: 본문 텍스트(단락 리스트), 참조 번호(ref_num)</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+<th>스펙 위치</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>번호 형식</td>
+<td>아라비아/한글/영문대소/로마대소/원문자/사용자정의</td>
+<td>FOOTNOTE_SHAPE</td>
+</tr>
+<tr>
+<td>구분선</td>
+<td>유무, 길이, 선 종류, 두께, 위치</td>
+<td>FOOTNOTE_SHAPE</td>
+</tr>
+<tr>
+<td>번호 표시 방식</td>
+<td>상첨자/괄호 등</td>
+<td>FOOTNOTE_SHAPE</td>
+</tr>
+<tr>
+<td>쪽마다 번호 다시 시작</td>
+<td>쪽 단위 리셋</td>
+<td>FOOTNOTE_SHAPE</td>
+</tr>
+<tr>
+<td>구역마다 번호 다시 시작</td>
+<td>구역 단위 리셋</td>
+<td>FOOTNOTE_SHAPE</td>
+</tr>
+<tr>
+<td>각주 위치</td>
+<td>쪽 아래 / 본문 아래</td>
+<td>FOOTNOTE_SHAPE</td>
+</tr>
+<tr>
+<td>미주 위치</td>
+<td>문서 끝 / 장 끝</td>
+<td>FOOTNOTE_SHAPE</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="11_1">11. 머리말/꼬리말 누락 속성<a class="headerlink" href="#11_1" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: 내용(단락 리스트), apply_to(양쪽/홀수/짝수)</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>첫 쪽 다름</td>
+<td>첫 페이지에만 다른 머리말/꼬리말 적용</td>
+</tr>
+<tr>
+<td>머리말/꼬리말 오프셋 거리</td>
+<td>상단/하단으로부터의 거리</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="12-numberingbullet">12. 번호 매기기 (Numbering/Bullet) 누락 속성<a class="headerlink" href="#12-numberingbullet" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: 7레벨 포맷 타입, 포맷 문자열, 시작 번호</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>레벨별 들여쓰기/내어쓰기</td>
+<td>각 레벨의 독립적 들여쓰기 값</td>
+</tr>
+<tr>
+<td>레벨별 CharShapeId</td>
+<td>번호 텍스트의 글자 모양</td>
+</tr>
+<tr>
+<td>상위 수준 포함 (IncludeUpperLevel)</td>
+<td>"1.1.1" 형태의 상위 번호 포함</td>
+</tr>
+<tr>
+<td>레벨별 정렬</td>
+<td>왼쪽/오른쪽/가운데</td>
+</tr>
+<tr>
+<td>글머리표 이미지</td>
+<td>이미지 글머리표 (ImageBullet, ImageId)</td>
+</tr>
+<tr>
+<td>번호 뒤 탭/공백</td>
+<td>번호 뒤 탭 정지 또는 공백</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="13-style">13. 스타일 (Style) 누락 속성<a class="headerlink" href="#13-style" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: 이름(한글/영문), 유형(문단/글자), para_shape_id, char_shape_id</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>nextStyleId</td>
+<td>Enter 후 자동 적용되는 다음 스타일</td>
+</tr>
+<tr>
+<td>langId</td>
+<td>언어 ID</td>
+</tr>
+<tr>
+<td>기반 스타일 (based-on)</td>
+<td>부모 스타일 참조 (상속 체계)</td>
+</tr>
+<tr>
+<td>스타일 잠금</td>
+<td>편집 보호 플래그</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="14">14. 페이지 설정 / 구역 정의 누락 속성<a class="headerlink" href="#14" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: 용지 너비/높이, 4변 여백, 머리말/꼬리말 오프셋, 용지 방향</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+<th>스펙 위치</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>제본 여백 (gutter)</td>
+<td>제본 측 추가 여백</td>
+<td>PAGE_DEF offset 32</td>
+</tr>
+<tr>
+<td>구역별 독립 설정</td>
+<td>다중 섹션 간 용지/여백 차이 반영</td>
+<td>secd 전체</td>
+</tr>
+<tr>
+<td>쪽 테두리</td>
+<td>테두리 종류/굵기/색상, 적용 쪽</td>
+<td>PAGE_BORDER_FILL</td>
+</tr>
+<tr>
+<td>쪽 배경</td>
+<td>단색/그라데이션/이미지/무늬 배경</td>
+<td>PAGE_BORDER_FILL</td>
+</tr>
+<tr>
+<td>쪽 테두리/배경 적용 범위</td>
+<td>양쪽/홀수/짝수/첫쪽</td>
+<td>PAGE_BORDER_FILL</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="15-column">15. 다단 (Column) 누락 속성<a class="headerlink" href="#15-column" title="Permanent link">&para;</a></h2>
+<p>현재: 단 개수, 간격 추출만 (cold 자체는 skip)</p>
+<table>
+<thead>
+<tr>
+<th>누락 속성</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>비균등 단 너비</td>
+<td>각 단의 독립적 너비</td>
+</tr>
+<tr>
+<td>구분선</td>
+<td>유무, 선 종류/굵기/색상</td>
+</tr>
+<tr>
+<td>단 균등 배분</td>
+<td>마지막 페이지 균등화</td>
+</tr>
+<tr>
+<td>단 종류</td>
+<td>일반/배분/평행 다단</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="16-track-changes">16. 변경 추적 (Track Changes)<a class="headerlink" href="#16-track-changes" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>항목</th>
+<th>설명</th>
+<th>상태</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>검토자 정보</td>
+<td>이름, 날짜, 색상 (tag=34)</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>변경 항목</td>
+<td>삽입/삭제/서식변경 (tag=35)</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>변경 추적 블록</td>
+<td>변경 내용 컨텐츠 (tag=80)</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>변경 수락/거부</td>
+<td>추적 상태 관리</td>
+<td>미지원</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="17-master-page">17. 바탕쪽 (Master Page)<a class="headerlink" href="#17-master-page" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>항목</th>
+<th>설명</th>
+<th>상태</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>바탕쪽 정의</td>
+<td>모든 쪽에 반복되는 배경 레이아웃</td>
+<td>미지원 (secd 하위 LIST_HEADER)</td>
+</tr>
+<tr>
+<td>적용 범위</td>
+<td>양쪽/홀수/짝수 쪽</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>본문 확장/겹침</td>
+<td>본문 영역까지 확장, 본문과 겹침</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>구역별 바탕쪽</td>
+<td>구역마다 다른 바탕쪽</td>
+<td>미지원</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="18">18. 보안 / 암호화<a class="headerlink" href="#18" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>항목</th>
+<th>설명</th>
+<th>상태</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>파일 암호</td>
+<td>Hancom 자체 알고리즘 암호화 (FileHeader bit 1)</td>
+<td>미지원 (해독 알고리즘 비공개)</td>
+</tr>
+<tr>
+<td>배포용 문서</td>
+<td>AES-128 ECB 암호화 ViewText (FileHeader bit 2)</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>DRM 보호</td>
+<td>DRM 복호화 (FileHeader bit 4)</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>전자 서명</td>
+<td>공인인증서 기반 서명 (FileHeader bit 7-10)</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>개체 보호</td>
+<td>개체 단위 편집 잠금</td>
+<td>미지원</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="19-ole">19. OLE / 차트 / 글맵시 / 동영상<a class="headerlink" href="#19-ole" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>항목</th>
+<th>설명</th>
+<th>상태</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OLE 개체 내부</td>
+<td>서버별 데이터 해석 (엑셀, 그림판 등)</td>
+<td>Verbatim 보존 (내부 해석 없음)</td>
+</tr>
+<tr>
+<td>차트 전체 파싱</td>
+<td>VtChart 바이너리 트리 (막대/꺾은선/원형/영역 등)</td>
+<td>Verbatim 보존</td>
+</tr>
+<tr>
+<td>글맵시 내부</td>
+<td>글맵시 모양(36종+), 글꼴, 그림자, 3D</td>
+<td>Verbatim 보존</td>
+</tr>
+<tr>
+<td>동영상</td>
+<td>AVI/WMV/MPEG/MPG 삽입 (tag=97)</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>소리 개체</td>
+<td>OLE 연결/포함</td>
+<td>미지원</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="20-equation">20. 수식 (Equation) 누락 속성<a class="headerlink" href="#20-equation" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: HWP 스크립트 → LaTeX 변환 (재귀하강 파서)</p>
+<table>
+<thead>
+<tr>
+<th>누락 항목</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LADDER / SLADDER</td>
+<td>사다리 수식 (LaTeX 대응 없음, 텍스트 fallback만)</td>
+</tr>
+<tr>
+<td>수식 전용 글꼴</td>
+<td>수식 내 글꼴 지정 속성</td>
+</tr>
+<tr>
+<td>수식 색상</td>
+<td>수식 전체/부분 색상</td>
+</tr>
+<tr>
+<td>수식 크기 조절</td>
+<td>수식 전체 스케일 팩터</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="21">21. 쪽 번호 관련 컨트롤 누락<a class="headerlink" href="#21" title="Permanent link">&para;</a></h2>
+<p>현재 파싱: <code>pgnp</code>(쪽 번호 위치), <code>atno</code>(자동 번호 — kind만 추출)</p>
+<table>
+<thead>
+<tr>
+<th>누락 항목</th>
+<th>ctrl_id</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>쪽 번호 형식 세분화</td>
+<td><code>pgnp</code></td>
+<td>아라비아/로마/한글/한자/영문/사용자정의</td>
+</tr>
+<tr>
+<td>쪽 번호 위치 10종</td>
+<td><code>pgnp</code></td>
+<td>머리말/꼬리말 × 왼쪽/가운데/오른쪽 × 안쪽/바깥쪽</td>
+</tr>
+<tr>
+<td>새 번호 지정</td>
+<td><code>nwno</code></td>
+<td>특정 위치부터 번호 리셋</td>
+</tr>
+<tr>
+<td>홀짝수 조정</td>
+<td><code>pgct</code></td>
+<td>홀수/짝수 쪽 번호 보정</td>
+</tr>
+<tr>
+<td>페이지 감추기</td>
+<td><code>pghd</code></td>
+<td>특정 쪽 번호 숨김</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="22">22. 한글 고유 기능 미지원<a class="headerlink" href="#22" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>기능</th>
+<th>설명</th>
+<th>상태</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>세로쓰기</td>
+<td>세로 방향 문서 작성</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>원고지 모드</td>
+<td>원고지 형태 편집</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>옛한글</td>
+<td>중세국어 등 옛한글 자판/입력 (특수 유니코드 + 글꼴 매핑)</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>한글→한자 변환</td>
+<td>F9 한자 변환 (입력 기능이므로 파일 포맷 무관)</td>
+<td>N/A</td>
+</tr>
+<tr>
+<td>HFT 글꼴 호환</td>
+<td>한컴 전용 글꼴 포맷</td>
+<td>미지원</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="23">23. 문서 메타데이터 / 기타 스트림 미지원<a class="headerlink" href="#23" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>스트림/스토리지</th>
+<th>설명</th>
+<th>상태</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DocHistory/</code></td>
+<td>문서 이력 버전 로그</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td><code>Scripts/</code></td>
+<td>JavaScript 매크로 소스</td>
+<td>Verbatim 보존 (해석 없음)</td>
+</tr>
+<tr>
+<td><code>XMLTemplate/</code></td>
+<td>XML 스키마 인스턴스</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td><code>DocOptions/</code></td>
+<td>링크 문서, 배포용 문서 설정</td>
+<td>부분 보존</td>
+</tr>
+<tr>
+<td><code>DrmRootSect</code></td>
+<td>DRM 암호화 정보</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td><code>\005HwpSummaryInformation</code></td>
+<td>제목/작성자/키워드/통계 등 문서 요약</td>
+<td>Verbatim 보존 (파싱 없음)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="24-from-scratch">24. From Scratch 생성 불가 블록<a class="headerlink" href="#24-from-scratch" title="Permanent link">&para;</a></h2>
+<p>Seed Patch 모드에서는 원본 보존으로 우회 가능하나, From Scratch에서는 생성 자체가 불가:</p>
+<table>
+<thead>
+<tr>
+<th>블록 타입</th>
+<th>사유</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ChartBlock</td>
+<td>차트 바이너리 데이터 생성 불가</td>
+</tr>
+<tr>
+<td>TextArtBlock</td>
+<td>글맵시 렌더링 데이터 생성 불가</td>
+</tr>
+<tr>
+<td>DrawingBlock</td>
+<td>도형 바이너리 생성 미구현 (파서만 있음)</td>
+</tr>
+<tr>
+<td>BookmarkBlock</td>
+<td>책갈피 ctrl_id 생성 미구현</td>
+</tr>
+<tr>
+<td>CommentBlock</td>
+<td>메모 ctrl_id 생성 미구현</td>
+</tr>
+<tr>
+<td>HeaderBlock</td>
+<td>머리말 생성 미구현 (파싱만 가능)</td>
+</tr>
+<tr>
+<td>FooterBlock</td>
+<td>꼬리말 생성 미구현 (파싱만 가능)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="25">25. 프레젠테이션 / 메일머지 / 라벨<a class="headerlink" href="#25" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>기능</th>
+<th>설명</th>
+<th>상태</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>프레젠테이션 모드</td>
+<td>슬라이드쇼 설정 (전환효과/소리/배경)</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>메일 머지 필드</td>
+<td>데이터소스 기반 대량 문서 생성 필드 마커</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>라벨 템플릿</td>
+<td>400종+ 라벨 레이아웃 정의</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>참고문헌 관리</td>
+<td>인용/참고문헌 데이터베이스</td>
+<td>미지원</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="26-2024">26. 다이어그램 (한컴 2024+)<a class="headerlink" href="#26-2024" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>기능</th>
+<th>설명</th>
+<th>상태</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>다이어그램 개체</td>
+<td>20종+ 레이아웃의 SmartArt 유사 개체</td>
+<td>미지원</td>
+</tr>
+<tr>
+<td>MS Office 다이어그램 호환</td>
+<td>30종 레이아웃 크로스포맷 임포트</td>
+<td>미지원</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  맨위로
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/h000000nkim/udfp" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://pypi.org/project/udfp/" target="_blank" rel="noopener" title="pypi.org" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.8 200.5c-7.7-30.9-22.3-54.2-53.4-54.2h-40.1v47.4c0 36.8-31.2 67.8-66.8 67.8H172.7c-29.2 0-53.4 25-53.4 54.3v101.8c0 29 25.2 46 53.4 54.3 33.8 9.9 66.3 11.7 106.8 0 26.9-7.8 53.4-23.5 53.4-54.3v-40.7H226.2v-13.6h160.2c31.1 0 42.6-21.7 53.4-54.2 11.2-33.5 10.7-65.7 0-108.6M286.2 444.7a20.4 20.4 0 1 1 0-40.7 20.4 20.4 0 1 1 0 40.7M167.8 248.1h106.8c29.7 0 53.4-24.5 53.4-54.3V91.9c0-29-24.4-50.7-53.4-55.6-35.8-5.9-74.7-5.6-106.8.1-45.2 8-53.4 24.7-53.4 55.6v40.7h106.9v13.6h-147c-31.1 0-58.3 18.7-66.8 54.2-9.8 40.7-10.2 66.1 0 108.6 7.6 31.6 25.7 54.2 56.8 54.2H101v-48.8c0-35.3 30.5-66.4 66.8-66.4m-6.6-183.4a20.4 20.4 0 1 1 0 40.8 20.4 20.4 0 1 1 0-40.8"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.highlight", "search.suggest", "content.code.copy", "content.code.annotate", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\ud074\ub9bd\ubcf4\ub4dc\uc5d0 \ubcf5\uc0ac\ub428", "clipboard.copy": "\ud074\ub9bd\ubcf4\ub4dc\ub85c \ubcf5\uc0ac", "search.result.more.one": "\uc774 \ubb38\uc11c\uc5d0\uc11c 1\uac1c\uc758 \uac80\uc0c9 \uacb0\uacfc \ub354 \ubcf4\uae30", "search.result.more.other": "\uc774 \ubb38\uc11c\uc5d0\uc11c #\uac1c\uc758 \uac80\uc0c9 \uacb0\uacfc \ub354 \ubcf4\uae30", "search.result.none": "\uac80\uc0c9\uc5b4\uc640 \uc77c\uce58\ud558\ub294 \ubb38\uc11c\uac00 \uc5c6\uc2b5\ub2c8\ub2e4", "search.result.one": "1\uac1c\uc758 \uc77c\uce58\ud558\ub294 \ubb38\uc11c", "search.result.other": "#\uac1c\uc758 \uc77c\uce58\ud558\ub294 \ubb38\uc11c", "search.result.placeholder": "\uac80\uc0c9\uc5b4\ub97c \uc785\ub825\ud558\uc138\uc694", "search.result.term.missing": "\ud3ec\ud568\ub418\uc9c0 \uc54a\uc740 \uac80\uc0c9\uc5b4", "select.version": "\ubc84\uc804 \uc120\ud0dd"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
